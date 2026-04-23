@@ -48,7 +48,7 @@ export default function SmartDJPage() {
         </div>
         <h1 className="text-4xl md:text-5xl font-black mb-3">الدي جي الذكي 🎛️</h1>
         <p className="text-gray-400 max-w-lg text-center leading-relaxed">
-          اختار المزاج اللي انت حاسه دلوقتي، وهنعملك Playlist ملهاش نهاية بتشتغل من يوتيوب مباشر على حسب حالتك.
+          اختار المزاج اللي انت حاسه دلوقتي، وهنعملك Playlist ملهاش نهاية بتشتغل من مكتبة أورا مباشر على حسب حالتك.
         </p>
       </header>
 
