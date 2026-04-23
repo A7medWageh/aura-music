@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAlbumDetails } from "../../../../../../apis/youtubei.js";
+import { getAlbumDetails } from "@/../apis/youtubei.js";
 import { checkRateLimit } from "@/services/security/rateLimit";
 import { fail } from "@/services/http/response";
 
