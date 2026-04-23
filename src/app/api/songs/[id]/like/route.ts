@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { query } from "@/../apis/neon/index";
+import { query } from "@apis/neon/index";
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const songId = params.id;
+  const { id: songId } = await params;
   
   // For demo/simplicity, we use a hardcoded user ID or get it from auth if implemented
   // Assuming a user exists or we create a guest one
