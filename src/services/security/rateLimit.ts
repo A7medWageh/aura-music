@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { getEnv } from "@/services/config/env";
-import { getRedisClient } from "../../../apis/redis";
+import { getRedisClient } from "@apis/redis";
 
 const memoryStore = new Map<string, { count: number; resetAt: number }>();
 

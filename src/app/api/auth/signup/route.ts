@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { NextRequest } from "next/server";
-import { query } from "../../../../../apis/neon";
+import { query } from "@apis/neon";
 import { hashPassword } from "@/services/auth/password";
 import { setSessionCookie, signAuthToken } from "@/services/auth/session";
 import { checkRateLimit } from "@/services/security/rateLimit";

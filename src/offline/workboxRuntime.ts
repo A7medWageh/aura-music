@@ -5,7 +5,7 @@ import {
   Queue,
   StaleWhileRevalidate,
   registerRoute
-} from "../../apis/workbox";
+} from "@apis/workbox";
 
 // Runtime policy blueprint using the mandatory local /apis/workbox adapter.
 // This module documents production caching policies and can be shared by

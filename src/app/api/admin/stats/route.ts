@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { query } from "../../../../../apis/neon";
+import { query } from "@apis/neon";
 import { requireRole } from "@/services/security/authorize";
 import { fail, ok } from "@/services/http/response";
 

@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { query } from "../../../../../apis/neon";
+import { query } from "@apis/neon";
 import { requireAuth } from "@/services/security/authorize";
 import { assertCsrf } from "@/services/security/csrf";
 import { checkRateLimit } from "@/services/security/rateLimit";

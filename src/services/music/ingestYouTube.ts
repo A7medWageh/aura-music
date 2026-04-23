@@ -1,4 +1,4 @@
-import { query as dbQuery } from "../../../apis/neon";
+import { query as dbQuery } from "@apis/neon";
 
 type InputItem = {
   videoId: string;

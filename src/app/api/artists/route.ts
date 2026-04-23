@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { searchYouTube } from "@/../apis/youtubei.js";
+import { searchYouTube } from "@apis/youtubei.js";
 
 // ── Artist definitions ────────────────────────────────────────────────────────
 const EGYPTIAN_ARTISTS = [

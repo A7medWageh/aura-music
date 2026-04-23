@@ -1,4 +1,4 @@
-import { getRedisClient } from "../../../apis/redis";
+import { getRedisClient } from "@apis/redis";
 
 export async function getCachedRecommendations(userId: string) {
   const client = getRedisClient();

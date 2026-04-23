@@ -1,4 +1,4 @@
-import { searchYouTube, resolveStream } from "../../../apis/youtubei.js";
+import { searchYouTube, resolveStream } from "@apis/youtubei.js";
 
 // ── In-memory cache shared across all requests in same process ----------------
 const cache = new Map<string, { data: any; ts: number }>();

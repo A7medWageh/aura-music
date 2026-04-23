@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { resolveStream } from "@/../apis/youtubei.js";
+import { resolveStream } from "@apis/youtubei.js";
 
 // Cache resolved stream URLs briefly to avoid double-resolving
 const streamUrlCache = new Map<string, { url: string; expiresAt: number }>();

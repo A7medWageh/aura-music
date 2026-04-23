@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getNewReleases } from "@/../apis/youtubei.js";
+import { getNewReleases } from "@apis/youtubei.js";
 
 export async function GET() {
   try {

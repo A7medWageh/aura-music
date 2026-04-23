@@ -1,4 +1,4 @@
-import { query } from "../../apis/neon";
+import { query } from "@apis/neon";
 
 export async function getRecommendations(userId: string, limit = 20) {
   const sql = `

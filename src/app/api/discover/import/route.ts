@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { searchYouTube } from "../../../../../apis/youtubei.js";
+import { searchYouTube } from "@apis/youtubei.js";
 import { ingestYouTubeItems } from "@/services/music/ingestYouTube";
 import { requireAuth } from "@/services/security/authorize";
 import { checkRateLimit } from "@/services/security/rateLimit";

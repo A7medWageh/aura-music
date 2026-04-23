@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getMusicCharts } from "@/../apis/youtubei.js";
+import { getMusicCharts } from "@apis/youtubei.js";
 
 // In-process cache — avoids calling YouTube every request
 let chartCache: { data: any[]; ts: number } | null = null;
