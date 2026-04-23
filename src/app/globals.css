@@ -1,0 +1,86 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --surface: 9, 10, 15;
+    --panel: 18, 20, 26;
+    --accent: 99, 102, 241;
+    --accent-glow: 99, 102, 241, 0.4;
+  }
+
+  body {
+    @apply bg-[rgb(var(--surface))] text-white selection:bg-indigo-500/30;
+    font-feature-settings: "ss01", "ss02", "cv01", "cv02";
+    /* Prevent iOS rubber-band scroll on the body */
+    overscroll-behavior: none;
+    /* Smooth momentum scrolling on iOS */
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Remove default tap highlight on mobile */
+  * {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+  }
+
+  /* Safe area for iPhone notch / home indicator */
+  html {
+    /* Handle viewport-fit=cover */
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+}
+
+@layer components {
+  .glass {
+    @apply bg-white/5 backdrop-blur-xl border border-white/10;
+  }
+  
+  .glass-dark {
+    @apply bg-black/40 backdrop-blur-2xl border border-white/5;
+  }
+
+  .premium-card {
+    @apply glass hover:bg-white/10 transition-all duration-300 rounded-2xl p-4;
+  }
+
+  .text-gradient {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 to-purple-400;
+  }
+
+  /* Mobile card — tappable with active press */
+  .mobile-card {
+    @apply rounded-2xl transition-all duration-150 active:scale-[0.97] active:opacity-80;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+}
+
+/* RTL Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-white/10 rounded-full hover:bg-white/20 transition-colors;
+}
+
+/* Mobile: hide scrollbar for cleaner look */
+@media (max-width: 768px) {
+  ::-webkit-scrollbar {
+    display: none;
+  }
+  * {
+    scrollbar-width: none;
+  }
+}
+
+/* PWA standalone mode: remove extra padding added by html safe-area rule */
+@media (display-mode: standalone) {
+  html {
+    padding-top: 0;
+  }
+}

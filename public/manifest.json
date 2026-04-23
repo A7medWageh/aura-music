@@ -1,0 +1,44 @@
+{
+  "name": "Aura Music | أورا موزيك",
+  "short_name": "Aura",
+  "description": "أول منصة بث موسيقي عربية ذكية متكاملة",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#09090f",
+  "theme_color": "#6366f1",
+  "lang": "ar",
+  "dir": "rtl",
+  "categories": ["music", "entertainment"],
+  "icons": [
+    {
+      "src": "/logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "screenshots": [],
+  "shortcuts": [
+    {
+      "name": "المفضلة",
+      "short_name": "المفضلة",
+      "description": "افتح قائمة المفضلة",
+      "url": "/favorites",
+      "icons": [{ "src": "/logo.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "اكتشف",
+      "short_name": "اكتشف",
+      "description": "اكتشف موسيقى جديدة",
+      "url": "/discover",
+      "icons": [{ "src": "/logo.png", "sizes": "192x192" }]
+    }
+  ]
+}
