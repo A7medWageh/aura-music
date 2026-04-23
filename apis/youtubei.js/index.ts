@@ -213,6 +213,13 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Pro
   return result;
 }
 
+const PUBLIC_PROXIES = [
+  "https://inv.pistasjis.net",
+  "https://invidious.flokinet.to",
+  "https://invidious.projectsegfau.lt",
+  "https://iv.ggtyler.dev"
+];
+
 export async function resolveStream(videoId: string): Promise<string> {
   const start = Date.now();
   console.log(`[Stream] Resolving ${videoId}...`);
@@ -236,6 +243,21 @@ export async function resolveStream(videoId: string): Promise<string> {
         const globalCached = await withTimeout(redis.get(`stream:${videoId}`), 1000, null);
         if (globalCached) return globalCached;
       } catch (err) {}
+
+      // 2.5 Strategy: Public Proxy Pool (Invidious) - Best for Vercel
+      for (const proxy of PUBLIC_PROXIES) {
+        try {
+          console.log(`[Stream] Trying public proxy: ${proxy} for ${videoId}...`);
+          const res = await withTimeout(fetch(`${proxy}/api/v1/videos/${videoId}`), 5000, null);
+          if (res && res.ok) {
+            const data = await res.json();
+            const format = data.adaptiveFormats?.find((f: any) => f.type?.includes('audio') || f.container?.includes('m4a'));
+            if (format?.url) return await cache(format.url);
+          }
+        } catch (e) {
+          console.warn(`[Stream] Proxy ${proxy} failed for ${videoId}`);
+        }
+      }
 
       // 2. Parallel Strategy: Try Albumaty & YouTube Info simultaneously
       let title = "";
@@ -282,6 +304,21 @@ export async function resolveStream(videoId: string): Promise<string> {
         if (result) return await cache(result);
       } catch (err: any) {
         console.warn(`[Stream] Strategy set 1 failed for ${videoId}: ${err.message}`);
+      }
+
+      // 3. Optional: External Proxy Fallback (Highly recommended for Vercel)
+      try {
+        const proxyBase = process.env.EXTERNAL_STREAMING_PROXY;
+        if (proxyBase) {
+          console.log(`[Stream] Trying external proxy for ${videoId}...`);
+          const res = await fetch(`${proxyBase.endsWith('/') ? proxyBase : proxyBase + '/'}api/resolve?id=${videoId}`, {
+            headers: { 'Authorization': `Bearer ${process.env.AUTH_JWT_SECRET}` }
+          });
+          const data = await res.json();
+          if (data?.url) return await cache(data.url);
+        }
+      } catch (err: any) {
+        console.warn(`[Stream] External proxy failed: ${err.message}`);
       }
 
       // 4. Fallback: Mirror Search
