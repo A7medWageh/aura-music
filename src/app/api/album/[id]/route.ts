@@ -5,13 +5,13 @@ import { fail } from "@/services/http/response";
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const rate = await checkRateLimit(req, { key: "album_api", max: 100, windowSec: 60 });
   if (!rate.allowed) return fail("RATE_LIMITED", "Too many requests", 429);
 
   try {
-    const albumId = params.id;
+    const { id: albumId } = await params;
     if (!albumId) return fail("BAD_REQUEST", "Missing album id", 400);
 
     const data = await getAlbumDetails(albumId);
