@@ -10,7 +10,7 @@ import { getRedisClient } from "../redis";
 import { resolveAlbumatyStream } from "../../src/services/scrapers/albumaty";
 
 const execPromise = promisify(exec);
-const YT_DLP_PATH = path.join(process.cwd(), "yt-dlp-master", "yt-dlp.cmd");
+const YT_DLP_PATH = process.env.YT_DLP_PATH || path.join(process.cwd(), "yt-dlp-master", "yt-dlp.cmd");
 
 // ── Singleton instances ───────────────────────────────────────────────────────
 // These are reused across requests in the same process (Next.js server stays alive
