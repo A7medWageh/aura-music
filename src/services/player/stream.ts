@@ -1,4 +1,4 @@
-import { resolveStream } from "../../../apis/youtubei.js";
+import { resolveStream } from "@apis/youtubei.js";
 
 // In-memory stream URL cache (expires after 4 hours)
 const streamCache = new Map<string, { url: string; expiresAt: number }>();

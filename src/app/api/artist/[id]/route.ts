@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getArtistDetails } from "@/../apis/youtubei.js";
+import { getArtistDetails } from "@apis/youtubei.js";
 
 const cache = new Map<string, { data: any; at: number }>();
 const TTL = 30 * 60 * 1000; // 30 min

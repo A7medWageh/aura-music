@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { NextRequest } from "next/server";
-import { query } from "../../../../../apis/neon";
+import { query } from "@apis/neon";
 import { getUserFromRequest } from "@/services/auth/session";
 import { checkRateLimit } from "@/services/security/rateLimit";
 import { fail } from "@/services/http/response";
