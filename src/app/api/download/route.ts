@@ -4,6 +4,9 @@ import { resolveStream } from "@apis/youtubei.js";
 // Cache resolved stream URLs briefly to avoid double-resolving
 const streamUrlCache = new Map<string, { url: string; expiresAt: number }>();
 
+export const maxDuration = 60;
+export const dynamic = "force-dynamic";
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const videoId = searchParams.get("videoId");
