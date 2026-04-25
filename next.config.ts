@@ -6,7 +6,7 @@ const nextConfig: NextConfig = {
     optimizePackageImports: ["framer-motion"],
   },
   // Packages that should NOT be bundled by webpack (use native Node.js require)
-  serverExternalPackages: ["play-dl", "youtubei.js", "ioredis"],
+  serverExternalPackages: ["play-dl", "@distube/ytdl-core", "youtubei.js", "ioredis"],
 };
 
 export default nextConfig;

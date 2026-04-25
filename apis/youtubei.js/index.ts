@@ -196,50 +196,95 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Pro
   return result;
 }
 
-/** 
- * Strategy 1: play-dl — pure Node.js, works 100% on Vercel serverless.
- * Returns the direct audio stream URL from YouTube.
+// ── Piped API instances (better than Invidious for audio) ────────────────────
+const PIPED_INSTANCES = [
+  "https://pipedapi.kavin.rocks",
+  "https://pipedapi.adminforge.de",
+  "https://piped-api.garudalinux.org",
+  "https://api.piped.yt",
+  "https://pipedapi.kescher.at",
+  "https://piped.video/api",
+];
+
+/**
+ * Strategy 1: Piped API — Independent YouTube proxy infrastructure.
+ * Does NOT use YouTube directly, bypasses Vercel IP blocks.
  */
-async function resolveWithPlayDl(videoId: string): Promise<string> {
-  // Dynamic import to avoid bundling issues
-  const playdl = await import("play-dl");
-  
-  // Set youtube cookie to avoid bot detection if available
-  if (process.env.YOUTUBE_COOKIE) {
+async function resolveWithPiped(videoId: string): Promise<string> {
+  for (const api of PIPED_INSTANCES) {
     try {
-      await playdl.setToken({ youtube: { cookie: process.env.YOUTUBE_COOKIE } });
-    } catch {}
+      const res = await withTimeout(
+        fetch(`${api}/streams/${videoId}`, {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (compatible; Aura/1.0)",
+            "Accept": "application/json",
+          },
+        }),
+        8000,
+        null
+      );
+      if (!res || !res.ok) continue;
+      const data = await res.json();
+      
+      // audioStreams is the primary source in Piped API
+      const audioStreams: any[] = data.audioStreams ?? [];
+      if (!audioStreams.length) continue;
+
+      // Sort by bitrate descending and pick best
+      const best = audioStreams
+        .filter((s: any) => s.url && s.bitrate)
+        .sort((a: any, b: any) => (b.bitrate ?? 0) - (a.bitrate ?? 0))[0];
+        
+      if (best?.url) {
+        console.log(`[Stream] Piped hit: ${api} bitrate=${best.bitrate}`);
+        return best.url;
+      }
+    } catch {
+      // try next
+    }
+  }
+  throw new Error("piped: all instances failed");
+}
+
+/**
+ * Strategy 2: @distube/ytdl-core — Maintained fork of ytdl-core with bot bypass.
+ */
+async function resolveWithYtdlCore(videoId: string): Promise<string> {
+  const ytdl = await import("@distube/ytdl-core");
+  
+  const options: any = {
+    requestOptions: {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9",
+      },
+    },
+  };
+
+  // Add cookie if available
+  if (process.env.YOUTUBE_COOKIE) {
+    options.requestOptions.headers["Cookie"] = process.env.YOUTUBE_COOKIE;
   }
 
-  // Use video_basic_info to get formats with direct URLs
-  const info = await playdl.video_basic_info(`https://www.youtube.com/watch?v=${videoId}`);
-  if (!info?.video_details) throw new Error("play-dl: no video info");
+  const info = await ytdl.default.getInfo(`https://www.youtube.com/watch?v=${videoId}`, options);
+  if (!info?.formats) throw new Error("ytdl-core: no formats");
 
-  // Filter audio-only formats and pick best by bitrate
-  const formats = (info as any).format as any[];
-  if (!formats || formats.length === 0) throw new Error("play-dl: no formats");
-
-  const audioFormats = formats
-    .filter((f: any) => f.hasAudio && !f.hasVideo && f.url)
+  const audioFormats = ytdl.default
+    .filterFormats(info.formats, "audioonly")
     .sort((a: any, b: any) => (b.audioBitrate ?? 0) - (a.audioBitrate ?? 0));
 
-  if (audioFormats.length === 0) {
-    // Try any format with audio
-    const anyAudio = formats.find((f: any) => f.hasAudio && f.url);
-    if (anyAudio?.url) return anyAudio.url;
-    throw new Error("play-dl: no audio format found");
-  }
-
+  if (audioFormats.length === 0) throw new Error("ytdl-core: no audio formats");
+  if (!audioFormats[0].url) throw new Error("ytdl-core: no url on format");
+  
   return audioFormats[0].url;
 }
 
 /**
- * Strategy 2: youtubei.js — get audio URL from YouTube's internal API.
+ * Strategy 3: youtubei.js — YouTube's internal InnerTube API.
  */
 async function resolveWithYoutubei(videoId: string): Promise<string> {
   const innertube = await getYTWeb();
   
-  // Try music getInfo first (better for music)
   for (const getter of [
     () => (innertube.music as any).getInfo(videoId),
     () => innertube.getInfo(videoId),
@@ -258,30 +303,29 @@ async function resolveWithYoutubei(videoId: string): Promise<string> {
 }
 
 /**
- * Strategy 3: Invidious public proxy pool.
+ * Strategy 4: Invidious public proxy pool.
  */
-const PUBLIC_PROXIES = [
+const PUBLIC_INVIDIOUS = [
   "https://inv.pistasjis.net",
   "https://invidious.flokinet.to",
   "https://invidious.projectsegfau.lt",
   "https://iv.ggtyler.dev",
   "https://invidious.privacydev.net",
-  "https://invidious.protokolla.fi",
+  "https://invidious.nerdvpn.de",
 ];
 
 async function resolveWithInvidious(videoId: string): Promise<string> {
-  for (const proxy of PUBLIC_PROXIES) {
+  for (const proxy of PUBLIC_INVIDIOUS) {
     try {
       const res = await withTimeout(
         fetch(`${proxy}/api/v1/videos/${videoId}`, {
           headers: { "User-Agent": "Mozilla/5.0" },
         }),
-        5000,
+        6000,
         null
       );
       if (res && res.ok) {
         const data = await res.json();
-        // Prefer opus/webm audio, fallback to any audio
         const formats: any[] = data.adaptiveFormats ?? [];
         const audioFmt =
           formats.find((f: any) => f.type?.includes("audio/webm") && f.audioQuality === "AUDIO_QUALITY_MEDIUM") ??
@@ -334,16 +378,34 @@ export async function resolveStream(videoId: string): Promise<string> {
   // Enforce a strict 28-second global timeout
   return withTimeout(
     (async () => {
-      // ── Strategy 1: play-dl (Pure Node.js — works on Vercel) ──────────────
+      // ── Strategy 1: Piped API (Primary — bypasses Vercel IP blocks) ────────
       try {
-        console.log(`[Stream] Trying play-dl for ${videoId}...`);
-        const url = await withTimeout(resolveWithPlayDl(videoId), 10000, "");
+        console.log(`[Stream] Trying Piped API for ${videoId}...`);
+        const url = await withTimeout(resolveWithPiped(videoId), 12000, "");
         if (url) return await cacheAndReturn(url);
       } catch (e: any) {
-        console.warn(`[Stream] play-dl failed: ${e.message}`);
+        console.warn(`[Stream] Piped failed: ${e.message}`);
       }
 
-      // ── Strategy 2: youtubei.js ─────────────────────────────────────────
+      // ── Strategy 2: @distube/ytdl-core ──────────────────────────────────
+      try {
+        console.log(`[Stream] Trying ytdl-core for ${videoId}...`);
+        const url = await withTimeout(resolveWithYtdlCore(videoId), 12000, "");
+        if (url) return await cacheAndReturn(url);
+      } catch (e: any) {
+        console.warn(`[Stream] ytdl-core failed: ${e.message}`);
+      }
+
+      // ── Strategy 3: Invidious Public Proxy Pool ─────────────────────────
+      try {
+        console.log(`[Stream] Trying Invidious for ${videoId}...`);
+        const url = await withTimeout(resolveWithInvidious(videoId), 10000, "");
+        if (url) return await cacheAndReturn(url);
+      } catch (e: any) {
+        console.warn(`[Stream] Invidious failed: ${e.message}`);
+      }
+
+      // ── Strategy 4: youtubei.js ─────────────────────────────────────────
       try {
         console.log(`[Stream] Trying youtubei.js for ${videoId}...`);
         const url = await withTimeout(resolveWithYoutubei(videoId), 10000, "");
@@ -352,13 +414,13 @@ export async function resolveStream(videoId: string): Promise<string> {
         console.warn(`[Stream] youtubei.js failed: ${e.message}`);
       }
 
-      // ── Strategy 3: Albumaty Direct MP3 ────────────────────────────────
+      // ── Strategy 5: Albumaty Direct MP3 (for Arabic music) ──────────────
       try {
         let title = "";
         let artist = "";
         try {
           const innertube = await getYTWeb();
-          const info = await withTimeout(innertube.getBasicInfo(videoId), 5000, null);
+          const info = await withTimeout(innertube.getBasicInfo(videoId), 4000, null);
           title = info?.basic_info?.title || "";
           artist = info?.basic_info?.author || "";
         } catch {}
@@ -376,16 +438,7 @@ export async function resolveStream(videoId: string): Promise<string> {
         console.warn(`[Stream] Albumaty failed: ${e.message}`);
       }
 
-      // ── Strategy 4: Invidious Public Proxy Pool ─────────────────────────
-      try {
-        console.log(`[Stream] Trying Invidious proxies for ${videoId}...`);
-        const url = await withTimeout(resolveWithInvidious(videoId), 12000, "");
-        if (url) return await cacheAndReturn(url);
-      } catch (e: any) {
-        console.warn(`[Stream] Invidious failed: ${e.message}`);
-      }
-
-      // ── Strategy 5: yt-dlp (Local dev only — won't work on Vercel) ──────
+      // ── Strategy 6: yt-dlp (Local dev only) ─────────────────────────────
       try {
         const { existsSync } = await import("fs");
         if (existsSync(YT_DLP_PATH)) {
