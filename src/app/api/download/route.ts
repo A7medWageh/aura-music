@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { resolveStream } from "@apis/youtubei.js";
 
-// In-memory cache per process (Vercel may spin up multiple processes)
+// In-memory resolved URL cache
 const streamUrlCache = new Map<string, { url: string; expiresAt: number }>();
 
 export const maxDuration = 60;
@@ -11,25 +11,33 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const videoId = searchParams.get("videoId");
   const title = searchParams.get("title") || "song";
+  // Pre-resolved URL passed from /api/stream (Piped/Invidious)
+  const preResolvedSrc = searchParams.get("src");
 
   if (!videoId) {
     return NextResponse.json({ error: "Missing videoId" }, { status: 400 });
   }
 
   try {
-    // Check in-process cache (ignore on forced refresh attempt)
-    const attempt = parseInt(searchParams.get("attempt") || "0");
-    const cached = streamUrlCache.get(videoId);
     let streamUrl: string;
 
-    if (cached && cached.expiresAt > Date.now() && attempt === 0) {
-      streamUrl = cached.url;
-      console.log(`[DownloadAPI] Cache hit for ${videoId}`);
+    if (preResolvedSrc) {
+      // Use the pre-resolved URL directly (from Piped or Invidious)
+      streamUrl = decodeURIComponent(preResolvedSrc);
+      console.log(`[DownloadAPI] Using pre-resolved URL for ${videoId}`);
     } else {
-      console.log(`[DownloadAPI] ${attempt > 0 ? "Refreshing" : "Resolving"} stream for ${videoId}...`);
-      streamUrl = await resolveStream(videoId);
-      // Cache for 3 hours (URLs expire ~6h but play it safe)
-      streamUrlCache.set(videoId, { url: streamUrl, expiresAt: Date.now() + 3 * 60 * 60 * 1000 });
+      // Fall back to internal resolution (youtubei.js, ytdl-core, etc.)
+      const attempt = parseInt(searchParams.get("attempt") || "0");
+      const cached = streamUrlCache.get(videoId);
+
+      if (cached && cached.expiresAt > Date.now() && attempt === 0) {
+        streamUrl = cached.url;
+        console.log(`[DownloadAPI] Cache hit for ${videoId}`);
+      } else {
+        console.log(`[DownloadAPI] Resolving stream for ${videoId}...`);
+        streamUrl = await resolveStream(videoId);
+        streamUrlCache.set(videoId, { url: streamUrl, expiresAt: Date.now() + 3 * 60 * 60 * 1000 });
+      }
     }
 
     // Proxy the audio stream, forwarding Range headers for seek support
@@ -37,8 +45,9 @@ export async function GET(req: NextRequest) {
     const fetchHeaders: HeadersInit = {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
       "Accept": "audio/webm,audio/ogg,audio/wav,audio/*;q=0.9,*/*;q=0.8",
-      "Accept-Language": "en-US,en;q=0.5",
-      "Sec-Fetch-Mode": "no-cors",
+      "Accept-Language": "en-US,en;q=0.9",
+      "Origin": "https://www.youtube.com",
+      "Referer": "https://www.youtube.com/",
     };
     if (rangeHeader) {
       fetchHeaders["Range"] = rangeHeader;
@@ -46,7 +55,6 @@ export async function GET(req: NextRequest) {
 
     console.log(`[DownloadAPI] Proxying audio for ${videoId}...`);
 
-    // 55-second timeout (Vercel max is 60s for Pro, 10s for Hobby)
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 55000);
 
@@ -60,8 +68,8 @@ export async function GET(req: NextRequest) {
       clearTimeout(timeoutId);
     }
 
-    // If URL expired (403/410), force re-resolve and retry once
-    if (res.status === 403 || res.status === 410) {
+    // If URL expired (403/410), force re-resolve and retry (only for non-pre-resolved URLs)
+    if ((res.status === 403 || res.status === 410) && !preResolvedSrc) {
       console.warn(`[DownloadAPI] URL expired (${res.status}) for ${videoId} — re-resolving...`);
       streamUrlCache.delete(videoId);
       const freshUrl = await resolveStream(videoId);
@@ -80,7 +88,7 @@ export async function GET(req: NextRequest) {
     }
 
     if (!res.ok || !res.body) {
-      throw new Error(`Upstream fetch failed with status ${res.status}`);
+      throw new Error(`Upstream fetch failed with status ${res.status} for ${streamUrl.substring(0, 80)}...`);
     }
 
     // Build response headers
@@ -89,7 +97,6 @@ export async function GET(req: NextRequest) {
       "Content-Disposition": `inline; filename="${encodeURIComponent(title)}.mp3"`,
       "Cache-Control": "public, max-age=3600",
       "Accept-Ranges": "bytes",
-      // Allow browser to cache the audio
       "Access-Control-Allow-Origin": "*",
     };
 
