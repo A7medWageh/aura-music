@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { resolveStream } from "@apis/youtubei.js";
 
-// Cache resolved stream URLs briefly to avoid double-resolving
+// In-memory cache per process (Vercel may spin up multiple processes)
 const streamUrlCache = new Map<string, { url: string; expiresAt: number }>();
 
 export const maxDuration = 60;
@@ -17,69 +17,106 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    // Check cache first (ignore if it's a retry/attempt)
+    // Check in-process cache (ignore on forced refresh attempt)
     const attempt = parseInt(searchParams.get("attempt") || "0");
     const cached = streamUrlCache.get(videoId);
     let streamUrl: string;
 
     if (cached && cached.expiresAt > Date.now() && attempt === 0) {
       streamUrl = cached.url;
+      console.log(`[DownloadAPI] Cache hit for ${videoId}`);
     } else {
-      console.log(`[DownloadAPI] ${attempt > 0 ? 'Refreshing' : 'Resolving'} stream for ${videoId}...`);
+      console.log(`[DownloadAPI] ${attempt > 0 ? "Refreshing" : "Resolving"} stream for ${videoId}...`);
       streamUrl = await resolveStream(videoId);
-      // Cache for 5 minutes
-      streamUrlCache.set(videoId, { url: streamUrl, expiresAt: Date.now() + 5 * 60 * 1000 });
+      // Cache for 3 hours (URLs expire ~6h but play it safe)
+      streamUrlCache.set(videoId, { url: streamUrl, expiresAt: Date.now() + 3 * 60 * 60 * 1000 });
     }
 
-    // Proxy the request, forwarding Range headers for seek support
+    // Proxy the audio stream, forwarding Range headers for seek support
     const rangeHeader = req.headers.get("range");
     const fetchHeaders: HeadersInit = {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      "Accept": "audio/webm,audio/ogg,audio/wav,audio/*;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-US,en;q=0.5",
+      "Sec-Fetch-Mode": "no-cors",
     };
     if (rangeHeader) {
       fetchHeaders["Range"] = rangeHeader;
     }
 
-    console.log(`[DownloadAPI] Fetching from YouTube: ${videoId}...`);
-    
-    // 5-minute timeout for the audio download stream
+    console.log(`[DownloadAPI] Proxying audio for ${videoId}...`);
+
+    // 55-second timeout (Vercel max is 60s for Pro, 10s for Hobby)
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 300000);
+    const timeoutId = setTimeout(() => controller.abort(), 55000);
 
-    const res = await fetch(streamUrl, { 
-      headers: fetchHeaders,
-      signal: controller.signal
-    });
-
-    clearTimeout(timeoutId);
-
-    if (!res.ok || !res.body) {
-      throw new Error(`YouTube stream fetch failed with status ${res.status}`);
+    let res: Response;
+    try {
+      res = await fetch(streamUrl, {
+        headers: fetchHeaders,
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
     }
 
+    // If URL expired (403/410), force re-resolve and retry once
+    if (res.status === 403 || res.status === 410) {
+      console.warn(`[DownloadAPI] URL expired (${res.status}) for ${videoId} — re-resolving...`);
+      streamUrlCache.delete(videoId);
+      const freshUrl = await resolveStream(videoId);
+      streamUrlCache.set(videoId, { url: freshUrl, expiresAt: Date.now() + 3 * 60 * 60 * 1000 });
+
+      const retryController = new AbortController();
+      const retryTimeout = setTimeout(() => retryController.abort(), 55000);
+      try {
+        res = await fetch(freshUrl, {
+          headers: fetchHeaders,
+          signal: retryController.signal,
+        });
+      } finally {
+        clearTimeout(retryTimeout);
+      }
+    }
+
+    if (!res.ok || !res.body) {
+      throw new Error(`Upstream fetch failed with status ${res.status}`);
+    }
+
+    // Build response headers
     const responseHeaders: HeadersInit = {
-      "Content-Type": "audio/mpeg",
+      "Content-Type": res.headers.get("content-type") || "audio/mpeg",
       "Content-Disposition": `inline; filename="${encodeURIComponent(title)}.mp3"`,
-      "Cache-Control": "public, max-age=31536000",
+      "Cache-Control": "public, max-age=3600",
       "Accept-Ranges": "bytes",
+      // Allow browser to cache the audio
+      "Access-Control-Allow-Origin": "*",
     };
 
-    // Forward standard streaming headers
     const contentRange = res.headers.get("content-range");
     const contentLength = res.headers.get("content-length");
     if (contentRange) responseHeaders["Content-Range"] = contentRange;
     if (contentLength) responseHeaders["Content-Length"] = contentLength;
 
+    const status = rangeHeader && contentRange ? 206 : res.status === 206 ? 206 : 200;
+
     return new NextResponse(res.body, {
-      status: rangeHeader ? 206 : 200,
+      status,
       headers: responseHeaders,
     });
   } catch (error: any) {
     console.error("[DownloadAPI] Error:", error.message);
-    const status = error.name === "AbortError" ? 504 : 500;
-    return NextResponse.json({
-      error: error.name === "AbortError" ? "Gateway Timeout" : "Failed to process audio",
-      details: error.message
-    }, { status });
+
+    if (error.name === "AbortError") {
+      return NextResponse.json(
+        { error: "Gateway Timeout", details: "Audio stream timed out" },
+        { status: 504 }
+      );
+    }
+
+    return NextResponse.json(
+      { error: "Failed to process audio", details: error.message },
+      { status: 500 }
+    );
   }
 }

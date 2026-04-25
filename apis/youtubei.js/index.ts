@@ -1,26 +1,20 @@
 import { Innertube, UniversalCache } from "youtubei.js";
 import * as dns from "node:dns";
-import { exec } from "child_process";
 
 // Fix for ENOTFOUND errors in environments where IPv6 is flaky
 dns.setDefaultResultOrder("ipv4first");
 import * as path from "path";
-import { promisify } from "util";
 import { getRedisClient } from "../redis";
 import { resolveAlbumatyStream } from "../../src/services/scrapers/albumaty";
 
-const execPromise = promisify(exec);
 const YT_DLP_PATH = process.env.YT_DLP_PATH || path.join(process.cwd(), "yt-dlp-master", "yt-dlp.cmd");
 
 // ── Singleton instances ───────────────────────────────────────────────────────
-// These are reused across requests in the same process (Next.js server stays alive
-// between requests in dev; in production the process is long-lived too).
 let ytWeb: Innertube | null = null;
 let ytInitPromise: Promise<Innertube> | null = null;
 
 async function getYTWeb(): Promise<Innertube> {
   if (ytWeb) return ytWeb;
-  // Prevent parallel initialisation (only create once)
   if (!ytInitPromise) {
     ytInitPromise = Innertube.create({
       cache: new UniversalCache(false),
@@ -60,17 +54,9 @@ export function getHighResThumbnail(thumbnails: any[]) {
   const bestUrl = thumbnails[thumbnails.length - 1].url;
 
   if (bestUrl.includes("googleusercontent.com") || bestUrl.includes("ggpht.com")) {
-    // Google CDN hosts use common parameter formats:
-    // 1. =w120-h120-...
-    // 2. =s120-...
-    // 3. /w120-h120/... (less common for these domains)
-    
-    // We want the highest quality. =s0 or =s1080 are usually best.
-    // Try to replace any existing size parameter with =s1080
     if (bestUrl.includes("=")) {
       return bestUrl.replace(/=[^/]+$/, "=s1080");
     }
-    // If no parameter at all, append it
     return `${bestUrl}=s1080`;
   } else if (bestUrl.includes("i.ytimg.com")) {
     return bestUrl.replace(/\/(?:hq)?default\.jpg/, "/maxresdefault.jpg");
@@ -80,7 +66,6 @@ export function getHighResThumbnail(thumbnails: any[]) {
 
 // ── Helper to safely extract songs from any YouTube Music search response ────
 function extractSongs(results: any): any[] {
-  // YouTube Music can put songs in results.songs.contents OR results.contents
   const raw =
     results?.songs?.contents ??
     results?.tracks?.contents ??
@@ -178,14 +163,12 @@ export async function searchYouTube(query: string) {
 
   const innertube = await getYTWeb();
 
-  // Run all searches in parallel for maximum speed
   const [generalResults, songResults, artistResults] = await Promise.all([
     innertube.music.search(query).catch(() => null),
     innertube.music.search(query, { type: "song" }).catch(() => null),
     innertube.music.search(query, { type: "artist" }).catch(() => null),
   ]);
 
-  // Merge & deduplicate songs from both searches
   const songMap = new Map<string, any>();
   [...extractSongs(generalResults), ...extractSongs(songResults ?? {})].forEach(
     (s) => { if (s.songId && !songMap.has(s.songId)) songMap.set(s.songId, s); }
@@ -213,12 +196,108 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Pro
   return result;
 }
 
+/** 
+ * Strategy 1: play-dl — pure Node.js, works 100% on Vercel serverless.
+ * Returns the direct audio stream URL from YouTube.
+ */
+async function resolveWithPlayDl(videoId: string): Promise<string> {
+  // Dynamic import to avoid bundling issues
+  const playdl = await import("play-dl");
+  
+  // Set youtube cookie to avoid bot detection if available
+  if (process.env.YOUTUBE_COOKIE) {
+    try {
+      await playdl.setToken({ youtube: { cookie: process.env.YOUTUBE_COOKIE } });
+    } catch {}
+  }
+
+  // Use video_basic_info to get formats with direct URLs
+  const info = await playdl.video_basic_info(`https://www.youtube.com/watch?v=${videoId}`);
+  if (!info?.video_details) throw new Error("play-dl: no video info");
+
+  // Filter audio-only formats and pick best by bitrate
+  const formats = (info as any).format as any[];
+  if (!formats || formats.length === 0) throw new Error("play-dl: no formats");
+
+  const audioFormats = formats
+    .filter((f: any) => f.hasAudio && !f.hasVideo && f.url)
+    .sort((a: any, b: any) => (b.audioBitrate ?? 0) - (a.audioBitrate ?? 0));
+
+  if (audioFormats.length === 0) {
+    // Try any format with audio
+    const anyAudio = formats.find((f: any) => f.hasAudio && f.url);
+    if (anyAudio?.url) return anyAudio.url;
+    throw new Error("play-dl: no audio format found");
+  }
+
+  return audioFormats[0].url;
+}
+
+/**
+ * Strategy 2: youtubei.js — get audio URL from YouTube's internal API.
+ */
+async function resolveWithYoutubei(videoId: string): Promise<string> {
+  const innertube = await getYTWeb();
+  
+  // Try music getInfo first (better for music)
+  for (const getter of [
+    () => (innertube.music as any).getInfo(videoId),
+    () => innertube.getInfo(videoId),
+  ]) {
+    try {
+      const info = await getter();
+      const format = (info as any).chooseFormat?.({ type: "audio", quality: "best", format: "mp4" }) ??
+                     (info as any).chooseFormat?.({ type: "audio", quality: "best" });
+      if (format?.url) return format.url;
+      if (format && ((format as any).signature_cipher || (format as any).cipher)) {
+        return (format as any).decipher(innertube.session.player);
+      }
+    } catch {}
+  }
+  throw new Error("youtubei: no format found");
+}
+
+/**
+ * Strategy 3: Invidious public proxy pool.
+ */
 const PUBLIC_PROXIES = [
   "https://inv.pistasjis.net",
   "https://invidious.flokinet.to",
   "https://invidious.projectsegfau.lt",
-  "https://iv.ggtyler.dev"
+  "https://iv.ggtyler.dev",
+  "https://invidious.privacydev.net",
+  "https://invidious.protokolla.fi",
 ];
+
+async function resolveWithInvidious(videoId: string): Promise<string> {
+  for (const proxy of PUBLIC_PROXIES) {
+    try {
+      const res = await withTimeout(
+        fetch(`${proxy}/api/v1/videos/${videoId}`, {
+          headers: { "User-Agent": "Mozilla/5.0" },
+        }),
+        5000,
+        null
+      );
+      if (res && res.ok) {
+        const data = await res.json();
+        // Prefer opus/webm audio, fallback to any audio
+        const formats: any[] = data.adaptiveFormats ?? [];
+        const audioFmt =
+          formats.find((f: any) => f.type?.includes("audio/webm") && f.audioQuality === "AUDIO_QUALITY_MEDIUM") ??
+          formats.find((f: any) => f.type?.includes("audio")) ??
+          null;
+        if (audioFmt?.url) {
+          console.log(`[Stream] Invidious hit: ${proxy}`);
+          return audioFmt.url;
+        }
+      }
+    } catch {
+      // try next proxy
+    }
+  }
+  throw new Error("invidious: all proxies failed");
+}
 
 export async function resolveStream(videoId: string): Promise<string> {
   const start = Date.now();
@@ -228,137 +307,108 @@ export async function resolveStream(videoId: string): Promise<string> {
   const cached = streamCache.get(videoId);
   if (cached && cached.expiresAt > Date.now()) return cached.url;
 
-  const redis = getRedisClient();
-  const cache = async (url: string) => {
+  // 2. Redis cache (optional — graceful if unavailable)
+  try {
+    const redis = getRedisClient();
+    const globalCached = await withTimeout(redis.get(`stream:${videoId}`), 1500, null);
+    if (globalCached) {
+      console.log(`[Stream] Redis cache hit for ${videoId}`);
+      streamCache.set(videoId, { url: globalCached, expiresAt: Date.now() + 4 * 60 * 60 * 1000 });
+      return globalCached;
+    }
+  } catch {
+    // Redis unavailable on Vercel — continue without it
+  }
+
+  const cacheAndReturn = async (url: string): Promise<string> => {
     streamCache.set(videoId, { url, expiresAt: Date.now() + 4 * 60 * 60 * 1000 });
-    withTimeout(redis.set(`stream:${videoId}`, url, "EX", 14400), 1000, null).catch(() => {});
+    // Try to cache in Redis (fire and forget, non-blocking)
+    try {
+      const redis = getRedisClient();
+      withTimeout(redis.set(`stream:${videoId}`, url, "EX", 14400), 1000, null).catch(() => {});
+    } catch {}
+    console.log(`[Stream] ✅ Resolved ${videoId} in ${Date.now() - start}ms`);
     return url;
   };
 
-  // Enforce a strict 30-second global timeout for the entire resolution process
+  // Enforce a strict 28-second global timeout
   return withTimeout(
     (async () => {
-      // 2. Global Redis cache
+      // ── Strategy 1: play-dl (Pure Node.js — works on Vercel) ──────────────
       try {
-        const globalCached = await withTimeout(redis.get(`stream:${videoId}`), 1000, null);
-        if (globalCached) return globalCached;
-      } catch (err) {}
+        console.log(`[Stream] Trying play-dl for ${videoId}...`);
+        const url = await withTimeout(resolveWithPlayDl(videoId), 10000, "");
+        if (url) return await cacheAndReturn(url);
+      } catch (e: any) {
+        console.warn(`[Stream] play-dl failed: ${e.message}`);
+      }
 
-      // 2.5 Strategy: Public Proxy Pool (Invidious) - Best for Vercel
-      for (const proxy of PUBLIC_PROXIES) {
+      // ── Strategy 2: youtubei.js ─────────────────────────────────────────
+      try {
+        console.log(`[Stream] Trying youtubei.js for ${videoId}...`);
+        const url = await withTimeout(resolveWithYoutubei(videoId), 10000, "");
+        if (url) return await cacheAndReturn(url);
+      } catch (e: any) {
+        console.warn(`[Stream] youtubei.js failed: ${e.message}`);
+      }
+
+      // ── Strategy 3: Albumaty Direct MP3 ────────────────────────────────
+      try {
+        let title = "";
+        let artist = "";
         try {
-          console.log(`[Stream] Trying public proxy: ${proxy} for ${videoId}...`);
-          const res = await withTimeout(fetch(`${proxy}/api/v1/videos/${videoId}`), 5000, null);
-          if (res && res.ok) {
-            const data = await res.json();
-            const format = data.adaptiveFormats?.find((f: any) => f.type?.includes('audio') || f.container?.includes('m4a'));
-            if (format?.url) return await cache(format.url);
-          }
-        } catch (e) {
-          console.warn(`[Stream] Proxy ${proxy} failed for ${videoId}`);
-        }
-      }
-
-      // 2. Parallel Strategy: Try Albumaty & YouTube Info simultaneously
-      let title = "";
-      let artist = "";
-      
-      try {
-        const innertube = await getYTWeb();
-        const mainInfo = await innertube.getBasicInfo(videoId).catch(() => null);
-        title = mainInfo?.basic_info?.title || "";
-        artist = mainInfo?.basic_info?.author || "";
-        
-        console.log(`[Stream] Starting parallel resolution for ${title || videoId}...`);
-        
-        const result = await Promise.any([
-          // Strategy A: Albumaty (Direct MP3)
-          (async () => {
-             if (!title) throw new Error("no_title");
-             const url = await resolveAlbumatyStream(sanitizeTitle(title), artist);
-             if (!url) throw new Error("albumaty_no_hit");
-             console.log(`[Stream] Albumaty hit for ${title}!`);
-             return url;
-          })(),
-          // Strategy B: YouTube Primary (Try music first, then main)
-          (async () => {
-             for (const method of ['getInfo', 'getBasicInfo']) {
-               try {
-                 const info = await (innertube.music as any)[method === 'getInfo' ? 'getInfo' : 'getBasicInfo'](videoId);
-                 const format = (info as any).chooseFormat?.({ type: "audio", quality: "best", format: "mp4" }) ??
-                                (info as any).chooseFormat?.({ type: "audio", quality: "best" });
-                 if (format?.url) return format.url;
-                 if (format && ((format as any).signature_cipher || (format as any).cipher)) {
-                    return (format as any).decipher(innertube.session.player);
-                 }
-               } catch (e) {}
-             }
-             // Last chance: Try standard getInfo
-             const info = await innertube.getInfo(videoId);
-             const fmt = info.chooseFormat({ type: "audio", quality: "best" });
-             if (fmt?.url) return fmt.url;
-             throw new Error("youtube_no_format");
-          })()
-        ]).catch(() => null);
-
-        if (result) return await cache(result);
-      } catch (err: any) {
-        console.warn(`[Stream] Strategy set 1 failed for ${videoId}: ${err.message}`);
-      }
-
-      // 3. Optional: External Proxy Fallback (Highly recommended for Vercel)
-      try {
-        const proxyBase = process.env.EXTERNAL_STREAMING_PROXY;
-        if (proxyBase) {
-          console.log(`[Stream] Trying external proxy for ${videoId}...`);
-          const res = await fetch(`${proxyBase.endsWith('/') ? proxyBase : proxyBase + '/'}api/resolve?id=${videoId}`, {
-            headers: { 'Authorization': `Bearer ${process.env.AUTH_JWT_SECRET}` }
-          });
-          const data = await res.json();
-          if (data?.url) return await cache(data.url);
-        }
-      } catch (err: any) {
-        console.warn(`[Stream] External proxy failed: ${err.message}`);
-      }
-
-      // 4. Fallback: Mirror Search
-      try {
-          console.log(`[Stream] Trying mirror search for ${videoId}...`);
           const innertube = await getYTWeb();
-          const searchTitle = title ? `${title} ${artist}` : videoId;
-          const search: any = await innertube.music.search(searchTitle, { type: "song" }).catch(() => null);
-          const mirror = search?.songs?.contents?.find((v: any) => (v.id || v.videoId) !== videoId) || 
-                         search?.contents?.find((v: any) => (v.id || v.videoId) !== videoId);
-          if (mirror) {
-            const mirrorId = mirror.id || mirror.videoId;
-            const info = await (innertube.music as any).getInfo(mirrorId).catch(() => innertube.getInfo(mirrorId));
-            const fmt = (info as any).chooseFormat({ type: "audio", quality: "best" });
-            if (fmt?.url) return await cache(fmt.url);
-          }
-      } catch (err: any) {
-        console.warn(`[Stream] Mirror search failed: ${err?.message || "Unknown error"}`);
-      }
+          const info = await withTimeout(innertube.getBasicInfo(videoId), 5000, null);
+          title = info?.basic_info?.title || "";
+          artist = info?.basic_info?.author || "";
+        } catch {}
 
-      // 5. Last Resort: yt-dlp
-      try {
-        const fs = await import("fs");
-        if (fs.existsSync(YT_DLP_PATH)) {
-          console.log(`[Stream] Last resort yt-dlp for ${videoId}...`);
-          const { stdout } = await execPromise(`"${YT_DLP_PATH}" -g -f "bestaudio[ext=m4a]/bestaudio" --no-playlist "${videoId}"`);
-          const url = stdout.trim();
-          if (url) return await cache(url);
+        if (title) {
+          console.log(`[Stream] Trying Albumaty for: ${title}...`);
+          const url = await withTimeout(
+            resolveAlbumatyStream(sanitizeTitle(title), artist),
+            6000,
+            null
+          );
+          if (url) return await cacheAndReturn(url);
         }
-      } catch (err: any) {
-        console.error(`[Stream] All resolution methods failed for ${videoId}: ${err.message}`);
+      } catch (e: any) {
+        console.warn(`[Stream] Albumaty failed: ${e.message}`);
       }
 
-      throw new Error("stream_resolve_failed");
+      // ── Strategy 4: Invidious Public Proxy Pool ─────────────────────────
+      try {
+        console.log(`[Stream] Trying Invidious proxies for ${videoId}...`);
+        const url = await withTimeout(resolveWithInvidious(videoId), 12000, "");
+        if (url) return await cacheAndReturn(url);
+      } catch (e: any) {
+        console.warn(`[Stream] Invidious failed: ${e.message}`);
+      }
+
+      // ── Strategy 5: yt-dlp (Local dev only — won't work on Vercel) ──────
+      try {
+        const { existsSync } = await import("fs");
+        if (existsSync(YT_DLP_PATH)) {
+          const { exec } = await import("child_process");
+          const { promisify } = await import("util");
+          const execPromise = promisify(exec);
+          console.log(`[Stream] Trying yt-dlp (dev mode) for ${videoId}...`);
+          const { stdout } = await execPromise(
+            `"${YT_DLP_PATH}" -g -f "bestaudio[ext=m4a]/bestaudio" --no-playlist "https://www.youtube.com/watch?v=${videoId}"`
+          );
+          const url = stdout.trim();
+          if (url) return await cacheAndReturn(url);
+        }
+      } catch (e: any) {
+        console.warn(`[Stream] yt-dlp failed: ${e.message}`);
+      }
+
+      throw new Error("stream_resolve_failed: all strategies exhausted");
     })(),
-    30000,
+    28000,
     ""
-  ).then(res => {
+  ).then((res) => {
     if (!res) throw new Error("stream_resolve_timeout");
-    console.log(`[Stream] Resolved ${videoId} in ${Date.now() - start}ms`);
     return res;
   });
 }
@@ -439,7 +489,6 @@ export async function getArtistDetails(artistId: string) {
     }
   });
 
-  // Parallel fetch extra content (Albums/Singles full lists)
   try {
     const extraPromises = [...albumPromises.map(p => ({ p, type: 'albums' })), ...songPromises.map(p => ({ p, type: 'songs' }))];
     
@@ -450,7 +499,6 @@ export async function getArtistDetails(artistId: string) {
         
         const res: any = await (innertube as any).actions.execute(action, payload);
         
-        // Broad search for any list items in the response
         let contents: any[] = [];
         const findItems = (obj: any): any[] => {
           if (!obj || typeof obj !== 'object') return [];

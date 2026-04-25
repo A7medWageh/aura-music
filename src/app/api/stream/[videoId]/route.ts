@@ -14,15 +14,22 @@ export async function GET(req: NextRequest, { params }: Params) {
   
   try {
     const { videoId } = await params;
+    const title = req.nextUrl.searchParams.get("title") || "audio";
+    
+    // ALWAYS resolve + proxy through our server.
+    // googlevideo.com URLs are IP-bound and will 403 if played directly in the browser.
+    // Our /api/download acts as the proxy that fetches and re-streams the audio.
     const streamUrl = await getStreamingUrl(videoId);
     
-    // If the URL is bound to Vercel's IP (googlevideo), we must proxy it 
-    // through our own server to avoid 403 Forbidden on the client.
-    if (streamUrl.includes("googlevideo.com")) {
-      return NextResponse.json({ streamUrl: `/api/download?videoId=${videoId}&title=audio` });
+    // If the URL is already one of our own endpoints, return it as-is
+    if (streamUrl.startsWith("/api/")) {
+      return NextResponse.json({ streamUrl });
     }
 
-    return NextResponse.json({ streamUrl });
+    // For all external URLs (googlevideo, cdn, etc.) — proxy through our server
+    return NextResponse.json({ 
+      streamUrl: `/api/download?videoId=${videoId}&title=${encodeURIComponent(title)}` 
+    });
   } catch (error) {
     console.error("Streaming error:", error);
     return fail("STREAM_ERROR", error instanceof Error ? error.message : "Failed to resolve stream", 500);
