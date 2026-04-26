@@ -37,6 +37,7 @@ self.addEventListener("fetch", (event) => {
   }
 
   if (request.method !== "GET") return;
+  if (!url.protocol.startsWith("http")) return;
 
   if (request.mode === "navigate") {
     event.respondWith(handleNavigation(request));

@@ -41,14 +41,17 @@ export async function GET(req: NextRequest) {
     }
 
     // Proxy the audio stream, forwarding Range headers for seek support
+    const isGoogleVideo = streamUrl.includes("googlevideo.com");
     const rangeHeader = req.headers.get("range");
     const fetchHeaders: HeadersInit = {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
       "Accept": "audio/webm,audio/ogg,audio/wav,audio/*;q=0.9,*/*;q=0.8",
       "Accept-Language": "en-US,en;q=0.9",
-      "Origin": "https://www.youtube.com",
-      "Referer": "https://www.youtube.com/",
     };
+    if (isGoogleVideo) {
+      fetchHeaders["Origin"] = "https://www.youtube.com";
+      fetchHeaders["Referer"] = "https://www.youtube.com/";
+    }
     if (rangeHeader) {
       fetchHeaders["Range"] = rangeHeader;
     }

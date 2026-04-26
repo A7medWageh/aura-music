@@ -25,7 +25,6 @@ export const metadata: Metadata = {
   },
   other: {
     "mobile-web-app-capable": "yes",
-    "apple-mobile-web-app-capable": "yes",
     "apple-mobile-web-app-status-bar-style": "black-translucent",
   },
 };
@@ -40,7 +39,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <link rel="apple-touch-icon" sizes="192x192" href="/logo.png" />
         <link rel="apple-touch-icon" sizes="512x512" href="/logo.png" />
         {/* Splash screens for iPhone */}
-        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <meta name="apple-mobile-web-app-title" content="Aura" />
       </head>

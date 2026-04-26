@@ -142,8 +142,7 @@ export async function GET(req: NextRequest, { params }: Params) {
 
       if (resolved.directPlayable) {
         // Audio URL is from Piped/Invidious CDN — browser can play directly!
-        // But we still proxy it to handle Range requests and CORS.
-        streamUrl = `/api/download?videoId=${videoId}&src=${encodeURIComponent(resolved.audioUrl)}`;
+        streamUrl = resolved.audioUrl;
       } else {
         // googlevideo.com URL — must proxy through our server
         streamUrl = `/api/download?videoId=${videoId}&src=${encodeURIComponent(resolved.audioUrl)}`;
