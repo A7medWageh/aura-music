@@ -31,9 +31,10 @@ RUN npm run build
 # Set environment variables
 ENV NODE_ENV=production
 ENV YT_DLP_PATH=/usr/local/bin/yt-dlp
+ENV PORT=7860
 
 # Expose port
-EXPOSE 3000
+EXPOSE 7860
 
 # Start command
 CMD ["npm", "start"]
