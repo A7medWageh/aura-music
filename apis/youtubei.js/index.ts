@@ -211,39 +211,18 @@ const PIPED_INSTANCES = [
  * Does NOT use YouTube directly, bypasses Vercel IP blocks.
  */
 async function resolveWithPiped(videoId: string): Promise<string> {
-  for (const api of PIPED_INSTANCES) {
-    try {
-      const res = await withTimeout(
-        fetch(`${api}/streams/${videoId}`, {
-          headers: {
-            "User-Agent": "Mozilla/5.0 (compatible; Aura/1.0)",
-            "Accept": "application/json",
-          },
-        }),
-        8000,
-        null
-      );
-      if (!res || !res.ok) continue;
-      const data = await res.json();
-      
-      // audioStreams is the primary source in Piped API
-      const audioStreams: any[] = data.audioStreams ?? [];
-      if (!audioStreams.length) continue;
-
-      // Sort by bitrate descending and pick best
-      const best = audioStreams
-        .filter((s: any) => s.url && s.bitrate)
-        .sort((a: any, b: any) => (b.bitrate ?? 0) - (a.bitrate ?? 0))[0];
-        
-      if (best?.url) {
-        console.log(`[Stream] Piped hit: ${api} bitrate=${best.bitrate}`);
-        return best.url;
-      }
-    } catch {
-      // try next
-    }
-  }
-  throw new Error("piped: all instances failed");
+  return Promise.any(PIPED_INSTANCES.map(async (api) => {
+    const res = await withTimeout(
+      fetch(`${api}/streams/${videoId}`, {
+        headers: { "User-Agent": "Mozilla/5.0 (compatible; Aura/1.0)", "Accept": "application/json" }
+      }), 7000, null
+    );
+    if (!res || !res.ok) throw new Error("failed");
+    const data = await res.json();
+    const best = (data.audioStreams ?? []).filter((s: any) => s.url).sort((a: any, b: any) => (b.bitrate ?? 0) - (a.bitrate ?? 0))[0];
+    if (best?.url) return best.url;
+    throw new Error("no url");
+  }));
 }
 
 /**
@@ -315,35 +294,20 @@ const PUBLIC_INVIDIOUS = [
 ];
 
 async function resolveWithInvidious(videoId: string): Promise<string> {
-  for (const proxy of PUBLIC_INVIDIOUS) {
-    try {
-      const res = await withTimeout(
-        fetch(`${proxy}/api/v1/videos/${videoId}`, {
-          headers: { "User-Agent": "Mozilla/5.0" },
-        }),
-        6000,
-        null
-      );
-      if (res && res.ok) {
-        const data = await res.json();
-        const formats: any[] = data.adaptiveFormats ?? [];
-        const audioFmt =
-          formats.find((f: any) => f.type?.includes("audio/webm") && f.audioQuality === "AUDIO_QUALITY_MEDIUM") ??
-          formats.find((f: any) => f.type?.includes("audio")) ??
-          null;
-        if (audioFmt?.url) {
-          console.log(`[Stream] Invidious hit: ${proxy}`);
-          return audioFmt.url;
-        }
-      }
-    } catch {
-      // try next proxy
-    }
-  }
-  throw new Error("invidious: all proxies failed");
+  return Promise.any(PUBLIC_INVIDIOUS.map(async (proxy) => {
+    const res = await withTimeout(
+      fetch(`${proxy}/api/v1/videos/${videoId}`, { headers: { "User-Agent": "Mozilla/5.0" } }), 7000, null
+    );
+    if (!res || !res.ok) throw new Error("failed");
+    const data = await res.json();
+    const formats: any[] = data.adaptiveFormats ?? [];
+    const best = formats.find((f: any) => f.type?.includes("audio/webm") && f.audioQuality === "AUDIO_QUALITY_MEDIUM") ?? formats.find((f: any) => f.type?.includes("audio"));
+    if (best?.url) return best.url;
+    throw new Error("no url");
+  }));
 }
 
-export async function resolveStream(videoId: string): Promise<string> {
+export async function resolveStream(videoId: string, providedTitle?: string, providedArtist?: string): Promise<string> {
   const start = Date.now();
   console.log(`[Stream] Resolving ${videoId}...`);
 
@@ -416,14 +380,16 @@ export async function resolveStream(videoId: string): Promise<string> {
 
       // ── Strategy 5: Albumaty Direct MP3 (for Arabic music) ──────────────
       try {
-        let title = "";
-        let artist = "";
-        try {
-          const innertube = await getYTWeb();
-          const info = await withTimeout(innertube.getBasicInfo(videoId), 4000, null);
-          title = info?.basic_info?.title || "";
-          artist = info?.basic_info?.author || "";
-        } catch {}
+        let title = providedTitle || "";
+        let artist = providedArtist || "";
+        if (!title) {
+          try {
+            const innertube = await getYTWeb();
+            const info = await withTimeout(innertube.getBasicInfo(videoId), 4000, null);
+            title = info?.basic_info?.title || "";
+            artist = info?.basic_info?.author || "";
+          } catch {}
+        }
 
         if (title) {
           console.log(`[Stream] Trying Albumaty for: ${title}...`);

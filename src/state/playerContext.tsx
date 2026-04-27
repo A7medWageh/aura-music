@@ -182,18 +182,47 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // Warm cache: fetch("/api/stream/VIDEO_ID") anywhere to speed up future plays
   const streamCacheRef = useRef<Map<string, string>>(new Map());
 
-  const resolveStream = async (videoId: string): Promise<string> => {
-    // We use the /api/download proxy route for 100% reliable playback.
-    // This bypasses YouTube IP-binding restrictions and ensures seeking (Range) works.
-    return `/api/download?videoId=${encodeURIComponent(videoId)}`;
+  const PIPED_INSTANCES = [
+    "https://pipedapi.kavin.rocks",
+    "https://pipedapi.adminforge.de",
+    "https://piped-api.garudalinux.org",
+    "https://api.piped.yt",
+    "https://pipedapi.kescher.at",
+    "https://piped.video/api",
+    "https://pipedapi.tokhmi.xyz",
+    "https://pipedapi.moomoo.me",
+  ];
+
+  const resolveStream = async (videoId: string, title?: string, artist?: string): Promise<string> => {
+    // Try to resolve using Piped API directly from the client (bypasses Vercel IP blocks!)
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
+      const streamUrl = await Promise.any(PIPED_INSTANCES.map(async (api) => {
+        const res = await fetch(`${api}/streams/${videoId}`, { signal: controller.signal });
+        if (!res.ok) throw new Error("bad");
+        const data = await res.json();
+        const streams = data.audioStreams ?? [];
+        const best = streams.filter((s: any) => s.url).sort((a: any, b: any) => (b.bitrate ?? 0) - (a.bitrate ?? 0))[0];
+        if (best?.url) return best.url;
+        throw new Error("no url");
+      }));
+      clearTimeout(timeoutId);
+      return streamUrl;
+    } catch {
+      // Fallback to Vercel proxy with full metadata for Albumaty search
+      return `/api/download?videoId=${encodeURIComponent(videoId)}&title=${encodeURIComponent(title || "audio")}&artist=${encodeURIComponent(artist || "")}`;
+    }
   };
 
   const preloadNext = (currentId: string, queue: QueueSong[]) => {
     const idx = queue.findIndex(s => s.songId === currentId);
-    const next = queue[idx + 1];
-    if (next?.youtubeVideoId && !streamCacheRef.current.has(next.youtubeVideoId)) {
+    const nextSong = queue[idx + 1];
+    if (nextSong?.youtubeVideoId && !streamCacheRef.current.has(nextSong.youtubeVideoId)) {
       // Fire and forget — warm the cache silently
-      resolveStream(next.youtubeVideoId).catch(() => {});
+      resolveStream(nextSong.youtubeVideoId, nextSong.title, nextSong.artist).then(url => {
+        if (!url.startsWith("/api/download")) streamCacheRef.current.set(nextSong.youtubeVideoId, url);
+      }).catch(() => {});
     }
   };
 
@@ -228,7 +257,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         }
 
         // 2. Resolve proxied stream URL
-        const streamUrl = await resolveStream(song.youtubeVideoId);
+        const cachedUrl = streamCacheRef.current.get(song.youtubeVideoId);
+        const streamUrl = cachedUrl || await resolveStream(song.youtubeVideoId, song.title, song.artist);
+        
+        if (!cachedUrl && !streamUrl.startsWith("/api/download")) {
+          streamCacheRef.current.set(song.youtubeVideoId, streamUrl);
+        }
 
         if (!cancelled) {
           // Keep isBuffering: true! It will be set to false by 'playing' event

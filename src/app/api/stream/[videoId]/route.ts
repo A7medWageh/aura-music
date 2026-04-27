@@ -69,58 +69,44 @@ async function resolveStream(videoId: string): Promise<ResolvedStream> {
   const cached = urlCache.get(videoId);
   if (cached && cached.expiresAt > Date.now()) return cached.stream;
 
-  // Strategy 1: Piped API — audio URLs are served from Piped's own CDN (not YouTube)
-  for (const api of PIPED_INSTANCES) {
-    const res = await tryFetch(`${api}/streams/${videoId}`, 9000);
-    if (!res?.ok) continue;
-    try {
+  // Strategy 1: Piped API — Concurrent resolution
+  try {
+    const stream = await Promise.any(PIPED_INSTANCES.map(async (api) => {
+      const res = await tryFetch(`${api}/streams/${videoId}`, 6000);
+      if (!res?.ok) throw new Error("failed");
       const data = await res.json();
       const streams: any[] = data.audioStreams ?? [];
-      if (!streams.length) continue;
-      
-      const best = streams
-        .filter((s: any) => s.url)
-        .sort((a: any, b: any) => (b.bitrate ?? 0) - (a.bitrate ?? 0))[0];
-      
-      if (best?.url) {
-        const stream: ResolvedStream = {
-          audioUrl: best.url,
-          // Piped CDN URLs (containing "videoplayback" from their proxied domain) 
-          // can be played directly by the browser
-          directPlayable: !best.url.includes("googlevideo.com"),
-          pipedBase: api.replace("/api", ""),
-        };
-        urlCache.set(videoId, { stream, expiresAt: Date.now() + 3 * 60 * 60 * 1000 });
-        console.log(`[Stream] ✅ Piped (${api}) for ${videoId} direct=${stream.directPlayable}`);
-        return stream;
-      }
-    } catch {}
-    console.warn(`[Stream] ❌ Piped ${api} for ${videoId}`);
-  }
+      const best = streams.filter((s: any) => s.url).sort((a: any, b: any) => (b.bitrate ?? 0) - (a.bitrate ?? 0))[0];
+      if (!best?.url) throw new Error("no url");
+      return {
+        audioUrl: best.url,
+        directPlayable: !best.url.includes("googlevideo.com"),
+        pipedBase: api.replace("/api", "")
+      } as ResolvedStream;
+    }));
+    urlCache.set(videoId, { stream, expiresAt: Date.now() + 3 * 60 * 60 * 1000 });
+    console.log(`[Stream] ✅ Piped concurrent success for ${videoId}`);
+    return stream;
+  } catch {}
 
-  // Strategy 2: Invidious
-  for (const api of INVIDIOUS_INSTANCES) {
-    const res = await tryFetch(`${api}/api/v1/videos/${videoId}`, 8000);
-    if (!res?.ok) continue;
-    try {
+  // Strategy 2: Invidious — Concurrent resolution
+  try {
+    const stream = await Promise.any(INVIDIOUS_INSTANCES.map(async (api) => {
+      const res = await tryFetch(`${api}/api/v1/videos/${videoId}`, 6000);
+      if (!res?.ok) throw new Error("failed");
       const data = await res.json();
       const formats: any[] = data.adaptiveFormats ?? [];
-      const best =
-        formats.find((f: any) => f.type?.includes("audio/webm") && f.audioQuality === "AUDIO_QUALITY_MEDIUM") ??
-        formats.find((f: any) => f.type?.includes("audio")) ??
-        null;
-      if (best?.url) {
-        const stream: ResolvedStream = {
-          audioUrl: best.url,
-          directPlayable: !best.url.includes("googlevideo.com"),
-        };
-        urlCache.set(videoId, { stream, expiresAt: Date.now() + 2 * 60 * 60 * 1000 });
-        console.log(`[Stream] ✅ Invidious (${api}) for ${videoId}`);
-        return stream;
-      }
-    } catch {}
-    console.warn(`[Stream] ❌ Invidious ${api} for ${videoId}`);
-  }
+      const best = formats.find((f: any) => f.type?.includes("audio/webm") && f.audioQuality === "AUDIO_QUALITY_MEDIUM") ?? formats.find((f: any) => f.type?.includes("audio"));
+      if (!best?.url) throw new Error("no url");
+      return {
+        audioUrl: best.url,
+        directPlayable: !best.url.includes("googlevideo.com")
+      } as ResolvedStream;
+    }));
+    urlCache.set(videoId, { stream, expiresAt: Date.now() + 2 * 60 * 60 * 1000 });
+    console.log(`[Stream] ✅ Invidious concurrent success for ${videoId}`);
+    return stream;
+  } catch {}
 
   // Strategy 3: Last resort — youtubei.js / ytdl-core via download endpoint
   console.warn(`[Stream] All direct resolvers failed for ${videoId}, using download fallback`);

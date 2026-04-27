@@ -11,6 +11,7 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const videoId = searchParams.get("videoId");
   const title = searchParams.get("title") || "song";
+  const artist = searchParams.get("artist") || "";
   // Pre-resolved URL passed from /api/stream (Piped/Invidious)
   const preResolvedSrc = searchParams.get("src");
 
@@ -35,7 +36,7 @@ export async function GET(req: NextRequest) {
         console.log(`[DownloadAPI] Cache hit for ${videoId}`);
       } else {
         console.log(`[DownloadAPI] Resolving stream for ${videoId}...`);
-        streamUrl = await resolveStream(videoId);
+        streamUrl = await resolveStream(videoId, title, artist);
         streamUrlCache.set(videoId, { url: streamUrl, expiresAt: Date.now() + 3 * 60 * 60 * 1000 });
       }
     }
