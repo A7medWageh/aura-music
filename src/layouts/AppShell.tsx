@@ -60,7 +60,8 @@ export function AppShell({ children }: { children: ReactNode }) {
               borderBottom: "1px solid rgba(255,255,255,0.05)"
             }}
           >
-            <div className="flex-1 max-w-full">
+            <div className="flex items-center gap-2 flex-1 max-w-full">
+              <img src="/logo.png" alt="Aura" className="w-8 h-8 rounded-lg shadow-sm" />
               <SmartSearchBar />
             </div>
             <div className="flex items-center gap-2 mr-2 shrink-0">

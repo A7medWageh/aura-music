@@ -200,6 +200,8 @@ function JobRow({ job }: { job: DownloadJob }) {
           job.totalBytes /
           (1024 * 1024)
         ).toFixed(1)} MB`
+      : job.progressBytes && job.progressBytes > 0
+      ? `${((job.progressBytes || 0) / (1024 * 1024)).toFixed(1)} MB`
       : `${job.done}/${job.total}`;
 
   return (

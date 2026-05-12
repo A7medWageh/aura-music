@@ -19,7 +19,7 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
+# Install ALL dependencies (including dev — needed for build)
 RUN npm install
 
 # Copy project files
@@ -28,13 +28,20 @@ COPY . .
 # Build the Next.js app
 RUN npm run build
 
+# Copy standalone output to working dir
+RUN cp -r .next/standalone/. . && \
+    cp -r .next/static .next/standalone/.next/static && \
+    cp -r public .next/standalone/public
+
 # Set environment variables
 ENV NODE_ENV=production
 ENV YT_DLP_PATH=/usr/local/bin/yt-dlp
-ENV PORT=7860
+# Railway provides PORT automatically
+ENV PORT=3000
 
 # Expose port
-EXPOSE 7860
+EXPOSE 3000
 
-# Start command
-CMD ["npm", "start"]
+# Start using Next.js standalone server
+CMD ["node", ".next/standalone/server.js"]
+

@@ -1,31 +1,104 @@
+/**
+ * smartSearch.ts
+ * ──────────────
+ * Hybrid search:
+ *   1. YouTube Music search (songs, artists, albums)
+ *   2. MusicApi local catalog search (songs by name prefix)
+ *
+ * Results are merged, de-duplicated, and sorted by relevance.
+ * MusicApi songs appear first (they are the "official" catalog).
+ */
 import { searchYouTube, resolveStream } from "@apis/youtubei.js";
+import { getAllSongs, getAllArtists } from "@/services/music/musicApiClient";
+import { enrichSongs } from "@/services/music/songEnricher";
 
-// ── In-memory cache shared across all requests in same process ----------------
+// ── In-memory cache shared across all requests ────────────────────────────────
 const cache = new Map<string, { data: any; ts: number }>();
 const CACHE_TTL = 3 * 60 * 1000; // 3 min
+
+// Catalog cache — loaded once and kept in process
+let catalogSongs: any[] | null = null;
+let catalogLoadedAt = 0;
+const CATALOG_TTL = 15 * 60 * 1000; // 15 min
+
+async function getLocalCatalog() {
+  if (catalogSongs && Date.now() - catalogLoadedAt < CATALOG_TTL) {
+    return catalogSongs;
+  }
+  try {
+    const [songsRes, artistsRes] = await Promise.all([
+      getAllSongs(1, 500),
+      getAllArtists(1, 200),
+    ]);
+    const artistsById = new Map(artistsRes.data.map((a) => [a.id, a]));
+    catalogSongs = await enrichSongs(songsRes.data, artistsById);
+    catalogLoadedAt = Date.now();
+    return catalogSongs;
+  } catch {
+    return [];
+  }
+}
+
+function scoreMatch(query: string, title: string, artist: string): number {
+  const q = query.toLowerCase();
+  const t = title.toLowerCase();
+  const a = artist.toLowerCase();
+  if (t === q) return 100;
+  if (t.startsWith(q)) return 90;
+  if (t.includes(q)) return 70;
+  if (a.includes(q)) return 50;
+  const words = q.split(/\s+/);
+  const matched = words.filter((w) => t.includes(w) || a.includes(w)).length;
+  return Math.round((matched / words.length) * 40);
+}
 
 export async function smartSearch(searchTerm: string) {
   const q = searchTerm.trim();
   if (!q) return { songs: [], artists: [], albums: [] };
 
-  // Cache hit – return instantly
+  // Cache hit
   const hit = cache.get(q.toLowerCase());
   if (hit && Date.now() - hit.ts < CACHE_TTL) return hit.data;
 
-  // YouTube Music search (parallel in youtubei.js layer already)
-  const ytResults = await searchYouTube(q);
+  // Run YouTube search + local catalog search in parallel
+  const [ytResults, localCatalog] = await Promise.all([
+    searchYouTube(q).catch(() => ({ songs: [], artists: [], albums: [] })),
+    getLocalCatalog(),
+  ]);
+
+  // Filter local catalog for matches
+  const localMatches = localCatalog
+    .map((song: any) => ({
+      song,
+      score: scoreMatch(q, song.title, song.artist),
+    }))
+    .filter((r) => r.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 10)
+    .map((r) => r.song);
+
+  // Normalize YouTube results
+  const ytSongs = ytResults.songs.map((item: any) => ({
+    songId: item.songId ?? item.videoId,
+    title: item.title,
+    artist: item.artist ?? "فنان غير معروف",
+    artistId: `yt-${item.artist ?? "unknown"}`,
+    albumId: null,
+    albumTitle: null,
+    youtubeVideoId: item.youtubeVideoId ?? item.songId,
+    thumbnailUrl: item.thumbnailUrl ?? null,
+    source: "youtube",
+  }));
+
+  // Merge: local first (official catalog), then YouTube (deduped by title)
+  const seenIds = new Set(localMatches.map((s: any) => s.youtubeVideoId));
+  const mergedSongs = [
+    ...localMatches,
+    ...ytSongs.filter((s: any) => !seenIds.has(s.youtubeVideoId)),
+  ].slice(0, 20);
 
   const result = {
-    songs: ytResults.songs.map((item: any) => ({
-      songId: item.songId ?? item.videoId,
-      title: item.title,
-      artist: item.artist ?? "فنان غير معروف",
-      artistId: `yt-${item.artist ?? "unknown"}`,
-      albumId: null,
-      albumTitle: null,
-      youtubeVideoId: item.youtubeVideoId ?? item.songId,
-      thumbnailUrl: item.thumbnailUrl ?? null,
-    })),
+    songs: mergedSongs,
     artists: ytResults.artists.map((a: any) => ({
       artistId: a.artistId,
       artistName: a.artistName,
@@ -41,10 +114,10 @@ export async function smartSearch(searchTerm: string) {
 
   cache.set(q.toLowerCase(), { data: result, ts: Date.now() });
 
-  // Background pre-fetch for top 3 results to make them "bullet fast"
+  // Background pre-fetch top 3 stream URLs for instant playback
   setTimeout(() => {
     result.songs.slice(0, 3).forEach((s: any) => {
-       resolveStream(s.youtubeVideoId).catch(() => {});
+      if (s.youtubeVideoId) resolveStream(s.youtubeVideoId).catch(() => {});
     });
   }, 500);
 
