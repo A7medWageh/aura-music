@@ -1,45 +1,97 @@
 import { NextResponse } from "next/server";
 import { searchYouTube } from "@/../apis/youtubei.js/index";
 
-function fuzzyMatch(needle: string, haystack: string): boolean {
-  const n = needle.toLowerCase();
-  const h = haystack.toLowerCase();
-  return n.split(/\s+/).every((word) => h.includes(word));
+// In-memory cache to avoid re-searching the same song
+const resolveCache = new Map<string, { videoId: string; title: string; ts: number }>();
+const CACHE_TTL = 30 * 60 * 1000; // 30 minutes
+
+function normalize(s: string): string {
+  return s.toLowerCase()
+    .replace(/[^\u0600-\u06FFa-z0-9\s]/g, "") // keep Arabic + Latin + numbers
+    .replace(/\s+/g, " ").trim();
+}
+
+function scoreMatch(result: any, title: string, artist: string): number {
+  const rTitle = normalize(result.title ?? "");
+  const rArtist = normalize(result.artist ?? result.artistName ?? "");
+  const nTitle = normalize(title);
+  const nArtist = normalize(artist);
+
+  let score = 0;
+
+  // Title match (most important)
+  const titleWords = nTitle.split(/\s+/).filter(w => w.length > 1);
+  const titleMatchCount = titleWords.filter(w => rTitle.includes(w)).length;
+  score += (titleMatchCount / Math.max(titleWords.length, 1)) * 60;
+
+  // Artist match (important)
+  if (nArtist && rArtist) {
+    const artistWords = nArtist.split(/\s+/).filter(w => w.length > 1);
+    const artistMatchCount = artistWords.filter(w => rArtist.includes(w)).length;
+    score += (artistMatchCount / Math.max(artistWords.length, 1)) * 30;
+  }
+
+  // Penalize if result title is too different in length (likely wrong song)
+  const lenRatio = Math.min(rTitle.length, nTitle.length) / Math.max(rTitle.length, nTitle.length, 1);
+  score += lenRatio * 10;
+
+  return score;
 }
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
-  const title = searchParams.get("title");
-  const artist = searchParams.get("artist");
+  const title = searchParams.get("title")?.trim();
+  const artist = searchParams.get("artist")?.trim() ?? "";
 
-  if (!title || !artist) {
-    return NextResponse.json({ success: false, error: "Missing title or artist" }, { status: 400 });
+  if (!title) {
+    return NextResponse.json({ success: false, error: "Missing title" }, { status: 400 });
+  }
+
+  const cacheKey = `${title}__${artist}`.toLowerCase();
+
+  // Return cached result instantly
+  const cached = resolveCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < CACHE_TTL) {
+    return NextResponse.json({ success: true, videoId: cached.videoId, title: cached.title, fromCache: true });
   }
 
   try {
-    const query = `${title} ${artist}`;
+    // Better query: include artist explicitly and "audio" to prefer music results
+    const query = artist
+      ? `${title} ${artist} official audio`
+      : `${title} official audio`;
+
     const searchRes = await searchYouTube(query);
-    const results = searchRes.songs || [];
-    
-    if (!results || results.length === 0) {
-      return NextResponse.json({ success: false, error: "Not found" }, { status: 404 });
+    const results: any[] = searchRes?.songs ?? [];
+
+    if (!results.length) {
+      return NextResponse.json({ success: false, error: "No results found" }, { status: 404 });
     }
 
-    // Try to find the exact song by fuzzy matching title
-    let bestMatch = results.find((s: any) => fuzzyMatch(title.split(/[-–(]/)[0].trim(), s.title ?? ""));
-    
-    // If not found, just use the first result
-    if (!bestMatch) {
-      bestMatch = results[0];
+    // Score all results and pick the best match
+    const scored = results
+      .map(r => ({ ...r, _score: scoreMatch(r, title, artist) }))
+      .sort((a, b) => b._score - a._score);
+
+    const best = scored[0];
+    const videoId = best.videoId ?? best.songId;
+
+    if (!videoId) {
+      return NextResponse.json({ success: false, error: "No videoId in result" }, { status: 404 });
     }
 
-    return NextResponse.json({ 
-      success: true, 
-      videoId: bestMatch.videoId || bestMatch.songId,
-      title: bestMatch.title
+    // Cache result
+    resolveCache.set(cacheKey, { videoId, title: best.title, ts: Date.now() });
+
+    return NextResponse.json({
+      success: true,
+      videoId,
+      title: best.title,
+      score: best._score,
     });
   } catch (error: any) {
     console.error("[Lazy Resolve] Error:", error.message);
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
 }
+
