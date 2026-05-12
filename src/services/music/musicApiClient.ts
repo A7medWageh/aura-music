@@ -58,9 +58,9 @@ export interface MApiPaginated<T> {
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-function getBaseUrl(): string {
+function getBaseUrl(): string | null {
   const url = process.env.MUSIC_API_BASE_URL;
-  if (!url) throw new Error("MUSIC_API_BASE_URL is not set in environment");
+  if (!url) return null;
   return url.replace(/\/$/, "");
 }
 
@@ -77,9 +77,12 @@ async function cachedFetch<T>(
   if (hit && hit.expiresAt > Date.now()) return hit.data as T;
 
   const base = getBaseUrl();
+  if (!base) {
+    throw new Error("MUSIC_API_BASE_URL is not configured. Please set it in your environment variables.");
+  }
+
   const res = await fetch(`${base}${path}`, {
     headers: { Accept: "application/json" },
-    // next.js fetch cache: revalidate based on TTL
     next: { revalidate: Math.floor(ttlMs / 1000) },
   });
 

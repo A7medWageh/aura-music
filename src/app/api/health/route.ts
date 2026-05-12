@@ -1,34 +1,36 @@
 import { NextResponse } from "next/server";
-import { query } from "../../../../apis/neon";
-import { getRedisClient } from "../../../../apis/redis";
 
 export async function GET() {
-  const db = { ok: false as boolean };
-  const redis = { ok: false as boolean };
+  // Railway healthcheck — just confirm the process is alive.
+  // Individual service checks are informational only and never cause 5xx.
+  let dbOk = false;
+  let redisOk = false;
 
   try {
+    const { query } = await import("../../../../apis/neon");
     await query("SELECT 1");
-    db.ok = true;
+    dbOk = true;
   } catch {
-    db.ok = false;
+    dbOk = false;
   }
 
   try {
+    const { getRedisClient } = await import("../../../../apis/redis");
     const client = getRedisClient();
-    await client.connect().catch(() => undefined);
-    await client.ping();
-    redis.ok = true;
+    await (client as any).ping?.();
+    redisOk = true;
   } catch {
-    redis.ok = false;
+    redisOk = false;
   }
 
-  const ok = db.ok && redis.ok;
-  return NextResponse.json(
-    {
-      ok,
-      service: "music-web-platform",
-      checks: { db, redis }
+  // Always return 200 — app is running regardless of optional service status
+  return NextResponse.json({
+    ok: true,
+    service: "music-web-platform",
+    checks: {
+      db: { ok: dbOk },
+      redis: { ok: redisOk, optional: true },
     },
-    { status: ok ? 200 : 503 }
-  );
+  });
 }
+
