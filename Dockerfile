@@ -1,6 +1,9 @@
 # Base image
 FROM node:20-slim
 
+# Cache bust — forces rebuild when this changes
+ARG BUILD_DATE=2026-05-12-v3
+
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     python3 \
@@ -28,20 +31,17 @@ COPY . .
 # Build the Next.js app
 RUN npm run build
 
-# Copy standalone output to working dir
+# Copy standalone output to correct locations
 RUN cp -r .next/standalone/. . && \
     cp -r .next/static .next/standalone/.next/static && \
     cp -r public .next/standalone/public
 
-# Set environment variables
+# Environment variables
 ENV NODE_ENV=production
 ENV YT_DLP_PATH=/usr/local/bin/yt-dlp
-# Railway provides PORT automatically
 ENV PORT=3000
+ENV HOSTNAME=0.0.0.0
 
-# Expose port
 EXPOSE 3000
 
-# Start using Next.js standalone server
 CMD ["node", ".next/standalone/server.js"]
-
