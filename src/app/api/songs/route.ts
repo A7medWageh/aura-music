@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
     const enriched = songsRes.data.map(song => ({
       songId: `mapi-${song.id}`,
       title: song.name,
-      artist: artistsById.get(song.artistId)?.name || "فنان غير معروف",
+      artist: (song.artistId != null ? artistsById.get(song.artistId)?.name : undefined) || "فنان غير معروف",
       artistId: song.artistId ? String(song.artistId) : null,
       thumbnailUrl: song.imageUrl,
       youtubeVideoId: null, // Will be resolved lazily on play
