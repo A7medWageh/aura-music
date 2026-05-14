@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { searchYouTube } from "@/../apis/youtubei.js/index";
+import { scrapeArabicSong } from "@/../apis/scraping/arabicScraper";
 
 // In-memory cache to avoid re-searching the same song
-const resolveCache = new Map<string, { videoId: string; title: string; ts: number }>();
+const resolveCache = new Map<string, { videoId?: string; streamUrl?: string; isDirectMp3?: boolean; title: string; ts: number }>();
 const CACHE_TTL = 30 * 60 * 1000; // 30 minutes
 
 function normalize(s: string): string {
@@ -52,11 +53,26 @@ export async function GET(req: Request) {
   // Return cached result instantly
   const cached = resolveCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < CACHE_TTL) {
+    if (cached.streamUrl) {
+      return NextResponse.json({ success: true, streamUrl: cached.streamUrl, title: cached.title, isDirectMp3: cached.isDirectMp3, fromCache: true });
+    }
     return NextResponse.json({ success: true, videoId: cached.videoId, title: cached.title, fromCache: true });
   }
 
   try {
-    // Better query: include artist explicitly and "audio" to prefer music results
+    // 1. Try Arabic Scraper first (fastest, most accurate for Arabic songs)
+    const arabicResult = await scrapeArabicSong(title, artist);
+    if (arabicResult && arabicResult.url) {
+      resolveCache.set(cacheKey, { streamUrl: arabicResult.url, isDirectMp3: true, title: arabicResult.title, ts: Date.now() });
+      return NextResponse.json({
+        success: true,
+        streamUrl: arabicResult.url,
+        isDirectMp3: true,
+        title: arabicResult.title
+      });
+    }
+
+    // 2. Fallback to YouTube
     const query = artist
       ? `${title} ${artist} official audio`
       : `${title} official audio`;

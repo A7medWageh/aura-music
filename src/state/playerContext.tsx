@@ -368,19 +368,26 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     (async () => {
       try {
         let videoIdToPlay = song.youtubeVideoId;
+        let directMp3UrlToPlay: string | null = null;
         
         // ⚡ Lazy YouTube Resolution if missing
         if (!videoIdToPlay) {
           try {
             const res = await fetch(`/api/resolve-youtube?title=${encodeURIComponent(song.title)}&artist=${encodeURIComponent(song.artist || "")}`);
             const data = await res.json();
-            if (data.success && data.videoId && !cancelled) {
-              videoIdToPlay = data.videoId;
-              // Mutate queue to save the resolved ID
-              setState(prev => ({
-                ...prev,
-                queue: prev.queue.map(s => s.songId === song.songId ? { ...s, youtubeVideoId: videoIdToPlay } : s)
-              }));
+            if (data.success && !cancelled) {
+              if (data.isDirectMp3 && data.streamUrl) {
+                directMp3UrlToPlay = data.streamUrl;
+              } else if (data.videoId) {
+                videoIdToPlay = data.videoId;
+                // Mutate queue to save the resolved ID
+                setState(prev => ({
+                  ...prev,
+                  queue: prev.queue.map(s => s.songId === song.songId ? { ...s, youtubeVideoId: videoIdToPlay } : s)
+                }));
+              } else {
+                throw new Error("لم نتمكن من العثور على الأغنية");
+              }
             } else if (!cancelled) {
               throw new Error("لم نتمكن من العثور على الأغنية");
             }
@@ -390,8 +397,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           }
         }
         
-        if (!videoIdToPlay) return;
-
         // 1. Offline cache first (instant)
         const cachedBlob = await getAudioBlob(song.songId);
         if (cachedBlob && !cancelled) {
@@ -404,6 +409,19 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           preloadNext(state.currentSongId!, state.queue);
           return;
         }
+
+        // Play direct mp3 immediately if available
+        if (directMp3UrlToPlay && !cancelled) {
+          setState((prev) => ({ ...prev, streamUrl: directMp3UrlToPlay, error: null, isBuffering: false }));
+          player.src = directMp3UrlToPlay;
+          player.preload = "auto";
+          player.load();
+          if (isPlayingRef.current) player.play().catch(console.error);
+          preloadNext(state.currentSongId!, state.queue);
+          return;
+        }
+
+        if (!videoIdToPlay) return;
 
         // 2. Resolve stream URL — check in-memory cache first for instant play
         const cachedUrl = streamCacheRef.current.get(videoIdToPlay);
