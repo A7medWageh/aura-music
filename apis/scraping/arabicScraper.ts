@@ -8,12 +8,13 @@ export interface ArabicScraperResult {
   title: string;
 }
 
-const DNDNHA_BASE = "https://dndnha.cam";
+const ALBUMATY_BASE = "https://www.albumaty.com";
 const CACHE_TTL_SEC = 24 * 60 * 60; // 24 hours
 
 export async function scrapeArabicSong(title: string, artist: string): Promise<ArabicScraperResult | null> {
-  const query = `${title} ${artist}`.trim();
-  const cacheKey = `aura:scraper:dndnha:${encodeURIComponent(query)}`;
+  const cleanTitle = title.replace(/\(.*?\)|\[.*?\]/g, "").trim();
+  const query = `${artist} ${cleanTitle}`.trim();
+  const cacheKey = `aura:scraper:albumaty:${encodeURIComponent(query)}`;
 
   try {
     const redis = getRedisClient();
@@ -26,74 +27,111 @@ export async function scrapeArabicSong(title: string, artist: string): Promise<A
   }
 
   try {
-    // 1. Search the song
-    const searchUrl = `${DNDNHA_BASE}/search?q=${encodeURIComponent(query)}`;
-    const searchRes = await fetch(searchUrl, {
+    console.log(`[ArabicScraper] Searching Albumaty for: "${query}"...`);
+    
+    // 1. Search the song on Albumaty
+    const searchUrl = `${ALBUMATY_BASE}/search.php?q=${encodeURIComponent(query)}`;
+    let searchRes = await fetch(searchUrl, {
       headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
       },
       signal: AbortSignal.timeout(6000)
     });
 
     if (!searchRes.ok) return null;
-    const html = await searchRes.text();
-    const $ = cheerio.load(html);
+    let html = await searchRes.text();
+    let $ = cheerio.load(html);
 
-    // Get first music link
-    let firstSongHref = $('a[href*="/music/"]').first().attr('href');
-    if (!firstSongHref) {
+    // Find song ID in search results page
+    const findId = ($page: cheerio.CheerioAPI): string | null => {
+      let id: string | null = null;
+      $page('a[href*="/song/"]').each((i: number, el: any) => {
+        const href = $page(el).attr("href");
+        if (href) {
+          const match = href.match(/\/song\/(\d+)\.html/);
+          if (match) {
+            id = match[1];
+            return false; // Break loop
+          }
+        }
+      });
+      return id;
+    };
+
+    let songId = findId($);
+
+    // If no match, try title only (broad search)
+    if (!songId && cleanTitle.length > 3) {
+      console.log(`[ArabicScraper] No hit for artist+title, trying title only: "${cleanTitle}"`);
+      const fallbackSearchUrl = `${ALBUMATY_BASE}/search.php?q=${encodeURIComponent(cleanTitle)}`;
+      const fallbackSearchRes = await fetch(fallbackSearchUrl, {
+        headers: { "User-Agent": "Mozilla/5.0" },
+        signal: AbortSignal.timeout(6000)
+      });
+      if (fallbackSearchRes.ok) {
+        const fallbackHtml = await fallbackSearchRes.text();
+        const $fallback = cheerio.load(fallbackHtml);
+        songId = findId($fallback);
+      }
+    }
+
+    if (!songId) {
+      console.log(`[ArabicScraper] No song ID found on Albumaty for query: "${query}"`);
       return null;
     }
 
-    // Ensure it's absolute
-    if (firstSongHref.startsWith('/')) {
-      firstSongHref = DNDNHA_BASE + firstSongHref;
-    } else if (!firstSongHref.startsWith('http')) {
-      return null;
-    }
-
-    // 2. Fetch the song page
-    const songRes = await fetch(firstSongHref, {
+    // 2. Fetch the download page
+    const downloadPageUrl = `${ALBUMATY_BASE}/download/${songId}`;
+    console.log(`[ArabicScraper] Fetching Albumaty download page: ${downloadPageUrl}...`);
+    
+    const downloadRes = await fetch(downloadPageUrl, {
       headers: {
-        "User-Agent": "Mozilla/5.0",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Referer": searchUrl
       },
       signal: AbortSignal.timeout(6000)
     });
 
-    if (!songRes.ok) return null;
-    const songHtml = await songRes.text();
-    const $song = cheerio.load(songHtml);
+    if (!downloadRes.ok) return null;
+    const downloadHtml = await downloadRes.text();
+    const $dl = cheerio.load(downloadHtml);
 
-    // Extract mp3 link
-    // Dndnha usually has a direct download link ending in .mp3 or an <audio> tag
-    let mp3Url = $song('a[href$=".mp3"]').first().attr('href');
-    
-    if (!mp3Url) {
-       mp3Url = $song('audio source[src$=".mp3"]').first().attr('src');
-    }
-    
-    if (!mp3Url) {
-      // Sometimes it's just in a generic audio tag or specific download button class
-      mp3Url = $song('audio').first().attr('src') || $song('.download-btn').attr('href');
+    // Extract direct MP3 link (usually in a green success button)
+    let directLink = $dl('a.btn-success[href*=".mp3"]').attr("href");
+
+    if (!directLink) {
+      // Fallback: search for any .mp3 link or audio source
+      directLink = $dl('a[href$=".mp3"]').attr("href") || 
+                   $dl('audio source[src$=".mp3"]').attr("src") || 
+                   $dl('audio').attr("src");
     }
 
-    // We only accept valid mp3 links or direct audio links
-    if (!mp3Url || !mp3Url.includes('http')) {
+    if (!directLink) {
+      console.log(`[ArabicScraper] Direct MP3 link not found on page: ${downloadPageUrl}`);
       return null;
     }
 
-    // Extract real title if possible
-    const songTitle = $song('h1').text().trim() || title;
+    // Ensure the link is fully absolute to prevent the Vercel 404 relative URL buffering bug!
+    if (directLink.startsWith("/")) {
+      directLink = ALBUMATY_BASE + directLink;
+    } else if (!directLink.startsWith("http")) {
+      // If it doesn't start with http or /, it's invalid
+      return null;
+    }
+
+    // Extract the song title from h1
+    const songTitle = $dl('h1').text().trim() || title;
 
     const result: ArabicScraperResult = {
-      url: mp3Url,
+      url: directLink,
       directPlay: true,
-      source: "dndnha",
+      source: "albumaty",
       title: songTitle
     };
 
+    console.log(`[ArabicScraper] Successfully resolved "${query}" to Albumaty MP3: ${directLink}`);
+
+    // Cache the result in Redis
     try {
       const redis = getRedisClient();
       await redis.set(cacheKey, JSON.stringify(result), "EX", CACHE_TTL_SEC);
@@ -101,7 +139,7 @@ export async function scrapeArabicSong(title: string, artist: string): Promise<A
 
     return result;
   } catch (error) {
-    console.error("[ArabicScraper] Failed to scrape:", error);
+    console.error("[ArabicScraper] Failed to scrape Arabic song:", error);
     return null;
   }
 }
