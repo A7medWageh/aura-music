@@ -182,25 +182,16 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // Warm cache: fetch("/api/stream/VIDEO_ID") anywhere to speed up future plays
   const streamCacheRef = useRef<Map<string, string>>(new Map());
 
-  // ── Client-side scraping constants ───────────────────────────────────────
-  // Piped: verified-working instances (2025-04)
+  // Piped: verified-working instances
   const PIPED_APIS = [
-    "https://api.piped.private.coffee",  // 🇦🇹 90% uptime — best
+    "https://api.piped.private.coffee",
     "https://pipedapi.kavin.rocks",
     "https://pipedapi.adminforge.de",
     "https://piped-api.garudalinux.org",
     "https://api.piped.yt",
   ];
 
-  // Cobalt: verified from instances.cobalt.best (2025-04)
-  const COBALT_APIS = [
-    "https://cobalt-api.meowing.de",       // 88% score
-    "https://capi.3kh0.net",               // 76% score
-    "https://downloadapi.stuff.solutions",  // 44% score — extra fallback
-  ];
-
   // Invidious Proxy: KEY FIX for Vercel!
-  // Browser → Invidious server → googlevideo (Invidious IPs not blocked by Google!)
   const INVIDIOUS_PROXY_APIS = [
     "https://invidious.flokinet.to",
     "https://yt.artemislena.eu",
@@ -250,37 +241,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       }
     });
 
-    // ── Cobalt (real scraping — own tunnel URLs) ──────────────────────────────
-    const cobaltPromise = new Promise<string>((resolve, reject) => {
-      let settled = false;
-      let failures = 0;
-      const timer = setTimeout(() => reject(new Error("cobalt_timeout")), 9000);
-      const youtubeUrl = `https://www.youtube.com/watch?v=${videoId}`;
-
-      for (const base of COBALT_APIS) {
-        fetch(`${base}/`, {
-          method: "POST",
-          headers: { "Accept": "application/json", "Content-Type": "application/json" },
-          body: JSON.stringify({
-            url: youtubeUrl, downloadMode: "audio",
-            audioFormat: "mp3", audioBitrate: "128",
-            filenameStyle: "basic", disableMetadata: true,
-          }),
-        })
-          .then(async (res) => {
-            if (!res.ok) throw new Error("bad_status");
-            const data = await res.json();
-            if (data.status === "error" || !data.url) throw new Error("no_url");
-            if (!settled) { settled = true; clearTimeout(timer); resolve(data.url); }
-          })
-          .catch(() => {
-            failures++;
-            if (failures === COBALT_APIS.length && !settled) {
-              settled = true; clearTimeout(timer); reject(new Error("all_cobalt_failed"));
-            }
-          });
-      }
-    });
 
     // ── Invidious Proxy (THE KEY FIX — bypasses Vercel + googlevideo block) ──
     // Browser fetches from Invidious, Invidious proxies from googlevideo.
@@ -316,11 +276,16 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       }
     });
 
-    // ── Race all 3 — first to succeed wins ────────────────────────────────────
+    // ── Race them! ───────────────────────────────────────────────────────────
     try {
-      return await Promise.any([pipedPromise, cobaltPromise, invidiousProxyPromise]);
-    } catch {
-      // All client-side failed — fallback to server /api/stream
+      console.log(`[Stream] Client-side racing for ${videoId}...`);
+      const fastUrl = await Promise.any([pipedPromise, invidiousProxyPromise]);
+      console.log(`[Stream] ✅ Client won: ${fastUrl.substring(0, 50)}...`);
+      
+      // Save to cache
+      streamCacheRef.current.set(videoId, fastUrl);
+      return fastUrl;
+    } catch (e: any) {
       console.warn(`[Player] All client-side failed for ${videoId}, trying server...`);
       try {
         const res = await fetch(`/api/stream/${videoId}`, { signal: AbortSignal.timeout(20000) });

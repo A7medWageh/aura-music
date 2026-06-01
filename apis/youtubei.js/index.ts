@@ -379,30 +379,8 @@ export async function resolveStream(videoId: string, providedTitle?: string, pro
       }
 
       // ── Strategy 5: Albumaty Direct MP3 (for Arabic music) ──────────────
-      try {
-        let title = providedTitle || "";
-        let artist = providedArtist || "";
-        if (!title) {
-          try {
-            const innertube = await getYTWeb();
-            const info = await withTimeout(innertube.getBasicInfo(videoId), 4000, null);
-            title = info?.basic_info?.title || "";
-            artist = info?.basic_info?.author || "";
-          } catch {}
-        }
-
-        if (title) {
-          console.log(`[Stream] Trying Albumaty for: ${title}...`);
-          const url = await withTimeout(
-            resolveAlbumatyStream(sanitizeTitle(title), artist),
-            6000,
-            null
-          );
-          if (url) return await cacheAndReturn(url);
-        }
-      } catch (e: any) {
-        console.warn(`[Stream] Albumaty failed: ${e.message}`);
-      }
+      // REMOVED: Albumaty uses fuzzy text search and often returns the wrong song (e.g. Indian songs)
+      // which ruins the player experience. Better to fail than play the wrong track.
 
       // ── Strategy 6: yt-dlp (Local dev only) ─────────────────────────────
       try {
