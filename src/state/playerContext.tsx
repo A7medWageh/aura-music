@@ -412,10 +412,33 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
         if (!cancelled) {
           setState((prev) => ({ ...prev, streamUrl, error: null }));
-          player.src = streamUrl;
-          player.preload = "auto";
-          player.load();
-          if (state.isPlaying) player.play().catch(console.error);
+          
+          // Cleanup old HLS instance
+          // @ts-ignore
+          if (player.hls) { player.hls.destroy(); delete player.hls; }
+
+          if (streamUrl.includes('.m3u8')) {
+            const Hls = require('hls.js').default || require('hls.js');
+            if (Hls.isSupported()) {
+              const hls = new Hls();
+              hls.loadSource(streamUrl);
+              hls.attachMedia(player);
+              hls.on(Hls.Events.MANIFEST_PARSED, () => {
+                if (state.isPlaying) player.play().catch(console.error);
+              });
+              // @ts-ignore
+              player.hls = hls; // Keep reference to destroy later if needed
+            } else if (player.canPlayType('application/vnd.apple.mpegurl')) {
+              player.src = streamUrl;
+              player.load();
+              if (state.isPlaying) player.play().catch(console.error);
+            }
+          } else {
+            player.src = streamUrl;
+            player.preload = "auto";
+            player.load();
+            if (state.isPlaying) player.play().catch(console.error);
+          }
           preloadNext(state.currentSongId!, state.queue);
         }
       } catch (error) {

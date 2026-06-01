@@ -6,6 +6,7 @@ dns.setDefaultResultOrder("ipv4first");
 import * as path from "path";
 import { getRedisClient } from "../redis";
 import { resolveAlbumatyStream } from "../../src/services/scrapers/albumaty";
+import { resolveSoundCloudStream } from "../../src/services/scrapers/soundcloud";
 
 const YT_DLP_PATH = process.env.YT_DLP_PATH || path.join(process.cwd(), "yt-dlp-master", "yt-dlp.cmd");
 
@@ -342,6 +343,32 @@ export async function resolveStream(videoId: string, providedTitle?: string, pro
   // Enforce a strict 28-second global timeout
   return withTimeout(
     (async () => {
+      // ── Strategy 0: SoundCloud Scraper (Best quality & fastest, bypasses YouTube completely)
+      try {
+        let title = providedTitle || "";
+        let artist = providedArtist || "";
+        if (!title) {
+          try {
+            const innertube = await getYTWeb();
+            const info = await withTimeout(innertube.getBasicInfo(videoId), 4000, null);
+            title = info?.basic_info?.title || "";
+            artist = info?.basic_info?.author || "";
+          } catch {}
+        }
+
+        if (title) {
+          console.log(`[Stream] Trying SoundCloud for: ${title}...`);
+          const url = await withTimeout(
+            resolveSoundCloudStream(title, artist),
+            8000,
+            null
+          );
+          if (url) return await cacheAndReturn(url);
+        }
+      } catch (e: any) {
+        console.warn(`[Stream] SoundCloud failed: ${e.message}`);
+      }
+
       // ── Strategy 1: Piped API (Primary — bypasses Vercel IP blocks) ────────
       try {
         console.log(`[Stream] Trying Piped API for ${videoId}...`);
