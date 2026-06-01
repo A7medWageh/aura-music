@@ -1,11 +1,5 @@
-/**
- * /api/songs
- * ──────────
- * Returns all songs from Neon DB, with youtube_video_id pre-populated.
- * No YouTube search needed — the DB already has all video IDs!
- */
 import { NextRequest, NextResponse } from "next/server";
-import { getAllSongs, getAllArtists } from "@/services/music/musicApiClient";
+import { searchYouTube } from "@apis/youtubei.js";
 
 let songsCache: { data: any[]; ts: number } | null = null;
 const SONGS_TTL = 15 * 60 * 1000; // 15 min
@@ -19,21 +13,20 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const [songsRes, artistsRes] = await Promise.all([
-      getAllSongs(1, 500),
-      getAllArtists(1, 300),
-    ]);
+    // Fetch popular Arabic songs
+    const searchRes = await searchYouTube("اغاني عربية 2026");
+    const songs = searchRes.songs || [];
 
-    const artistsById = new Map(artistsRes.data.map((a) => [a.id, a]));
-    const enriched = songsRes.data.map(song => ({
-      songId: song.id,
-      title: song.name,
-      artist: (song.artistId != null ? artistsById.get(song.artistId)?.name : undefined) || "فنان غير معروف",
-      artistId: song.artistId ?? null,
-      thumbnailUrl: song.imageUrl,
-      youtubeVideoId: song.youtubeVideoId ?? null,  // Pre-populated from DB!
-      albumId: song.albumId ?? null,
-      duration: song.duration,
+    const enriched = songs.map((song: any) => ({
+      songId: song.songId,
+      title: song.title,
+      artist: song.artist || "فنان غير معروف",
+      artistId: null, // Scraped songs don't have artistId easily, but player handles it
+      thumbnailUrl: song.thumbnailUrl,
+      youtubeVideoId: song.youtubeVideoId,
+      albumId: null,
+      duration: "", // Optional
+      source: "youtube",
     }));
 
     songsCache = { data: enriched, ts: Date.now() };

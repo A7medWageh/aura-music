@@ -1,30 +1,55 @@
-/**
- * /api/artists
- * ─────────────
- * Returns all artists directly from Neon DB.
- * Fast, reliable, works on Vercel without any backend service.
- */
 import { NextResponse } from "next/server";
-import { getAllArtists } from "@/services/music/musicApiClient";
+import { searchYouTube } from "@apis/youtubei.js";
+
+// Curated list of top Arabic artists
+const TOP_ARTISTS = [
+  "عمرو دياب",
+  "شيرين عبدالوهاب",
+  "تامر حسني",
+  "أحمد سعد",
+  "ويجز",
+  "نانسي عجرم",
+  "حماقي",
+  "أصالة",
+  "وائل كفوري",
+  "مروان موسى",
+  "فرقة كايروكي",
+  "حسين الجسمي",
+];
 
 type ArtistEntry = { name: string; artistId: string; thumbnailUrl: string };
 
-// Process-level cache: 6 hours
 let cache: { artists: ArtistEntry[]; fetchedAt: number } | null = null;
-const CACHE_TTL = 6 * 60 * 60 * 1000;
+const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 
 let fetchPromise: Promise<ArtistEntry[]> | null = null;
 
 async function buildArtistList(): Promise<ArtistEntry[]> {
   try {
-    const res = await getAllArtists(1, 300);
-    const artists = res.data ?? [];
+    const results: ArtistEntry[] = [];
+    
+    // Fetch artists in parallel
+    const promises = TOP_ARTISTS.map(async (name) => {
+      try {
+        const searchRes = await searchYouTube(name);
+        if (searchRes.artists && searchRes.artists.length > 0) {
+          const bestMatch = searchRes.artists[0];
+          return {
+            name: name, // Use our clean name instead of whatever YT says
+            artistId: bestMatch.artistId,
+            thumbnailUrl: bestMatch.thumbnailUrl ?? "",
+          };
+        }
+      } catch (e) {
+        console.warn(`[Artists] Failed to fetch artist: ${name}`);
+      }
+      return null;
+    });
 
-    const results: ArtistEntry[] = artists.map((a) => ({
-      name: a.name,
-      artistId: a.id,  // UUID string — no mapi- prefix needed
-      thumbnailUrl: a.imageUrl ?? "",
-    }));
+    const resolved = await Promise.all(promises);
+    for (const artist of resolved) {
+      if (artist) results.push(artist);
+    }
 
     cache = { artists: results, fetchedAt: Date.now() };
     fetchPromise = null;
@@ -37,15 +62,13 @@ async function buildArtistList(): Promise<ArtistEntry[]> {
 }
 
 export async function GET() {
-  // Cache hit → instant response
   if (cache && Date.now() - cache.fetchedAt < CACHE_TTL) {
     return NextResponse.json(
       { egyptian: cache.artists, intl: [] },
-      { headers: { "Cache-Control": "public, s-maxage=21600, stale-while-revalidate=86400" } }
+      { headers: { "Cache-Control": "public, s-maxage=86400, stale-while-revalidate=86400" } }
     );
   }
 
-  // Stale: serve stale immediately, revalidate in background
   if (cache) {
     if (!fetchPromise) {
       fetchPromise = buildArtistList().catch(() => {
@@ -59,12 +82,11 @@ export async function GET() {
     );
   }
 
-  // No cache — must wait (first boot)
   if (!fetchPromise) fetchPromise = buildArtistList();
   const artists = await fetchPromise;
 
   return NextResponse.json(
     { egyptian: artists, intl: [] },
-    { headers: { "Cache-Control": "public, s-maxage=21600, stale-while-revalidate=86400" } }
+    { headers: { "Cache-Control": "public, s-maxage=86400, stale-while-revalidate=86400" } }
   );
 }
