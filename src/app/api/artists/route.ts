@@ -1,9 +1,8 @@
 /**
  * /api/artists
  * ─────────────
- * Returns Egyptian + International artists from MusicApi.
- * Uses local database IDs with mapi- prefix to avoid heavy YouTube search rate-limits and timeouts on first boot.
- * Fast, reliable, and works on Vercel.
+ * Returns all artists directly from Neon DB.
+ * Fast, reliable, works on Vercel without any backend service.
  */
 import { NextResponse } from "next/server";
 import { getAllArtists } from "@/services/music/musicApiClient";
@@ -18,12 +17,12 @@ let fetchPromise: Promise<ArtistEntry[]> | null = null;
 
 async function buildArtistList(): Promise<ArtistEntry[]> {
   try {
-    const res = await getAllArtists(1, 200);
+    const res = await getAllArtists(1, 300);
     const artists = res.data ?? [];
 
     const results: ArtistEntry[] = artists.map((a) => ({
       name: a.name,
-      artistId: `mapi-${a.id}`,
+      artistId: a.id,  // UUID string — no mapi- prefix needed
       thumbnailUrl: a.imageUrl ?? "",
     }));
 

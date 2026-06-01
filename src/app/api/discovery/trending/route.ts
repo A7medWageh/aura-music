@@ -1,19 +1,16 @@
 /**
  * /api/discovery/trending
  * ────────────────────────
- * Returns featured songs from MusicApi, enriched with YouTube videoIds.
- * Cache: 10 min in-process + HTTP cache headers.
+ * Returns featured/trending songs from Neon DB.
+ * Songs with high energy_score are featured. Falls back to newest songs.
  */
 import { NextResponse } from "next/server";
 import { getFeaturedSongs, getAllArtists } from "@/services/music/musicApiClient";
-import { enrichSongs } from "@/services/music/songEnricher";
 
-// In-process cache
 let chartCache: { data: any[]; ts: number } | null = null;
 const CHART_TTL = 10 * 60 * 1000; // 10 min
 
 export async function GET() {
-  // Return cached data instantly
   if (chartCache && Date.now() - chartCache.ts < CHART_TTL) {
     return NextResponse.json(
       { success: true, data: chartCache.data },
@@ -22,24 +19,22 @@ export async function GET() {
   }
 
   try {
-    // Fetch featured songs + artists in parallel (rocket speed 🚀)
     const [songsRes, artistsRes] = await Promise.all([
       getFeaturedSongs(1, 50),
-      getAllArtists(1, 200),
+      getAllArtists(1, 300),
     ]);
 
-    // Build artist lookup map
     const artistsById = new Map(artistsRes.data.map((a) => [a.id, a]));
 
-    // Format to match UI expectations
     const enriched = songsRes.data.map(song => ({
-      songId: `mapi-${song.id}`,
+      songId: song.id,
       title: song.name,
       artist: (song.artistId != null ? artistsById.get(song.artistId)?.name : undefined) || "فنان غير معروف",
-      artistId: song.artistId ? String(song.artistId) : null,
+      artistId: song.artistId ?? null,
       thumbnailUrl: song.imageUrl,
-      youtubeVideoId: null, // Will be resolved lazily on play
-      albumId: song.albumId ? String(song.albumId) : null,
+      youtubeVideoId: song.youtubeVideoId ?? null,
+      albumId: song.albumId ?? null,
+      duration: song.duration,
     }));
 
     chartCache = { data: enriched, ts: Date.now() };
@@ -49,9 +44,8 @@ export async function GET() {
       { headers: { "Cache-Control": "public, s-maxage=600, stale-while-revalidate=3600" } }
     );
   } catch (error: any) {
-    console.error("[Trending] MusicApi error:", error.message);
+    console.error("[Trending] DB error:", error.message);
 
-    // Return stale cache if available
     if (chartCache) {
       return NextResponse.json(
         { success: true, data: chartCache.data, stale: true },
