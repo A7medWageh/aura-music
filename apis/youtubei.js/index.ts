@@ -144,8 +144,32 @@ export async function getMusicCharts() {
   }
 
   const innertube = await getYTWeb();
-  const results = await innertube.music.search("تريند مصر", { type: "song" });
-  return extractSongs(results).slice(0, 30);
+  try {
+    const results = await innertube.music.search("تريند مصر", { type: "song" });
+    const songs = extractSongs(results).slice(0, 30);
+    if (songs.length > 0) return songs;
+  } catch (e) {
+    console.warn("[Charts] Fallback 1 failed, trying Piped API");
+  }
+
+  // ── Ultimate Fallback: Piped API (Bypasses IP Blocks) ──
+  try {
+    const res = await fetch("https://api.piped.yt/trending?region=EG", {
+      headers: { "Accept": "application/json" }
+    });
+    const data = await res.json();
+    return (data || []).slice(0, 30).map((v: any) => ({
+      songId: v.url.replace("/watch?v=", ""),
+      youtubeVideoId: v.url.replace("/watch?v=", ""),
+      title: sanitizeTitle(v.title || ""),
+      artist: v.uploaderName || "فنان غير معروف",
+      thumbnailUrl: v.thumbnail || ""
+    }));
+  } catch (e) {
+    console.warn("[Charts] Piped API fallback failed");
+  }
+
+  return [];
 }
 
 // ── getNewReleases ────────────────────────────────────────────────────────────
@@ -156,7 +180,7 @@ export async function getNewReleases() {
 }
 
 // ── searchYouTube ─────────────────────────────────────────────────────────────
-export async function searchYouTube(query: string) {
+export async function searchYouTubeInnertube(query: string) {
   const cacheKey = query.trim().toLowerCase();
   const cached = searchCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
@@ -180,8 +204,56 @@ export async function searchYouTube(query: string) {
   const artists = extractArtists(generalResults, artistResults).slice(0, 5);
 
   const result = { query, songs, albums, artists };
+  if (songs.length === 0 && albums.length === 0 && artists.length === 0) {
+    throw new Error("No search results from YouTube API");
+  }
   searchCache.set(cacheKey, { data: result, expiresAt: Date.now() + SEARCH_TTL });
   return result;
+}
+
+export async function searchYouTube(query: string) {
+  try {
+    return await searchYouTubeInnertube(query);
+  } catch (e) {
+    console.warn(`[Search] YouTube failed for "${query}", trying Piped fallback...`);
+    try {
+      const res = await fetch(`https://api.piped.yt/search?q=${encodeURIComponent(query)}&filter=all`, {
+        headers: { "Accept": "application/json" }
+      });
+      const data = await res.json();
+      
+      const items = data.items || [];
+      const songs = items.filter((s: any) => s.type === "stream").map((s: any) => ({
+        songId: s.url.replace("/watch?v=", ""),
+        youtubeVideoId: s.url.replace("/watch?v=", ""),
+        title: sanitizeTitle(s.title),
+        artist: s.uploaderName || "فنان غير معروف",
+        thumbnailUrl: s.thumbnail || ""
+      })).slice(0, 20);
+
+      const albums = items.filter((s: any) => s.type === "playlist").map((s: any) => ({
+        type: "album",
+        albumId: s.url.replace("/playlists?list=", ""),
+        title: sanitizeTitle(s.title),
+        artist: s.uploaderName || "فنان غير معروف",
+        thumbnailUrl: s.thumbnail || ""
+      })).slice(0, 8);
+
+      const artists = items.filter((s: any) => s.type === "channel").map((s: any) => ({
+        type: "artist",
+        artistId: s.url.replace("/channel/", ""),
+        artistName: s.name || "فنان غير معروف",
+        thumbnailUrl: s.thumbnail || ""
+      })).slice(0, 5);
+
+      const result = { query, songs, albums, artists, source: "piped" };
+      searchCache.set(query.trim().toLowerCase(), { data: result, expiresAt: Date.now() + SEARCH_TTL });
+      return result;
+    } catch (err) {
+      console.error("[Search] Piped fallback failed:", err);
+      return { query, songs: [], albums: [], artists: [], source: "error" };
+    }
+  }
 }
 
 // ── resolveStream ─────────────────────────────────────────────────────────────
@@ -447,7 +519,7 @@ export async function resolveStream(videoId: string, providedTitle?: string, pro
 }
 
 // ── getArtistDetails ──────────────────────────────────────────────────────────
-export async function getArtistDetails(artistId: string) {
+export async function getArtistDetailsYoutube(artistId: string) {
   const innertube = await getYTWeb();
   const rawArtist = await innertube.music.getArtist(artistId);
 
@@ -596,6 +668,10 @@ export async function getArtistDetails(artistId: string) {
 
   const uniqueSongs = Array.from(new Map(songs.map(s => [s.songId, s])).values());
 
+  if (uniqueSongs.length === 0 && oldAlbums.length === 0) {
+    throw new Error("No artist data found via YouTube API");
+  }
+
   return {
     artistId,
     artistName,
@@ -608,7 +684,50 @@ export async function getArtistDetails(artistId: string) {
   };
 }
 
-export async function getAlbumDetails(albumId: string) {
+export async function getArtistDetails(artistId: string) {
+  try {
+    return await getArtistDetailsYoutube(artistId);
+  } catch (e) {
+    console.warn(`[Artist] YouTube failed for ${artistId}, trying Piped fallback...`);
+    try {
+      const res = await fetch(`https://api.piped.yt/channel/${artistId}`, {
+        headers: { "Accept": "application/json" }
+      });
+      const data = await res.json();
+      
+      const songs = (data.relatedStreams || [])
+        .filter((s: any) => s.type === "stream")
+        .map((s: any) => ({
+          songId: s.url.replace("/watch?v=", ""),
+          youtubeVideoId: s.url.replace("/watch?v=", ""),
+          title: sanitizeTitle(s.title),
+          artist: data.name || "فنان غير معروف",
+          thumbnailUrl: s.thumbnail || data.avatarUrl || "",
+          views: s.views || 0
+        }));
+
+      return {
+        artistId,
+        artistName: data.name || "Unknown Artist",
+        artistImage: data.avatarUrl || null,
+        subscribers: data.subscriberCount || "",
+        isVerified: data.verified || false,
+        songs: songs.slice(0, 20),
+        newReleases: [],
+        oldAlbums: [],
+        source: "piped"
+      };
+    } catch (err) {
+      console.error("[Artist] Piped fallback failed too:", err);
+      return {
+        artistId, artistName: "Unknown Artist", artistImage: null, subscribers: "",
+        isVerified: false, songs: [], newReleases: [], oldAlbums: [], source: "error"
+      };
+    }
+  }
+}
+
+export async function getAlbumDetailsYoutube(albumId: string) {
   const cached = albumCache.get(albumId);
   if (cached && cached.expiresAt > Date.now()) return cached.data;
 
@@ -637,8 +756,45 @@ export async function getAlbumDetails(albumId: string) {
     .filter((s: any) => s.songId && s.title);
 
   const result = { albumId, title, artist, coverUrl, year, songs };
+  if (songs.length === 0) throw new Error("No album data");
   albumCache.set(albumId, { data: result, expiresAt: Date.now() + 60 * 60 * 1000 });
   return result;
+}
+
+export async function getAlbumDetails(albumId: string) {
+  try {
+    return await getAlbumDetailsYoutube(albumId);
+  } catch (e) {
+    console.warn(`[Album] YouTube failed for ${albumId}, trying Piped fallback...`);
+    try {
+      const res = await fetch(`https://api.piped.yt/playlists/${albumId}`, {
+        headers: { "Accept": "application/json" }
+      });
+      const data = await res.json();
+      
+      const songs = (data.relatedStreams || [])
+        .map((s: any) => ({
+          songId: s.url.replace("/watch?v=", ""),
+          youtubeVideoId: s.url.replace("/watch?v=", ""),
+          title: sanitizeTitle(s.title),
+          artist: data.uploaderName || data.uploader || "فنان غير معروف",
+          thumbnailUrl: s.thumbnail || data.thumbnailUrl || ""
+        }));
+
+      return {
+        albumId,
+        title: data.name || "Unknown Album",
+        artist: data.uploader || "Unknown Artist",
+        coverUrl: data.thumbnailUrl || null,
+        year: "",
+        songs,
+        source: "piped"
+      };
+    } catch (err) {
+      console.error("[Album] Piped fallback failed too:", err);
+      return { albumId, title: "Unknown Album", artist: "Unknown", coverUrl: null, year: "", songs: [], source: "error" };
+    }
+  }
 }
 
 export async function getMoodMix(mood: string) {
