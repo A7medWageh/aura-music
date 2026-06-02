@@ -7,6 +7,7 @@ import * as path from "path";
 import { getRedisClient } from "../redis";
 import { resolveAlbumatyStream } from "../../src/services/scrapers/albumaty";
 import { resolveSoundCloudStream } from "../../src/services/scrapers/soundcloud";
+import { resolveSaavnStream } from "../../src/services/scrapers/saavn";
 
 const YT_DLP_PATH = process.env.YT_DLP_PATH || path.join(process.cwd(), "yt-dlp-master", "yt-dlp.cmd");
 
@@ -343,7 +344,7 @@ export async function resolveStream(videoId: string, providedTitle?: string, pro
   // Enforce a strict 28-second global timeout
   return withTimeout(
     (async () => {
-      // ── Strategy 0: SoundCloud Scraper (Best quality & fastest, bypasses YouTube completely)
+      // ── Strategy -1: Saavn Scraper (Fastest, highest quality 320kbps MP4)
       try {
         let title = providedTitle || "";
         let artist = providedArtist || "";
@@ -357,16 +358,24 @@ export async function resolveStream(videoId: string, providedTitle?: string, pro
         }
 
         if (title) {
-          console.log(`[Stream] Trying SoundCloud for: ${title}...`);
+          console.log(`[Stream] Trying Saavn API for: ${title}...`);
           const url = await withTimeout(
-            resolveSoundCloudStream(title, artist),
+            resolveSaavnStream(title, artist),
             8000,
             null
           );
           if (url) return await cacheAndReturn(url);
+          
+          console.log(`[Stream] Trying SoundCloud for: ${title}...`);
+          const scUrl = await withTimeout(
+            resolveSoundCloudStream(title, artist),
+            8000,
+            null
+          );
+          if (scUrl) return await cacheAndReturn(scUrl);
         }
       } catch (e: any) {
-        console.warn(`[Stream] SoundCloud failed: ${e.message}`);
+        console.warn(`[Stream] Scrapers failed: ${e.message}`);
       }
 
       // ── Strategy 1: Piped API (Primary — bypasses Vercel IP blocks) ────────
