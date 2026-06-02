@@ -208,6 +208,20 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
    * Full songs only (duration >= 60s).
    */
   const resolveStream = async (videoId: string): Promise<string> => {
+    // ── Check Offline Storage First ──────────────────────────────────────────
+    if (typeof window !== "undefined") {
+       try {
+         const { getAudioBlob } = await import("@/offline/indexedDbCache");
+         const blob = await getAudioBlob(videoId);
+         if (blob) {
+            console.log("[Player] Playing from offline storage.");
+            return URL.createObjectURL(blob);
+         }
+       } catch(e) {
+         console.warn("[Player] Failed to load offline storage:", e);
+       }
+    }
+
     // ── Piped (fastest — returns Piped CDN URLs, no googlevideo) ────────────
     const pipedPromise = new Promise<string>((resolve, reject) => {
       let settled = false;

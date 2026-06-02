@@ -361,7 +361,7 @@ export async function resolveStream(videoId: string, providedTitle?: string, pro
           console.log(`[Stream] Trying Saavn API for: ${title}...`);
           const url = await withTimeout(
             resolveSaavnStream(title, artist),
-            2500,
+            5000,
             null
           );
           if (url) return await cacheAndReturn(url);
@@ -369,7 +369,7 @@ export async function resolveStream(videoId: string, providedTitle?: string, pro
           console.log(`[Stream] Trying SoundCloud for: ${title}...`);
           const scUrl = await withTimeout(
             resolveSoundCloudStream(title, artist),
-            2500,
+            5000,
             null
           );
           if (scUrl) return await cacheAndReturn(scUrl);
@@ -378,10 +378,10 @@ export async function resolveStream(videoId: string, providedTitle?: string, pro
         console.warn(`[Stream] Scrapers failed: ${e.message}`);
       }
 
-      // ── Strategy 1: Piped API (Primary — bypasses Vercel IP blocks) ────────
+      // ── Strategy 1: Piped API (Primary — bypasses IP blocks) ────────
       try {
         console.log(`[Stream] Trying Piped API for ${videoId}...`);
-        const url = await withTimeout(resolveWithPiped(videoId), 4500, "");
+        const url = await withTimeout(resolveWithPiped(videoId), 15000, "");
         if (url) return await cacheAndReturn(url);
       } catch (e: any) {
         console.warn(`[Stream] Piped failed: ${e.message}`);
@@ -438,7 +438,7 @@ export async function resolveStream(videoId: string, providedTitle?: string, pro
 
       throw new Error("stream_resolve_failed: all strategies exhausted");
     })(),
-    28000,
+    60000,
     ""
   ).then((res) => {
     if (!res) throw new Error("stream_resolve_timeout");
