@@ -15,7 +15,7 @@ export async function resolveSaavnStream(title: string, artist: string): Promise
     const searchUrl = `https://saavn.dev/api/search/songs?query=${encodeURIComponent(query)}`;
     const res = await axios.get(searchUrl, {
       headers: { "User-Agent": "Mozilla/5.0" },
-      timeout: 6000,
+      timeout: 2500,
     });
 
     if (res.data?.success && res.data?.data?.results?.length > 0) {

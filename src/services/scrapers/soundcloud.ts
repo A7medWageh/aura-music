@@ -11,7 +11,7 @@ async function getSoundCloudClientId(): Promise<string | null> {
   try {
     const htmlRes = await axios.get("https://soundcloud.com", {
       headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
-      timeout: 5000,
+      timeout: 1500,
     });
     
     const html = htmlRes.data;
@@ -22,7 +22,7 @@ async function getSoundCloudClientId(): Promise<string | null> {
     while ((match = regex.exec(html)) !== null) {
       const src = match[1];
       try {
-        const jsRes = await axios.get(src, { timeout: 3000 });
+        const jsRes = await axios.get(src, { timeout: 1500 });
         const clientMatch = jsRes.data.match(/client_id:"([^"]+)"/);
         if (clientMatch) {
           scClientIdCache = clientMatch[1];
@@ -37,7 +37,9 @@ async function getSoundCloudClientId(): Promise<string | null> {
     console.error("[SoundCloud] Error fetching client_id:", err.message);
   }
 
-  return null;
+  // Fallback to known working client IDs
+  scClientIdCache = "g2Q2b100y98f3iZqO1yOqMIVW6Jtq0vU";
+  return scClientIdCache;
 }
 
 /**
@@ -61,7 +63,7 @@ export async function resolveSoundCloudStream(title: string, artist: string): Pr
     const searchUrl = `https://api-v2.soundcloud.com/search/tracks?q=${encodeURIComponent(query)}&client_id=${clientId}&limit=3`;
     const res = await axios.get(searchUrl, {
       headers: { "User-Agent": "Mozilla/5.0" },
-      timeout: 6000,
+      timeout: 1500,
     });
 
     if (res.data?.collection && res.data.collection.length > 0) {
@@ -75,7 +77,7 @@ export async function resolveSoundCloudStream(title: string, artist: string): Pr
       );
 
       if (trans) {
-        const streamRes = await axios.get(trans.url + `?client_id=${clientId}`, { timeout: 4000 });
+        const streamRes = await axios.get(trans.url + `?client_id=${clientId}`, { timeout: 1500 });
         if (streamRes.data?.url) {
           console.log(`[SoundCloud] Stream resolved (${trans.format.protocol})`);
           return streamRes.data.url;

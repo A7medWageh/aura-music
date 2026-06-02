@@ -361,7 +361,7 @@ export async function resolveStream(videoId: string, providedTitle?: string, pro
           console.log(`[Stream] Trying Saavn API for: ${title}...`);
           const url = await withTimeout(
             resolveSaavnStream(title, artist),
-            8000,
+            2500,
             null
           );
           if (url) return await cacheAndReturn(url);
@@ -369,7 +369,7 @@ export async function resolveStream(videoId: string, providedTitle?: string, pro
           console.log(`[Stream] Trying SoundCloud for: ${title}...`);
           const scUrl = await withTimeout(
             resolveSoundCloudStream(title, artist),
-            8000,
+            2500,
             null
           );
           if (scUrl) return await cacheAndReturn(scUrl);
@@ -381,7 +381,7 @@ export async function resolveStream(videoId: string, providedTitle?: string, pro
       // ── Strategy 1: Piped API (Primary — bypasses Vercel IP blocks) ────────
       try {
         console.log(`[Stream] Trying Piped API for ${videoId}...`);
-        const url = await withTimeout(resolveWithPiped(videoId), 12000, "");
+        const url = await withTimeout(resolveWithPiped(videoId), 4500, "");
         if (url) return await cacheAndReturn(url);
       } catch (e: any) {
         console.warn(`[Stream] Piped failed: ${e.message}`);
