@@ -279,60 +279,18 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         }
 
         if (!videoIdToPlay) return;
+        
+        // ⚡ Direct fallback to native chunk buffering
+        const targetUrl = `/api/download?videoId=${encodeURIComponent(videoIdToPlay)}`;
+        setState((prev) => ({ ...prev, streamUrl: targetUrl, error: null, isBuffering: false }));
+        player.src = targetUrl;
+        player.preload = "auto";
+        player.load();
+        if (state.isPlaying) player.play().catch(console.error);
+        preloadNext(state.currentSongId!, state.queue);
+        return;
 
-        // 2. Resolve stream URL — check in-memory cache first for instant play
-        const cachedUrl = streamCacheRef.current.get(videoIdToPlay);
 
-        if (cachedUrl && !cancelled) {
-          // ⚡ Instant play from cache — no network round-trip
-          setState((prev) => ({ ...prev, streamUrl: cachedUrl, error: null }));
-          player.src = cachedUrl;
-          player.preload = "auto";
-          player.load();
-          if (state.isPlaying) player.play().catch(console.error);
-          preloadNext(state.currentSongId!, state.queue);
-          return;
-        }
-
-        // No cache — resolve in background while setting a loading state
-        const streamUrl = await resolveStream(videoIdToPlay);
-
-        // Cache for instant future plays
-        if (streamUrl && !streamUrl.startsWith("/api/download")) {
-          streamCacheRef.current.set(videoIdToPlay, streamUrl);
-        }
-
-        if (!cancelled) {
-          setState((prev) => ({ ...prev, streamUrl, error: null }));
-          
-          // Cleanup old HLS instance
-          // @ts-ignore
-          if (player.hls) { player.hls.destroy(); delete player.hls; }
-
-          if (streamUrl.includes('.m3u8')) {
-            const Hls = require('hls.js').default || require('hls.js');
-            if (Hls.isSupported()) {
-              const hls = new Hls();
-              hls.loadSource(streamUrl);
-              hls.attachMedia(player);
-              hls.on(Hls.Events.MANIFEST_PARSED, () => {
-                if (state.isPlaying) player.play().catch(console.error);
-              });
-              // @ts-ignore
-              player.hls = hls; // Keep reference to destroy later if needed
-            } else if (player.canPlayType('application/vnd.apple.mpegurl')) {
-              player.src = streamUrl;
-              player.load();
-              if (state.isPlaying) player.play().catch(console.error);
-            }
-          } else {
-            player.src = streamUrl;
-            player.preload = "auto";
-            player.load();
-            if (state.isPlaying) player.play().catch(console.error);
-          }
-          preloadNext(state.currentSongId!, state.queue);
-        }
       } catch (error) {
         if (!cancelled) {
           setState((prev) => ({
