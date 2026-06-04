@@ -19,8 +19,8 @@ export function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="fixed inset-y-0 right-0 w-[280px] glass-dark border-l border-white/5 flex flex-col z-20 overflow-hidden">
-      <div className="p-8">
+    <aside className="hidden md:flex fixed top-6 bottom-28 right-6 w-[260px] glass-dark border border-white/10 rounded-3xl flex-col z-20 overflow-hidden shadow-2xl">
+      <div className="p-6">
         <div className="flex items-center gap-3 mb-10">
           <div className="w-10 h-10 rounded-xl overflow-hidden shadow-lg shadow-indigo-500/10">
             <img src="/logo.png" alt="Aura Logo" className="w-full h-full object-cover" />

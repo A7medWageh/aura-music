@@ -322,7 +322,7 @@ export function PlayerBar() {
       </AnimatePresence>
 
       {/* Mini Bar — on mobile, sits above the bottom tab bar */}
-      <footer className="fixed left-0 right-0 z-30 bottom-[65px] md:bottom-0">
+      <footer className="fixed left-0 right-0 z-30 bottom-[calc(env(safe-area-inset-bottom,0px)+55px)] md:bottom-0">
         {/* Interactive Seek Bar at very top of mini-bar */}
         <div className="h-1 relative group">
           <SeekBar progress={state.currentTime} duration={state.duration} onSeek={seekTo} height="h-full" />
@@ -342,7 +342,7 @@ export function PlayerBar() {
               )}
             </div>
             <div className="min-w-0">
-              <p className="text-sm font-bold truncate text-white group-hover:text-indigo-400 transition-colors">
+              <p className="text-sm font-bold truncate text-white group-hover:text-[#1db954] transition-colors">
                 {state.isBuffering && state.currentTime === 0 ? "جاري التجهيز..." : currentSong.title}
               </p>
               <p className="text-xs text-gray-400 truncate">
@@ -355,7 +355,7 @@ export function PlayerBar() {
           {/* Center Controls */}
           <div className="flex items-center gap-3 shrink-0">
             <button onClick={() => setShuffle(!state.shuffle)}
-              className={`hidden md:block transition-colors ${state.shuffle ? "text-indigo-400" : "text-gray-500 hover:text-white"}`}>
+              className={`hidden md:block transition-colors ${state.shuffle ? "text-[#1db954]" : "text-gray-500 hover:text-white"}`}>
               <Shuffle className="w-4 h-4" />
             </button>
             <button onClick={prev} className="text-gray-300 hover:text-white transition-colors">
@@ -377,7 +377,7 @@ export function PlayerBar() {
               <SkipForward className="w-5 h-5 fill-current" />
             </button>
             <button onClick={cycleRepeat}
-              className={`hidden md:block relative transition-colors ${state.repeat !== "off" ? "text-indigo-400" : "text-gray-500 hover:text-white"}`}>
+              className={`hidden md:block relative transition-colors ${state.repeat !== "off" ? "text-[#1db954]" : "text-gray-500 hover:text-white"}`}>
               <Repeat className="w-4 h-4" />
               {state.repeat === "one" && <span className="absolute -top-1 -right-1 text-[7px] font-black">1</span>}
             </button>
@@ -388,14 +388,14 @@ export function PlayerBar() {
             <button onClick={toggleLike}>
               <Heart className={`w-5 h-5 transition-colors ${isLiked ? "text-pink-500 fill-current" : "text-gray-500 hover:text-white"}`} />
             </button>
-            <button onClick={handleDownload} className="text-gray-500 hover:text-indigo-400 transition-colors hidden md:block">
+            <button onClick={handleDownload} className="text-gray-500 hover:text-[#1db954] transition-colors hidden md:block">
               <DownloadCloud className="w-4 h-4" />
             </button>
             <div className="hidden md:flex items-center gap-1.5 group">
               <Volume2 className="w-3.5 h-3.5 text-gray-500" />
               <input type="range" min="0" max="1" step="0.01" value={state.volume}
                 onChange={e => setVolume(parseFloat(e.target.value))}
-                className="w-20 accent-indigo-500 h-1 cursor-pointer" />
+                className="w-20 accent-[#1db954] h-1 cursor-pointer" />
             </div>
           </div>
         </div>

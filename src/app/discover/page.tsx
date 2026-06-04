@@ -23,13 +23,13 @@ export default function DiscoverPage() {
 
   return (
     <div className="space-y-10 animate-in fade-in duration-700 pb-20">
-      <header className="relative h-64 rounded-3xl overflow-hidden glass flex items-center px-10">
-        <div className="absolute inset-0 bg-gradient-to-r from-indigo-500/20 to-teal-400/20 z-0" />
+      <header className="relative h-64 rounded-[2rem] overflow-hidden glass flex items-center px-10 shadow-[0_0_40px_rgba(0,229,255,0.15)] border border-cyan-500/20">
+        <div className="absolute inset-0 bg-gradient-to-r from-cyan-500/30 via-blue-500/10 to-transparent z-0" />
         <div className="relative z-10 space-y-4">
-          <div className="w-12 h-12 rounded-2xl bg-indigo-500 flex items-center justify-center shadow-lg">
-            <Sparkles className="text-white w-6 h-6" />
+          <div className="w-14 h-14 rounded-2xl bg-cyan-500 flex items-center justify-center shadow-[0_0_20px_rgba(0,229,255,0.6)]">
+            <Sparkles className="text-black w-7 h-7" />
           </div>
-          <h1 className="text-5xl font-black">جديد الأغاني</h1>
+          <h1 className="text-5xl font-black text-shadow-[0_0_20px_rgba(0,229,255,0.5)]">جديد الأغاني</h1>
           <p className="text-gray-300">أحدث الإصدارات مرتبة من الأجدد لتستمع إليها فوراً</p>
         </div>
       </header>
@@ -52,7 +52,7 @@ export default function DiscoverPage() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: idx * 0.05 }}
                 whileHover={{ scale: 1.01 }}
-                className="group flex flex-row items-center gap-4 p-4 glass rounded-2xl border border-white/5 hover:bg-white/10 transition-all cursor-pointer shadow-sm relative overflow-hidden"
+                className="group flex flex-row items-center gap-4 p-4 glass rounded-[1.5rem] border border-transparent hover:border-cyan-400/40 hover:bg-white/10 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_30px_rgba(0,229,255,0.2)] relative overflow-hidden"
                 onClick={() => playNow({ 
                   songId: item.songId, 
                   title: item.title, 
@@ -61,7 +61,7 @@ export default function DiscoverPage() {
                   metadata: { thumbnailUrl: item.thumbnailUrl }
                 })}
               >
-                <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-indigo-500 to-teal-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+                <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-cyan-400 to-blue-500 opacity-0 group-hover:opacity-100 shadow-[0_0_15px_rgba(0,229,255,1)] transition-opacity" />
                 
                 <div className="text-gray-500 font-bold w-6 text-center shrink-0">
                   {idx + 1}

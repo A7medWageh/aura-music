@@ -4,14 +4,14 @@
 
 @layer base {
   :root {
-    --surface: 9, 10, 15;
-    --panel: 18, 20, 26;
-    --accent: 99, 102, 241;
-    --accent-glow: 99, 102, 241, 0.4;
+    --surface: 0, 0, 0;
+    --panel: 15, 18, 21;
+    --accent: 0, 229, 255; /* Neon Cyan */
+    --accent-glow: 0, 229, 255, 0.4;
   }
 
   body {
-    @apply bg-[rgb(var(--surface))] text-white selection:bg-indigo-500/30;
+    @apply bg-[rgb(var(--surface))] text-white selection:bg-[#00e5ff]/30;
     font-feature-settings: "ss01", "ss02", "cv01", "cv02";
     /* Prevent iOS rubber-band scroll on the body */
     overscroll-behavior: none;
@@ -34,11 +34,11 @@
 
 @layer components {
   .glass {
-    @apply bg-white/5 backdrop-blur-xl border border-white/10;
+    @apply bg-[#121212]/90 backdrop-blur-xl border border-white/5;
   }
   
   .glass-dark {
-    @apply bg-black/40 backdrop-blur-2xl border border-white/5;
+    @apply bg-[#000000]/80 backdrop-blur-3xl border-t border-white/5;
   }
 
   .premium-card {
@@ -46,7 +46,7 @@
   }
 
   .text-gradient {
-    @apply bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 to-purple-400;
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 to-[#00e5ff];
   }
 
   /* Mobile card — tappable with active press */

@@ -130,13 +130,13 @@ export default function LibraryPage() {
               <motion.div key={folder.name} whileHover={{ y: -5, scale: 1.02 }}
                 onClick={() => setOpenFolder(folder.name)}
                 className="group cursor-pointer">
-                {/* Folder Cover — stacked look */}
+                {/* Folder Cover — stacked look with neon aura */}
                 <div className="relative aspect-square mb-3">
                   {/* Back cards (depth effect) */}
-                  <div className="absolute inset-0 rounded-2xl overflow-hidden bg-white/5 translate-x-2 translate-y-2 opacity-50 scale-95" />
-                  <div className="absolute inset-0 rounded-2xl overflow-hidden bg-white/5 translate-x-1 translate-y-1 opacity-70 scale-97" />
+                  <div className="absolute inset-0 rounded-3xl overflow-hidden bg-white/5 translate-x-2 translate-y-2 opacity-50 scale-95 group-hover:translate-x-4 group-hover:translate-y-4 group-hover:-rotate-3 transition-all duration-500" />
+                  <div className="absolute inset-0 rounded-3xl overflow-hidden bg-white/5 translate-x-1 translate-y-1 opacity-70 scale-97 group-hover:translate-x-2 group-hover:translate-y-2 group-hover:-rotate-1 transition-all duration-500" />
                   {/* Main cover */}
-                  <div className="absolute inset-0 rounded-2xl overflow-hidden shadow-xl">
+                  <div className="absolute inset-0 rounded-3xl overflow-hidden shadow-xl border border-transparent group-hover:border-cyan-400/50 group-hover:shadow-[0_0_30px_rgba(0,229,255,0.3)] transition-all duration-500">
                     {folder.cover ? (
                       <img src={getProxyUrl(folder.cover)} alt={folder.name}
                         className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" />
@@ -149,8 +149,8 @@ export default function LibraryPage() {
                     <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                       <button
                         onClick={e => { e.stopPropagation(); playFolder(folder); }}
-                        className="w-12 h-12 rounded-full bg-indigo-500 flex items-center justify-center shadow-xl hover:scale-110 transition-transform">
-                        <Play className="w-5 h-5 text-white fill-current ml-0.5" />
+                        className="w-12 h-12 rounded-full bg-cyan-500 flex items-center justify-center shadow-[0_0_20px_rgba(0,229,255,0.6)] hover:scale-110 transition-transform">
+                        <Play className="w-5 h-5 text-black fill-current ml-0.5" />
                       </button>
                     </div>
                   </div>
@@ -163,7 +163,7 @@ export default function LibraryPage() {
 
                 <div className="flex items-center justify-between gap-1">
                   <div className="min-w-0">
-                    <h3 className="font-bold text-sm truncate group-hover:text-indigo-400 transition-colors">
+                    <h3 className="font-bold text-sm truncate group-hover:text-cyan-400 group-hover:text-shadow-[0_0_8px_rgba(0,229,255,0.8)] transition-all">
                       {folder.name}
                     </h3>
                     <p className="text-xs text-gray-500 mt-0.5">{folder.songs.length} أغنية</p>

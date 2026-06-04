@@ -15,19 +15,19 @@ type ArtistEntry = { name: string; artistId: string; thumbnailUrl: string };
 function ArtistCard({ artist }: { artist: ArtistEntry }) {
   return (
     <Link href={artist.artistId ? `/artist/${artist.artistId}` : "#"} className="flex flex-col items-center gap-2 group cursor-pointer">
-      <div className="w-16 h-16 md:w-20 md:h-20 rounded-full overflow-hidden border-2 border-transparent group-hover:border-indigo-500 transition-all shadow-lg ring-2 ring-white/5 group-hover:ring-indigo-500/40">
+      <div className="w-16 h-16 md:w-24 md:h-24 rounded-full overflow-hidden border-2 border-transparent group-hover:border-cyan-400 transition-all shadow-lg ring-2 ring-white/5 group-hover:ring-cyan-400/50 group-hover:shadow-[0_0_20px_rgba(0,229,255,0.4)] shrink-0 relative">
         {artist.thumbnailUrl ? (
           <img
             src={getProxyUrl(artist.thumbnailUrl)}
             alt={artist.name}
             className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
-            onError={(e) => { (e.target as HTMLImageElement).parentElement!.innerHTML = `<div class="w-full h-full bg-indigo-500/20 flex items-center justify-center text-xl">🎤</div>`; }}
+            onError={(e) => { (e.target as HTMLImageElement).parentElement!.innerHTML = `<div class="w-full h-full bg-cyan-500/20 flex items-center justify-center text-2xl">🎤</div>`; }}
           />
         ) : (
-          <div className="w-full h-full bg-gradient-to-br from-indigo-500/30 to-purple-600/30 flex items-center justify-center text-xl">🎤</div>
+          <div className="w-full h-full bg-gradient-to-br from-cyan-500/30 to-blue-600/30 flex items-center justify-center text-2xl">🎤</div>
         )}
       </div>
-      <span className="text-[11px] font-bold text-center text-gray-400 group-hover:text-white transition-colors leading-tight px-1 line-clamp-2">{artist.name}</span>
+      <span className="text-xs font-bold text-center text-gray-400 group-hover:text-white group-hover:text-shadow-[0_0_8px_rgba(0,229,255,0.8)] transition-all leading-tight px-1 line-clamp-2">{artist.name}</span>
     </Link>
   );
 }
@@ -35,10 +35,10 @@ function ArtistCard({ artist }: { artist: ArtistEntry }) {
 function ArtistGrid({ artists, loading, count = 10 }: { artists: ArtistEntry[]; loading: boolean; count?: number }) {
   if (loading || artists.length === 0) {
     return (
-      <div className="grid grid-cols-5 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 gap-x-4 gap-y-6">
+      <div className="flex gap-4 overflow-x-auto pb-6 pt-2 snap-x hide-scrollbar px-2">
         {Array.from({ length: count }).map((_, i) => (
-          <div key={i} className="flex flex-col items-center gap-2">
-            <div className="w-16 h-16 md:w-20 md:h-20 rounded-full bg-white/5 animate-pulse" />
+          <div key={i} className="flex flex-col items-center gap-2 shrink-0 snap-start">
+            <div className="w-16 h-16 md:w-24 md:h-24 rounded-full bg-white/5 animate-pulse" />
             <div className="w-12 h-2.5 bg-white/5 animate-pulse rounded" />
           </div>
         ))}
@@ -46,8 +46,12 @@ function ArtistGrid({ artists, loading, count = 10 }: { artists: ArtistEntry[]; 
     );
   }
   return (
-    <div className="grid grid-cols-5 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 gap-x-4 gap-y-6">
-      {artists.map(a => <ArtistCard key={a.artistId || a.name} artist={a} />)}
+    <div className="flex gap-4 md:gap-6 overflow-x-auto pb-6 pt-2 snap-x hide-scrollbar px-2 -mx-2">
+      {artists.map(a => (
+        <div key={a.artistId || a.name} className="shrink-0 snap-start w-[72px] md:w-[100px]">
+          <ArtistCard artist={a} />
+        </div>
+      ))}
     </div>
   );
 }
@@ -159,44 +163,32 @@ export default function HomePage() {
         <ArtistGrid artists={intlArtists} loading={artistsLoading} count={20} />
       </section>
 
-      {/* ─── Trending Slider ─── */}
+      {/* ─── Trending Slider (Horizontal scroll for native feel) ─── */}
       <section>
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-2xl font-bold flex items-center gap-2">
-            <TrendingUp className="text-indigo-400 w-6 h-6" /> الأغاني الأكثر استماعاً الآن 🔥
+        <div className="flex items-center justify-between mb-4 px-2">
+          <h2 className="text-2xl font-black flex items-center gap-2 text-gradient">
+            <TrendingUp className="text-cyan-400 w-6 h-6" /> الأغاني الأكثر استماعاً الآن 🔥
           </h2>
-          <div className="flex items-center gap-2">
-            <button onClick={() => manualNav(goPrev)} className="w-9 h-9 rounded-full glass border border-white/10 flex items-center justify-center hover:border-indigo-500 hover:bg-indigo-500/20 transition-all">
-              <ChevronRight className="w-5 h-5" />
-            </button>
-            <span className="text-xs text-gray-500 font-bold tabular-nums min-w-[40px] text-center">{currentSlide + 1}/{totalSlides}</span>
-            <button onClick={() => manualNav(goNext)} className="w-9 h-9 rounded-full glass border border-white/10 flex items-center justify-center hover:border-indigo-500 hover:bg-indigo-500/20 transition-all">
-              <ChevronLeft className="w-5 h-5" />
-            </button>
-          </div>
         </div>
 
-        <div className="overflow-hidden">
-          <AnimatePresence mode="wait">
-            <motion.div key={currentSlide} initial={{ opacity: 0, x: -40 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 40 }}
-              transition={{ duration: 0.3, ease: "easeOut" }} className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              {trendLoading
-                ? Array.from({ length: 4 }).map((_, i) => <div key={i} className="aspect-video bg-white/5 animate-pulse rounded-2xl" />)
-                : currentSongs.map(item => (
+        <div className="flex gap-4 overflow-x-auto pb-8 pt-2 snap-x hide-scrollbar px-2 -mx-2">
+          {trendLoading
+            ? Array.from({ length: 8 }).map((_, i) => <div key={i} className="w-[240px] md:w-[300px] aspect-video shrink-0 bg-white/5 animate-pulse rounded-2xl snap-start" />)
+            : trending.map(item => (
                   <motion.div key={item.songId} whileHover={{ y: -5, scale: 1.02 }}
-                    className="group cursor-pointer"
+                    className="group cursor-pointer shrink-0 w-[240px] md:w-[300px] snap-start"
                     onMouseEnter={() => onSongHover(item.youtubeVideoId)}
                     onClick={() => playNow(item)}
                   >
-                    <div className="relative aspect-video rounded-2xl overflow-hidden glass mb-3">
+                    <div className="relative aspect-video rounded-2xl overflow-hidden glass mb-3 border-transparent group-hover:border-cyan-400/50 group-hover:shadow-[0_0_25px_rgba(0,229,255,0.3)] transition-all">
                       <img src={getProxyUrl(item.thumbnailUrl)} alt={item.title} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" />
                       <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                        <div className="w-12 h-12 rounded-full bg-indigo-500 flex items-center justify-center shadow-xl">
-                          <Play className="w-5 h-5 text-white fill-current ml-0.5" />
+                        <div className="w-12 h-12 rounded-full bg-cyan-500 flex items-center justify-center shadow-[0_0_20px_rgba(0,229,255,0.6)]">
+                          <Play className="w-5 h-5 text-black fill-current ml-0.5" />
                         </div>
                       </div>
                       <div className="absolute top-2 left-2 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button onClick={(e) => handleDownload(e, item)} className="p-1.5 bg-black/50 backdrop-blur-sm rounded-full hover:text-indigo-400 text-white transition-colors">
+                        <button onClick={(e) => handleDownload(e, item)} className="p-1.5 bg-black/50 backdrop-blur-sm rounded-full hover:text-cyan-400 text-white transition-colors">
                           <DownloadCloud className="w-4 h-4" />
                         </button>
                         <FavoriteButton 

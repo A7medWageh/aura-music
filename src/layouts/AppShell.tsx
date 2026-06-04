@@ -30,9 +30,10 @@ export function AppShell({ children }: { children: ReactNode }) {
 
         {/* ── Main Content Area ── */}
         <div className={`
-          md:pr-[280px]
-          pb-[calc(80px+env(safe-area-inset-bottom,0px))]
+          md:pr-[300px]
+          pb-[calc(140px+env(safe-area-inset-bottom,0px))]
           md:pb-[100px]
+          pt-6
           min-h-screen flex flex-col
         `}>
           {/* Desktop header (hidden on mobile) */}
@@ -53,7 +54,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           {/* Mobile header - minimal */}
           <header className="md:hidden sticky top-0 z-20 flex items-center justify-between px-4 py-3"
             style={{
-              background: "rgba(9,10,15,0.92)",
+              background: "rgba(0,0,0,0.92)",
               backdropFilter: "blur(20px)",
               WebkitBackdropFilter: "blur(20px)",
               paddingTop: "calc(12px + env(safe-area-inset-top, 0px))",

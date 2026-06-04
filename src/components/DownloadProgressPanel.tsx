@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { subscribeDownloads, DownloadJob } from "@/state/downloadStore";
-import { DownloadCloud, CheckCircle2, XCircle, Music } from "lucide-react";
+import { subscribeDownloads, DownloadJob, cancelJob } from "@/state/downloadStore";
+import { DownloadCloud, CheckCircle2, XCircle, Music, X } from "lucide-react";
 
 export function DownloadProgressPanel() {
   const [jobs, setJobs] = useState<DownloadJob[]>([]);
@@ -230,12 +230,27 @@ function JobRow({ job }: { job: DownloadJob }) {
                 <p className="text-[10px] text-emerald-400 font-bold flex items-center gap-1 uppercase tracking-widest flex-row-reverse">
                   <CheckCircle2 className="w-3 h-3 ml-1" /> تم الحفظ
                 </p>
+              ) : job.status === "cancelled" ? (
+                <p className="text-[10px] text-orange-400 font-bold flex items-center gap-1 uppercase tracking-widest flex-row-reverse">
+                  <XCircle className="w-3 h-3 ml-1" /> تم الإلغاء
+                </p>
               ) : (
                 <p className="text-[10px] text-red-400 font-bold flex items-center gap-1 uppercase tracking-widest flex-row-reverse">
                   <XCircle className="w-3 h-3 ml-1" /> فشل التحميل
                 </p>
               )}
             </div>
+            
+            {/* Cancel Button */}
+            {job.status === "downloading" && (
+              <button 
+                onClick={(e) => { e.stopPropagation(); cancelJob(job.id); }}
+                className="w-6 h-6 rounded-full bg-white/5 hover:bg-red-500/20 text-gray-400 hover:text-red-400 flex items-center justify-center transition-colors"
+                title="إلغاء التحميل"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            )}
           </div>
         </div>
       </div>

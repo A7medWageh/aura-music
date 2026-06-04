@@ -167,16 +167,37 @@ export async function searchYouTubeInnertube(query: string) {
 
   const innertube = await getYTWeb();
 
-  const [generalResults, songResults, artistResults] = await Promise.all([
+  const [generalResults, songResults, artistResults, standardResults] = await Promise.all([
     innertube.music.search(query).catch(() => null),
     innertube.music.search(query, { type: "song" }).catch(() => null),
     innertube.music.search(query, { type: "artist" }).catch(() => null),
+    innertube.search(query).catch(() => null),
   ]);
 
   const songMap = new Map<string, any>();
   [...extractSongs(generalResults), ...extractSongs(songResults ?? {})].forEach(
     (s) => { if (s.songId && !songMap.has(s.songId)) songMap.set(s.songId, s); }
   );
+
+  // Fallback: standard YouTube videos (great for underground rap tracks)
+  if (standardResults?.videos?.length) {
+    standardResults.videos.forEach((v: any) => {
+      // Basic heuristic: must be a video, under 15 mins
+      if (v.type === "Video" && v.duration?.seconds < 900) {
+        if (!songMap.has(v.id)) {
+           songMap.set(v.id, {
+             type: "song",
+             songId: v.id,
+             youtubeVideoId: v.id,
+             title: sanitizeTitle(v.title.text || v.title),
+             artist: v.author?.name || "فنان غير معروف",
+             thumbnailUrl: getHighResThumbnail(v.thumbnails)
+           });
+        }
+      }
+    });
+  }
+
   const songs = Array.from(songMap.values()).slice(0, 20);
   const albums = extractAlbums(generalResults).slice(0, 8);
   const artists = extractArtists(generalResults, artistResults).slice(0, 5);

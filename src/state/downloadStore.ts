@@ -15,8 +15,11 @@ export type DownloadJob = {
   progressBytes?: number;
   totalBytes?: number;
   failed: number;
-  status: "downloading" | "done" | "error";
+  status: "downloading" | "done" | "error" | "cancelled";
 };
+
+// Keep controllers out of state so they aren't serialized
+const abortControllers = new Map<string, AbortController>();
 
 type Listener = (jobs: DownloadJob[]) => void;
 
@@ -108,13 +111,26 @@ export function updateJob(id: string, update: Partial<DownloadJob>) {
   notify();
 }
 
-export function finishJob(id: string, success: boolean) {
+export function finishJob(id: string, success: boolean, cancelled = false) {
   const job = jobs.get(id);
   if (!job) return;
-  jobs.set(id, { ...job, status: success ? "done" : "error" });
+  jobs.set(id, { ...job, status: cancelled ? "cancelled" : success ? "done" : "error" });
+  abortControllers.delete(id);
   notify(true);
   // Auto-remove after 8 seconds
   setTimeout(() => { jobs.delete(id); notify(true); }, 8000);
+}
+
+export function setJobController(id: string, ctrl: AbortController) {
+  abortControllers.set(id, ctrl);
+}
+
+export function cancelJob(id: string) {
+  const ctrl = abortControllers.get(id);
+  if (ctrl) {
+    ctrl.abort();
+  }
+  finishJob(id, false, true);
 }
 
 export function getActiveJobs(): DownloadJob[] {

@@ -1,5 +1,5 @@
 import { saveSongMeta, storeAudioBlob } from "@/offline/indexedDbCache";
-import { startJob, updateJob, finishJob } from "@/state/downloadStore";
+import { startJob, updateJob, finishJob, setJobController } from "@/state/downloadStore";
 
 // ── Download a single audio file and store it in IndexedDB ──────────────────
 async function downloadAudioBlob(
@@ -7,7 +7,8 @@ async function downloadAudioBlob(
   songId: string, 
   videoId: string, 
   title: string,
-  onProgress?: (received: number, total: number, delta: number) => void
+  onProgress?: (received: number, total: number, delta: number) => void,
+  signal?: AbortSignal
 ): Promise<boolean> {
   const MAX_RETRIES = 2;
   let lastError = null;
@@ -15,7 +16,7 @@ async function downloadAudioBlob(
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
       const url = `/api/download?videoId=${encodeURIComponent(videoId)}&title=${encodeURIComponent(title)}&attempt=${attempt}`;
-      const res = await fetch(url, { cache: "no-store" });
+      const res = await fetch(url, { cache: "no-store", signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
       const contentLength = parseInt(res.headers.get("content-length") || "0");
@@ -47,6 +48,10 @@ async function downloadAudioBlob(
       await storeAudioBlob(songId, blob);
       return true;
     } catch (err: any) {
+      if (err.name === "AbortError") {
+        console.log(`[Download] Aborted for "${title}"`);
+        return false;
+      }
       lastError = err;
       console.warn(`[Download] Attempt ${attempt + 1} failed for "${title}":`, err.message);
       // Wait a bit before retry
@@ -97,8 +102,15 @@ export async function downloadSong(
     // Show single-song progress
     startJob(songId, title, "song", 1);
     updateJob(songId, { currentSong: title });
+    
+    const ctrl = new AbortController();
+    setJobController(songId, ctrl);
 
-    const ok = await downloadAudioBlob(songId, songId, videoId, title);
+    const ok = await downloadAudioBlob(songId, songId, videoId, title, undefined, ctrl.signal);
+    
+    // Check if it was cancelled
+    if (ctrl.signal.aborted) return false;
+
     if (ok) updateJob(songId, { done: 1, failed: 0 });
     else updateJob(songId, { done: 0, failed: 1 });
     finishJob(songId, ok);
@@ -124,10 +136,13 @@ export async function downloadAlbum(
 ): Promise<boolean> {
   const albumName = metadata.albumName || "ألبوم";
   const total = songs.length;
-  const CONCURRENCY = 8; // Increased for "bullet" speed
+  const CONCURRENCY = 20; // Increased for "rocket" speed
 
   // Register the job
   startJob(albumId, albumName, "album", total);
+  
+  const ctrl = new AbortController();
+  setJobController(albumId, ctrl);
 
   let doneCount = 0;
   let failedCount = 0;
@@ -163,14 +178,21 @@ export async function downloadAlbum(
           totalAccumulatedBytes += delta;
           // Update total bytes in store (cumulative)
           updateJob(albumId, { progressBytes: totalAccumulatedBytes });
-        }
+        },
+        ctrl.signal
       );
+
+      if (ctrl.signal.aborted) return; // Stop if aborted
 
       if (ok) doneCount++; else failedCount++;
       updateJob(albumId, { done: doneCount, failed: failedCount });
     }));
+    
+    if (ctrl.signal.aborted) break;
   }
 
-  finishJob(albumId, failedCount === 0);
+  if (!ctrl.signal.aborted) {
+    finishJob(albumId, failedCount === 0);
+  }
   return failedCount === 0;
 }

@@ -26,7 +26,7 @@ export function MobileTabBar() {
       <div
         className="flex items-center justify-around px-2 pt-2 pb-[env(safe-area-inset-bottom,8px)]"
         style={{
-          background: "rgba(9,10,15,0.92)",
+          background: "rgba(0,0,0,0.95)",
           backdropFilter: "blur(24px)",
           WebkitBackdropFilter: "blur(24px)",
           borderTop: "1px solid rgba(255,255,255,0.08)",
