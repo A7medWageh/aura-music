@@ -182,9 +182,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     player.playbackRate = state.speed;
   }, [state.speed]);
 
-  // ── In-process stream URL cache ───────────────────────────────────
+  // ── Stream Resolution (Rocket Speed) ────────────────────────────────
   const resolveStream = async (videoId: string): Promise<string> => {
-    // ── Check Offline Storage First ──────────────────────────────────────────
+    // 1. Check Offline Storage First
     if (typeof window !== "undefined") {
        try {
          const { getAudioBlob } = await import("@/offline/indexedDbCache");
@@ -198,8 +198,29 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
        }
     }
 
-    // Direct proxy to our own streaming API for true chunk-by-chunk buffering 
-    // This provides the "rocket speed" stream starting experience.
+    // 2. Try Piped API for ultra-fast direct browser streaming (Rocket Speed)
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 1500); // 1.5s max wait for Piped
+      const res = await fetch(`https://pipedapi.kavin.rocks/streams/${videoId}`, { signal: controller.signal });
+      clearTimeout(timeoutId);
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.audioStreams && data.audioStreams.length > 0) {
+          // Sort by highest bitrate
+          const bestAudio = data.audioStreams.sort((a: any, b: any) => b.bitrate - a.bitrate)[0];
+          if (bestAudio?.url) {
+            console.log("[Player] Rocket speed activated: Using direct Piped stream");
+            return bestAudio.url;
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("[Player] Piped fast-lane failed, using reliable fallback");
+    }
+
+    // 3. Fallback to our own proxy
     return `/api/download?videoId=${encodeURIComponent(videoId)}`;
   };
 
@@ -280,8 +301,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
         if (!videoIdToPlay) return;
         
-        // ⚡ Direct fallback to native chunk buffering
-        const targetUrl = `/api/download?videoId=${encodeURIComponent(videoIdToPlay)}`;
+        // ⚡ Resolve stream (Fast lane piped API -> proxy fallback)
+        const targetUrl = await resolveStream(videoIdToPlay);
+        if (cancelled) return;
+        
         setState((prev) => ({ ...prev, streamUrl: targetUrl, error: null, isBuffering: false }));
         player.src = targetUrl;
         player.preload = "auto";
