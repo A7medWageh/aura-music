@@ -20,7 +20,7 @@ export function Sidebar() {
 
   return (
     <aside className="hidden md:flex fixed top-0 bottom-[100px] right-0 w-[280px] glass-dark border-l border-white/5 flex-col z-20 overflow-hidden">
-      <div className="p-6 overflow-y-auto hide-scrollbar">
+      <div className="p-6">
         <div className="flex items-center gap-3 mb-10">
           <div className="w-10 h-10 rounded-xl overflow-hidden shadow-lg shadow-indigo-500/10">
             <img src="/logo.png" alt="Aura Logo" className="w-full h-full object-cover" />
@@ -59,18 +59,6 @@ export function Sidebar() {
         </nav>
       </div>
 
-      <div className="mt-auto p-6">
-        <div className="premium-card bg-indigo-500/5 overflow-hidden relative">
-          <div className="relative z-10">
-            <p className="text-xs font-bold text-indigo-400 uppercase tracking-widest mb-1">Aura Premium</p>
-            <p className="text-sm text-gray-300 mb-3">استمتع بتجربة بدون إعلانات وجودة عالية</p>
-            <button className="w-full py-2 bg-indigo-500 hover:bg-indigo-600 rounded-lg text-sm font-bold transition-colors shadow-lg shadow-indigo-500/20">
-              اشترك الآن
-            </button>
-          </div>
-          <div className="absolute -bottom-4 -left-4 w-20 h-20 bg-indigo-500/10 blur-3xl rounded-full" />
-        </div>
-      </div>
     </aside>
   );
 }

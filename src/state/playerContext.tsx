@@ -79,14 +79,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       import("@/services/user/listeningHistory").then(({ trackPlay }) => trackPlay(song)).catch(() => {});
     }
     
-    // Feature requested by user: Auto-download the rest of the song while playing
-    if (song.youtubeVideoId) {
-       downloadSong(song.songId, song.youtubeVideoId, {
-         title: song.title,
-         artist: song.artist,
-         thumbnailUrl: song.metadata?.thumbnailUrl || song.metadata?.thumbnails?.[0]?.url,
-       }).catch(() => {});
-    }
+    // Feature removed: do not automatically download in background. Let browser buffer naturally via chunks.
 
     setState((prev) => {
       const exists = prev.queue.some((item) => item.songId === song.songId);
@@ -190,34 +183,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, [state.speed]);
 
   // ── In-process stream URL cache ───────────────────────────────────
-  // Warm cache: fetch("/api/stream/VIDEO_ID") anywhere to speed up future plays
-  const streamCacheRef = useRef<Map<string, string>>(new Map());
-
-  // Piped: verified-working instances
-  const PIPED_APIS = [
-    "https://api.piped.private.coffee",
-    "https://pipedapi.kavin.rocks",
-    "https://pipedapi.adminforge.de",
-    "https://piped-api.garudalinux.org",
-    "https://api.piped.yt",
-  ];
-
-  // Invidious Proxy: KEY FIX for Vercel!
-  const INVIDIOUS_PROXY_APIS = [
-    "https://invidious.flokinet.to",
-    "https://yt.artemislena.eu",
-    "https://invidious.perennialte.ch",
-    "https://invidious.projectsegfau.lt",
-    "https://iv.ggtyler.dev",
-    "https://invidious.privacydev.net",
-  ];
-
-  /**
-   * Ultra-fast client-side stream resolver.
-   * Races Piped + Cobalt + Invidious Proxy in parallel — fastest wins.
-   * Falls back to /api/stream if all client-side fails.
-   * Full songs only (duration >= 60s).
-   */
   const resolveStream = async (videoId: string): Promise<string> => {
     // ── Check Offline Storage First ──────────────────────────────────────────
     if (typeof window !== "undefined") {
@@ -233,38 +198,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
        }
     }
 
-    try {
-      console.log(`[Stream] Fetching stream url from server for ${videoId}...`);
-      const res = await fetch(`/api/stream/${videoId}`, { signal: AbortSignal.timeout(10000) });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.streamUrl) {
-          console.log(`[Stream] ✅ Server returned: ${data.streamUrl.substring(0, 50)}...`);
-          streamCacheRef.current.set(videoId, data.streamUrl);
-          return data.streamUrl;
-        }
-      }
-    } catch (e: any) {
-      console.warn(`[Player] Server /api/stream failed for ${videoId}, falling back to direct proxy...`);
-    }
-
+    // Direct proxy to our own streaming API for true chunk-by-chunk buffering 
+    // This provides the "rocket speed" stream starting experience.
     return `/api/download?videoId=${encodeURIComponent(videoId)}`;
   };
 
   const preloadNext = (currentId: string, queue: QueueSong[]) => {
-    const idx = queue.findIndex(s => s.songId === currentId);
-    // Preload next 2 songs for zero-wait skip experience
-    for (const offset of [1, 2]) {
-      const nextSong = queue[idx + offset];
-      if (nextSong?.youtubeVideoId && !streamCacheRef.current.has(nextSong.youtubeVideoId)) {
-        // Fire and forget — warm the stream cache silently
-        resolveStream(nextSong.youtubeVideoId).then(url => {
-          if (!url.startsWith("/api/download")) {
-            streamCacheRef.current.set(nextSong.youtubeVideoId, url);
-          }
-        }).catch(() => {});
-      }
-    }
+    // Preloading is not necessary with instant /api/download buffering
   };
 
   useEffect(() => {

@@ -138,7 +138,7 @@ export function DownloadProgressPanel() {
               </button>
             </div>
 
-            <div className="max-h-[400px] overflow-y-auto divide-y divide-white/5 custom-scrollbar text-right">
+            <div className="max-h-[400px] overflow-y-auto divide-y divide-white/5 custom-scrollbar" dir="rtl">
               {jobs.map(job => (
                 <JobRow key={job.id} job={job} />
               ))}
@@ -205,38 +205,38 @@ function JobRow({ job }: { job: DownloadJob }) {
       : `${job.done}/${job.total}`;
 
   return (
-    <div className="px-6 py-6 hover:bg-white/[0.02] transition-colors relative group text-right">
-      <div className="flex items-center gap-4 mb-4 flex-row-reverse text-right">
+    <div className="px-6 py-6 hover:bg-white/[0.02] transition-colors relative group text-right" dir="rtl">
+      <div className="flex items-center gap-4 mb-4">
         <div className="w-12 h-12 rounded-2xl bg-white/5 flex items-center justify-center shrink-0 border border-white/5 shadow-inner group-hover:scale-105 transition-transform">
-          <Music className={`w-6 h-6 ${job.status === "error" ? "text-red-400" : "text-indigo-400"}`} />
+          <Music className={`w-6 h-6 ${job.status === "error" ? "text-red-400" : "text-cyan-400"}`} />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="flex items-center justify-between gap-2 flex-row-reverse">
+          <div className="flex items-center justify-between gap-2">
             <p className="text-[13px] font-black text-white truncate leading-tight flex-1">{job.name}</p>
-            <span className={`text-xs font-black tabular-nums ${job.status === "error" ? "text-red-400" : "text-indigo-400"}`}>
+            <span className={`text-xs font-black tabular-nums ${job.status === "error" ? "text-red-400" : "text-cyan-400"}`}>
                {isPending ? "⏳" : `%${pct}`}
             </span>
           </div>
           
-          <div className="flex items-center justify-between mt-1.5 flex-row-reverse">
-            <div className="flex items-center gap-2 flex-row-reverse">
+          <div className="flex items-center justify-between mt-1.5">
+            <div className="flex items-center gap-2">
               {job.status === "downloading" ? (
-                <div className="flex items-center gap-1.5 text-[10px] font-bold text-gray-500 uppercase tracking-widest flex-row-reverse">
-                  <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse" />
+                <div className="flex items-center gap-1.5 text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+                  <div className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
                   {isPending ? "بانتظار الرابط..." : "جاري التحميل"}
-                  {speedText && !isPending && <span className="text-gray-600 px-1 border-l border-white/10 mx-2">{speedText}</span>}
+                  {speedText && !isPending && <span className="text-gray-500 px-1 border-r border-white/10 mx-2">{speedText}</span>}
                 </div>
               ) : job.status === "done" ? (
-                <p className="text-[10px] text-emerald-400 font-bold flex items-center gap-1 uppercase tracking-widest flex-row-reverse">
-                  <CheckCircle2 className="w-3 h-3 ml-1" /> تم الحفظ
+                <p className="text-[10px] text-emerald-400 font-bold flex items-center gap-1 uppercase tracking-widest">
+                  <CheckCircle2 className="w-3 h-3 mr-1" /> تم الحفظ
                 </p>
               ) : job.status === "cancelled" ? (
-                <p className="text-[10px] text-orange-400 font-bold flex items-center gap-1 uppercase tracking-widest flex-row-reverse">
-                  <XCircle className="w-3 h-3 ml-1" /> تم الإلغاء
+                <p className="text-[10px] text-orange-400 font-bold flex items-center gap-1 uppercase tracking-widest">
+                  <XCircle className="w-3 h-3 mr-1" /> تم الإلغاء
                 </p>
               ) : (
-                <p className="text-[10px] text-red-400 font-bold flex items-center gap-1 uppercase tracking-widest flex-row-reverse">
-                  <XCircle className="w-3 h-3 ml-1" /> فشل التحميل
+                <p className="text-[10px] text-red-400 font-bold flex items-center gap-1 uppercase tracking-widest">
+                  <XCircle className="w-3 h-3 mr-1" /> فشل التحميل
                 </p>
               )}
             </div>
@@ -257,20 +257,20 @@ function JobRow({ job }: { job: DownloadJob }) {
 
       {/* Progress Bar */}
       <div className="space-y-2">
-        <div className="relative h-1.5 bg-white/5 rounded-full overflow-hidden">
+        <div className="relative h-2 bg-white/10 rounded-full overflow-hidden">
           <motion.div
-            className={`absolute right-0 top-0 h-full rounded-full ${
-              job.status === "done" ? "bg-emerald-500" : job.status === "error" ? "bg-red-500" : "bg-indigo-500 shadow-[0_0_10px_rgba(99,102,241,0.5)]"
+            className={`absolute left-0 top-0 h-full rounded-full ${
+              job.status === "done" ? "bg-emerald-500" : job.status === "error" ? "bg-red-500" : "bg-cyan-400 shadow-[0_0_15px_rgba(0,229,255,0.6)]"
             }`}
             initial={{ width: 0 }}
             animate={{ width: `${pct}%` }}
             transition={{ duration: 0.5 }}
           />
         </div>
-        <div className="flex justify-between items-center px-0.5 flex-row-reverse">
-          <span className="text-[9px] text-gray-600 font-bold uppercase tracking-tighter">{progressSubText}</span>
+        <div className="flex justify-between items-center px-0.5" dir="ltr">
+          <span className="text-[10px] text-cyan-200 font-black uppercase tracking-wider">{progressSubText}</span>
           {job.status === "downloading" && etaText && (
-            <span className="text-[9px] text-gray-500 font-medium">{etaText}</span>
+            <span className="text-[10px] text-gray-400 font-medium">{etaText}</span>
           )}
         </div>
       </div>

@@ -2,48 +2,19 @@ import { NextResponse } from "next/server";
 import { searchYouTube } from "@apis/youtubei.js";
 
 const TOP_ARTISTS = [
-  "عمرو دياب",
-  "شيرين عبدالوهاب",
-  "تامر حسني",
-  "أحمد سعد",
-  "ويجز",
-  "نانسي عجرم",
-  "حماقي",
-  "أصالة",
-  "وائل كفوري",
-  "مروان موسى",
-  "فرقة كايروكي",
-  "حسين الجسمي",
-  "بهاء سلطان",
-  "رامي صبري",
-  "تامر عاشور",
-  "محمود العسيلي",
-  "روبي",
-  "أنغام",
-  "إليسا",
-  "محمد منير",
-  "عبدالباسط حمودة",
-  "عصام صاصا",
-  "مروان بابلو",
-  "عفروتو"
+  "عمرو دياب", "شيرين عبدالوهاب", "تامر حسني", "أحمد سعد", "ويجز", "نانسي عجرم", "حماقي", "أصالة", "وائل كفوري", "مروان موسى",
+  "فرقة كايروكي", "حسين الجسمي", "بهاء سلطان", "رامي صبري", "تامر عاشور", "محمود العسيلي", "روبي", "أنغام", "إليسا", "محمد منير",
+  "عبدالباسط حمودة", "عصام صاصا", "مروان بابلو", "عفروتو", "أحمد مكي", "حمزة نمرة", "رامي جمال", "سميرة سعيد", "عبدالمجيد عبدالله", "ماجد المهندس",
+  "كاظم الساهر", "راشد الماجد", "نجوى كرم", "نوال الزغبي", "هيفاء وهبي", "مصطفى حجاج", "حكيم", "مسار إجباري", "شارموفرز", "أوكا وأورتيجا",
+  "حمو بيكا", "عمر كمال", "حسن شاكوش", "رضا البحراوي", "مسلم", "عنبة", "فارس قطرية", "عبدالرحمن رشدي", "أمير عيد", "أحمد كامل"
 ];
 
 const INTL_ARTISTS = [
-  "The Weeknd",
-  "Taylor Swift",
-  "Eminem",
-  "Billie Eilish",
-  "Drake",
-  "Dua Lipa",
-  "Ed Sheeran",
-  "Adele",
-  "Justin Bieber",
-  "Rihanna",
-  "Bruno Mars",
-  "Post Malone",
-  "Ariana Grande",
-  "Coldplay",
-  "Imagine Dragons"
+  "The Weeknd", "Taylor Swift", "Eminem", "Billie Eilish", "Drake", "Dua Lipa", "Ed Sheeran", "Adele", "Justin Bieber", "Rihanna",
+  "Bruno Mars", "Post Malone", "Ariana Grande", "Coldplay", "Imagine Dragons", "Harry Styles", "Beyonce", "Kanye West", "Kendrick Lamar", "Travis Scott",
+  "Bad Bunny", "J Balvin", "Shakira", "Snoop Dogg", "50 Cent", "Tupac", "Notorious BIG", "Jay-Z", "Lady Gaga", "Katy Perry",
+  "Shawn Mendes", "Charlie Puth", "Selena Gomez", "Miley Cyrus", "Zayn", "Olivia Rodrigo", "Doja Cat", "Megan Thee Stallion", "Cardi B", "Nicki Minaj",
+  "Lil Nas X", "Lil Uzi Vert", "Juice WRLD", "XXXTentacion", "Avicii", "Calvin Harris", "David Guetta", "Martin Garrix", "Skrillex", "Marshmello"
 ];
 
 type ArtistEntry = { name: string; artistId: string; thumbnailUrl: string };
