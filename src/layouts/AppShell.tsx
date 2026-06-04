@@ -30,7 +30,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
         {/* ── Main Content Area ── */}
         <div className={`
-          md:pr-[300px]
+          md:pr-[280px]
           pb-[calc(140px+env(safe-area-inset-bottom,0px))]
           md:pb-[100px]
           pt-6

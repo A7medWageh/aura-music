@@ -35,10 +35,10 @@ function ArtistCard({ artist }: { artist: ArtistEntry }) {
 function ArtistGrid({ artists, loading, count = 10 }: { artists: ArtistEntry[]; loading: boolean; count?: number }) {
   if (loading || artists.length === 0) {
     return (
-      <div className="flex gap-4 overflow-x-auto pb-6 pt-2 snap-x hide-scrollbar px-2">
+      <div className="grid grid-cols-4 sm:grid-cols-5 md:grid-cols-6 lg:grid-cols-8 xl:grid-cols-10 gap-x-4 gap-y-6">
         {Array.from({ length: count }).map((_, i) => (
-          <div key={i} className="flex flex-col items-center gap-2 shrink-0 snap-start">
-            <div className="w-16 h-16 md:w-24 md:h-24 rounded-full bg-white/5 animate-pulse" />
+          <div key={i} className="flex flex-col items-center gap-2">
+            <div className="w-16 h-16 md:w-20 md:h-20 rounded-full bg-white/5 animate-pulse" />
             <div className="w-12 h-2.5 bg-white/5 animate-pulse rounded" />
           </div>
         ))}
@@ -46,11 +46,9 @@ function ArtistGrid({ artists, loading, count = 10 }: { artists: ArtistEntry[]; 
     );
   }
   return (
-    <div className="flex gap-4 md:gap-6 overflow-x-auto pb-6 pt-2 snap-x hide-scrollbar px-2 -mx-2">
-      {artists.map(a => (
-        <div key={a.artistId || a.name} className="shrink-0 snap-start w-[72px] md:w-[100px]">
-          <ArtistCard artist={a} />
-        </div>
+    <div className="grid grid-cols-4 sm:grid-cols-5 md:grid-cols-6 lg:grid-cols-8 xl:grid-cols-10 gap-x-4 gap-y-6">
+      {artists.slice(0, count).map(a => (
+        <ArtistCard key={a.artistId || a.name} artist={a} />
       ))}
     </div>
   );
@@ -151,7 +149,7 @@ export default function HomePage() {
           <Star className="text-yellow-400 w-6 h-6" />
           <h2 className="text-2xl font-bold">أشهر فنانين مصر 🎤</h2>
         </div>
-        <ArtistGrid artists={egyptianArtists} loading={artistsLoading} count={30} />
+        <ArtistGrid artists={egyptianArtists} loading={artistsLoading} count={50} />
       </section>
 
       {/* ─── International Artists ─── */}
@@ -160,27 +158,39 @@ export default function HomePage() {
           <Star className="text-blue-400 w-6 h-6" />
           <h2 className="text-2xl font-bold">نجوم عالميون 🌍</h2>
         </div>
-        <ArtistGrid artists={intlArtists} loading={artistsLoading} count={20} />
+        <ArtistGrid artists={intlArtists} loading={artistsLoading} count={50} />
       </section>
 
-      {/* ─── Trending Slider (Horizontal scroll for native feel) ─── */}
+      {/* ─── Trending Slider ─── */}
       <section>
         <div className="flex items-center justify-between mb-4 px-2">
           <h2 className="text-2xl font-black flex items-center gap-2 text-gradient">
             <TrendingUp className="text-cyan-400 w-6 h-6" /> الأغاني الأكثر استماعاً الآن 🔥
           </h2>
+          <div className="flex items-center gap-2">
+            <button onClick={() => manualNav(goPrev)} className="w-9 h-9 rounded-full glass border border-white/10 flex items-center justify-center hover:border-cyan-400 hover:bg-cyan-400/20 transition-all">
+              <ChevronRight className="w-5 h-5" />
+            </button>
+            <span className="text-xs text-gray-500 font-bold tabular-nums min-w-[40px] text-center">{currentSlide + 1}/{totalSlides}</span>
+            <button onClick={() => manualNav(goNext)} className="w-9 h-9 rounded-full glass border border-white/10 flex items-center justify-center hover:border-cyan-400 hover:bg-cyan-400/20 transition-all">
+              <ChevronLeft className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
-        <div className="flex gap-4 overflow-x-auto pb-8 pt-2 snap-x hide-scrollbar px-2 -mx-2">
-          {trendLoading
-            ? Array.from({ length: 8 }).map((_, i) => <div key={i} className="w-[240px] md:w-[300px] aspect-video shrink-0 bg-white/5 animate-pulse rounded-2xl snap-start" />)
-            : trending.map(item => (
+        <div className="overflow-hidden pb-4">
+          <AnimatePresence mode="wait">
+            <motion.div key={currentSlide} initial={{ opacity: 0, x: -40 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 40 }}
+              transition={{ duration: 0.3, ease: "easeOut" }} className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {trendLoading
+                ? Array.from({ length: CARDS_PER_SLIDE }).map((_, i) => <div key={i} className="aspect-video bg-white/5 animate-pulse rounded-2xl" />)
+                : currentSongs.map(item => (
                   <motion.div key={item.songId} whileHover={{ y: -5, scale: 1.02 }}
-                    className="group cursor-pointer shrink-0 w-[240px] md:w-[300px] snap-start"
+                    className="group cursor-pointer"
                     onMouseEnter={() => onSongHover(item.youtubeVideoId)}
                     onClick={() => playNow(item)}
                   >
-                    <div className="relative aspect-video rounded-2xl overflow-hidden glass mb-3 border-transparent group-hover:border-cyan-400/50 group-hover:shadow-[0_0_25px_rgba(0,229,255,0.3)] transition-all">
+                    <div className="relative aspect-video rounded-2xl overflow-hidden glass mb-3 border border-transparent group-hover:border-cyan-400/50 group-hover:shadow-[0_0_25px_rgba(0,229,255,0.3)] transition-all">
                       <img src={getProxyUrl(item.thumbnailUrl)} alt={item.title} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" />
                       <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                         <div className="w-12 h-12 rounded-full bg-cyan-500 flex items-center justify-center shadow-[0_0_20px_rgba(0,229,255,0.6)]">
@@ -202,13 +212,15 @@ export default function HomePage() {
                         />
                       </div>
                     </div>
-                    <h3 className="font-bold text-sm truncate group-hover:text-indigo-400 transition-colors">{item.title}</h3>
-                    <p className="text-xs text-gray-400 truncate mt-0.5">{item.artist}</p>
+                    <div className="px-1">
+                      <h3 className="font-bold text-sm truncate group-hover:text-cyan-400 transition-colors">{item.title}</h3>
+                      <p className="text-xs text-gray-400 truncate mt-0.5">{item.artist}</p>
+                    </div>
                   </motion.div>
                 ))}
+            </motion.div>
+          </AnimatePresence>
         </div>
-
-        {/* Dots */}
         <div className="flex justify-center gap-1.5 mt-5">
           {Array.from({ length: totalSlides }).map((_, i) => (
             <button key={i} onClick={() => manualNav(() => setCurrentSlide(i))}

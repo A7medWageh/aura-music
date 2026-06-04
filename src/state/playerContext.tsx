@@ -3,6 +3,7 @@
 import { createContext, ReactNode, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { initialPlayerState, PlayerState, QueueSong, RepeatMode } from "@/state/playerState";
 import { getAudioBlob } from "@/offline/indexedDbCache";
+import { downloadSong } from "@/services/offline/downloader";
 
 type PlayerContextValue = {
   state: PlayerState;
@@ -77,6 +78,16 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (typeof window !== "undefined") {
       import("@/services/user/listeningHistory").then(({ trackPlay }) => trackPlay(song)).catch(() => {});
     }
+    
+    // Feature requested by user: Auto-download the rest of the song while playing
+    if (song.youtubeVideoId) {
+       downloadSong(song.songId, song.youtubeVideoId, {
+         title: song.title,
+         artist: song.artist,
+         thumbnailUrl: song.metadata?.thumbnailUrl || song.metadata?.thumbnails?.[0]?.url,
+       }).catch(() => {});
+    }
+
     setState((prev) => {
       const exists = prev.queue.some((item) => item.songId === song.songId);
       const nextQueue = exists ? prev.queue : [song, ...prev.queue];
