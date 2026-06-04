@@ -121,35 +121,13 @@ function extractArtists(results: any, artistResults: any): any[] {
 
 // ── getMusicCharts ────────────────────────────────────────────────────────────
 export async function getMusicCharts() {
-  try {
-    const innertube = await getYTWeb();
-    const explore = await innertube.music.getExplore();
-    const trendingList = explore.sections?.find(
-      (s: any) => (s.header?.title?.toString() === "Trending" || s.header?.title?.text === "Trending")
-    )?.contents;
-    if (trendingList?.length) {
-      return trendingList
-        .map((v: any) => ({
-          songId: v.id,
-          title: sanitizeTitle(v.title?.toString() || ""),
-          artist: v.author?.name ?? v.artists?.[0]?.name ?? "فنان غير معروف",
-          youtubeVideoId: v.id,
-          thumbnailUrl: getHighResThumbnail(v.thumbnails),
-        }))
-        .filter((v: any) => v.songId)
-        .slice(0, 50);
-    }
-  } catch (e) {
-    console.warn("[Charts] Explore failed, using fallback");
-  }
-
   const innertube = await getYTWeb();
   try {
-    const results = await innertube.music.search("تريند مصر", { type: "song" });
+    const results = await innertube.music.search("أغاني تريند مصر", { type: "song" });
     const songs = extractSongs(results).slice(0, 30);
     if (songs.length > 0) return songs;
   } catch (e) {
-    console.warn("[Charts] Fallback 1 failed, trying Piped API");
+    console.warn("[Charts] search failed, trying Piped API");
   }
 
   // ── Ultimate Fallback: Piped API (Bypasses IP Blocks) ──
@@ -416,74 +394,40 @@ export async function resolveStream(videoId: string, providedTitle?: string, pro
   // Enforce a strict 28-second global timeout
   return withTimeout(
     (async () => {
-      // ── Strategy -1: Saavn Scraper (Fastest, highest quality 320kbps MP4)
+      // ── Strategy 1: youtubei.js (Fastest Server-side streaming) ─────────
       try {
-        let title = providedTitle || "";
-        let artist = providedArtist || "";
-        if (!title) {
-          try {
-            const innertube = await getYTWeb();
-            const info = await withTimeout(innertube.getBasicInfo(videoId), 4000, null);
-            title = info?.basic_info?.title || "";
-            artist = info?.basic_info?.author || "";
-          } catch {}
-        }
-
-        if (title) {
-          console.log(`[Stream] Trying Saavn API for: ${title}...`);
-          const url = await withTimeout(
-            resolveSaavnStream(title, artist),
-            5000,
-            null
-          );
-          if (url) return await cacheAndReturn(url);
-          
-          console.log(`[Stream] Trying SoundCloud for: ${title}...`);
-          const scUrl = await withTimeout(
-            resolveSoundCloudStream(title, artist),
-            5000,
-            null
-          );
-          if (scUrl) return await cacheAndReturn(scUrl);
-        }
-      } catch (e: any) {
-        console.warn(`[Stream] Scrapers failed: ${e.message}`);
-      }
-
-      // ── Strategy 1: Piped API (Primary — bypasses IP blocks) ────────
-      try {
-        console.log(`[Stream] Trying Piped API for ${videoId}...`);
-        const url = await withTimeout(resolveWithPiped(videoId), 15000, "");
+        console.log(`[Stream] Trying youtubei.js for ${videoId}...`);
+        const url = await withTimeout(resolveWithYoutubei(videoId), 8000, "");
         if (url) return await cacheAndReturn(url);
       } catch (e: any) {
-        console.warn(`[Stream] Piped failed: ${e.message}`);
+        console.warn(`[Stream] youtubei.js failed: ${e.message}`);
       }
 
       // ── Strategy 2: @distube/ytdl-core ──────────────────────────────────
       try {
         console.log(`[Stream] Trying ytdl-core for ${videoId}...`);
-        const url = await withTimeout(resolveWithYtdlCore(videoId), 12000, "");
+        const url = await withTimeout(resolveWithYtdlCore(videoId), 8000, "");
         if (url) return await cacheAndReturn(url);
       } catch (e: any) {
         console.warn(`[Stream] ytdl-core failed: ${e.message}`);
       }
 
-      // ── Strategy 3: Invidious Public Proxy Pool ─────────────────────────
+      // ── Strategy 3: Piped API (Primary — bypasses IP blocks) ────────
+      try {
+        console.log(`[Stream] Trying Piped API for ${videoId}...`);
+        const url = await withTimeout(resolveWithPiped(videoId), 10000, "");
+        if (url) return await cacheAndReturn(url);
+      } catch (e: any) {
+        console.warn(`[Stream] Piped failed: ${e.message}`);
+      }
+
+      // ── Strategy 4: Invidious Public Proxy Pool ─────────────────────────
       try {
         console.log(`[Stream] Trying Invidious for ${videoId}...`);
         const url = await withTimeout(resolveWithInvidious(videoId), 10000, "");
         if (url) return await cacheAndReturn(url);
       } catch (e: any) {
         console.warn(`[Stream] Invidious failed: ${e.message}`);
-      }
-
-      // ── Strategy 4: youtubei.js ─────────────────────────────────────────
-      try {
-        console.log(`[Stream] Trying youtubei.js for ${videoId}...`);
-        const url = await withTimeout(resolveWithYoutubei(videoId), 10000, "");
-        if (url) return await cacheAndReturn(url);
-      } catch (e: any) {
-        console.warn(`[Stream] youtubei.js failed: ${e.message}`);
       }
 
       // ── Strategy 5: Albumaty Direct MP3 (for Arabic music) ──────────────

@@ -288,30 +288,19 @@ export async function resolveStreamUrl(videoId: string): Promise<StreamResult> {
     return result;
   };
 
-  // 1. Piped CDN (fastest, non-googlevideo only)
-  try {
-    return await succeed(await resolveViaPiped(videoId), "Piped");
-  } catch (e: any) {
-    console.warn(`[Scraping] Piped failed (${Date.now() - start}ms): ${e.message}`);
-  }
-
-  // 2. Cobalt + Invidious Proxy — race together (~best of both worlds)
   try {
     const result = await raceAll(
-      [resolveViaCobalt(videoId), resolveViaInvidiousProxy(videoId)],
+      [
+        resolveViaYoutubei(videoId).catch(() => { throw new Error('youtubei failed') }),
+        resolveViaPiped(videoId).catch(() => { throw new Error('piped failed') }),
+        resolveViaCobalt(videoId).catch(() => { throw new Error('cobalt failed') }),
+        resolveViaInvidiousProxy(videoId).catch(() => { throw new Error('invidious proxy failed') })
+      ],
       12000
     );
-    return await succeed(result, result.source === "cobalt" ? "Cobalt" : "Invidious-Proxy");
+    return await succeed(result, result.source);
   } catch (e: any) {
-    console.warn(`[Scraping] Cobalt+InvProxy failed (${Date.now() - start}ms): ${e.message}`);
+    console.warn(`[Scraping] All layers failed for ${videoId} after ${Date.now() - start}ms: ${e.message}`);
+    throw new Error(`[Scraping] All layers failed for ${videoId}`);
   }
-
-  // 3. youtubei.js (last resort — may need server-side proxy for googlevideo)
-  try {
-    return await succeed(await resolveViaYoutubei(videoId), "youtubei.js");
-  } catch (e: any) {
-    console.warn(`[Scraping] youtubei.js failed (${Date.now() - start}ms): ${e.message}`);
-  }
-
-  throw new Error(`[Scraping] All layers failed for ${videoId} after ${Date.now() - start}ms`);
 }

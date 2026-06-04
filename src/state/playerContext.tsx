@@ -222,95 +222,22 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
        }
     }
 
-    // ── Piped (fastest — returns Piped CDN URLs, no googlevideo) ────────────
-    const pipedPromise = new Promise<string>((resolve, reject) => {
-      let settled = false;
-      let failures = 0;
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => { ctrl.abort(); reject(new Error("piped_timeout")); }, 5000);
-
-      for (const api of PIPED_APIS) {
-        fetch(`${api}/streams/${videoId}`, {
-          signal: ctrl.signal,
-          headers: { "Accept": "application/json" },
-        })
-          .then(async (res) => {
-            if (!res.ok) throw new Error("bad_status");
-            const data = await res.json();
-            if (data.duration > 0 && data.duration < 60) throw new Error("short");
-            const streams: any[] = data.audioStreams ?? [];
-            // Only accept non-googlevideo URLs (Piped CDN)
-            const best = streams
-              .filter((s: any) => s.url && !s.url.includes("googlevideo.com"))
-              .sort((a: any, b: any) => (b.bitrate ?? 0) - (a.bitrate ?? 0))[0];
-            if (!best?.url) throw new Error("no_direct_url");
-            if (!settled) { settled = true; clearTimeout(timer); resolve(best.url); }
-          })
-          .catch(() => {
-            failures++;
-            if (failures === PIPED_APIS.length && !settled) {
-              settled = true; clearTimeout(timer); reject(new Error("all_piped_failed"));
-            }
-          });
-      }
-    });
-
-
-    // ── Invidious Proxy (THE KEY FIX — bypasses Vercel + googlevideo block) ──
-    // Browser fetches from Invidious, Invidious proxies from googlevideo.
-    // Invidious servers are NOT on Vercel so Google doesn't block them!
-    const invidiousProxyPromise = new Promise<string>((resolve, reject) => {
-      let settled = false;
-      let failures = 0;
-      const timer = setTimeout(() => reject(new Error("invidious_timeout")), 7000);
-
-      for (const api of INVIDIOUS_PROXY_APIS) {
-        fetch(`${api}/api/v1/videos/${videoId}?fields=adaptiveFormats,lengthSeconds`, {
-          headers: { "Accept": "application/json" },
-        })
-          .then(async (res) => {
-            if (!res.ok) throw new Error("bad_status");
-            const data = await res.json();
-            if (data.lengthSeconds > 0 && data.lengthSeconds < 60) throw new Error("short");
-            const formats: any[] = data.adaptiveFormats ?? [];
-            const best = formats
-              .filter((f: any) => f.type?.includes("audio") && f.itag)
-              .sort((a: any, b: any) => (b.bitrate ?? 0) - (a.bitrate ?? 0))[0];
-            if (!best?.itag) throw new Error("no_itag");
-            // ✨ Magic: Invidious proxies googlevideo for us!
-            const proxyUrl = `${api}/latest_version?id=${videoId}&itag=${best.itag}&local=true`;
-            if (!settled) { settled = true; clearTimeout(timer); resolve(proxyUrl); }
-          })
-          .catch(() => {
-            failures++;
-            if (failures === INVIDIOUS_PROXY_APIS.length && !settled) {
-              settled = true; clearTimeout(timer); reject(new Error("all_invidious_failed"));
-            }
-          });
-      }
-    });
-
-    // ── Race them! ───────────────────────────────────────────────────────────
     try {
-      console.log(`[Stream] Client-side racing for ${videoId}...`);
-      const fastUrl = await Promise.any([pipedPromise, invidiousProxyPromise]);
-      console.log(`[Stream] ✅ Client won: ${fastUrl.substring(0, 50)}...`);
-      
-      // Save to cache
-      streamCacheRef.current.set(videoId, fastUrl);
-      return fastUrl;
-    } catch (e: any) {
-      console.warn(`[Player] All client-side failed for ${videoId}, trying server...`);
-      try {
-        const res = await fetch(`/api/stream/${videoId}`, { signal: AbortSignal.timeout(20000) });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.streamUrl) return data.streamUrl;
+      console.log(`[Stream] Fetching stream url from server for ${videoId}...`);
+      const res = await fetch(`/api/stream/${videoId}`, { signal: AbortSignal.timeout(10000) });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.streamUrl) {
+          console.log(`[Stream] ✅ Server returned: ${data.streamUrl.substring(0, 50)}...`);
+          streamCacheRef.current.set(videoId, data.streamUrl);
+          return data.streamUrl;
         }
-      } catch { /* server also failed */ }
-
-      return `/api/download?videoId=${encodeURIComponent(videoId)}`;
+      }
+    } catch (e: any) {
+      console.warn(`[Player] Server /api/stream failed for ${videoId}, falling back to direct proxy...`);
     }
+
+    return `/api/download?videoId=${encodeURIComponent(videoId)}`;
   };
 
   const preloadNext = (currentId: string, queue: QueueSong[]) => {
