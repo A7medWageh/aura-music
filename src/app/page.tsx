@@ -206,8 +206,6 @@ export default function HomePage() {
                     <p className="text-xs text-gray-400 truncate mt-0.5">{item.artist}</p>
                   </motion.div>
                 ))}
-            </motion.div>
-          </AnimatePresence>
         </div>
 
         {/* Dots */}
