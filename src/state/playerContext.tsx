@@ -400,13 +400,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     setSpeed,
     seekTo,
     prewarm: (videoId: string) => {
-      if (!videoId || streamCacheRef.current.has(videoId)) return;
-      // Warm the cache silently — next time user plays it'll be instant
-      resolveStream(videoId).then(url => {
-        if (url && !url.startsWith("/api/download")) {
-          streamCacheRef.current.set(videoId, url);
-        }
-      }).catch(() => {});
+      // Prewarming removed for direct download chunking proxy
     }
   };
 
