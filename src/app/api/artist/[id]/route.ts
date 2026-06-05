@@ -23,8 +23,8 @@ export async function GET(
     // Add source tag so the frontend knows it's from YT
     const enrichedData = {
       ...data,
-      source: data.source || "youtube",
-      songs: (data.songs || []).map((s: any) => ({ ...s, source: "youtube" })),
+      source: (data as any).source || "youtube",
+      songs: ((data as any).songs || []).map((s: any) => ({ ...s, source: "youtube" })),
     };
 
     // ONLY cache if it's not an error response

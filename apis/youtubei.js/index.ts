@@ -634,7 +634,7 @@ export async function getChannelDetailsYoutube(channelId: string) {
   const innertube = await getYTWeb();
   const channel = await innertube.getChannel(channelId);
   
-  const header = channel.header;
+  const header = channel.header as any;
   const artistName = header?.author?.name || "Unknown Artist";
   const artistImage = getHighResThumbnail(header?.author?.thumbnails || []) || null;
   const rawSubscribers = header?.subscribers?.toString() || "";
