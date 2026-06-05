@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { resolveStreamUrl } from "@/apis/scraping";
+import { resolveStreamUrl } from "@apis/scraping";
 
 // In-memory resolved URL cache
 const streamUrlCache = new Map<string, { url: string; expiresAt: number; directPlay: boolean }>();
