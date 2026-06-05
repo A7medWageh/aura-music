@@ -1,7 +1,7 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Crown, Sparkles, X, CheckCircle2 } from 'lucide-react';
-import { cn } from '@/lib/utils';
+
 
 interface PremiumModalProps {
   isOpen: boolean;
