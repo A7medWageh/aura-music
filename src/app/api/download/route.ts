@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { resolveStream } from "@apis/youtubei.js";
+import { resolveStreamUrl } from "@/apis/scraping";
 
 // In-memory resolved URL cache
-const streamUrlCache = new Map<string, { url: string; expiresAt: number }>();
+const streamUrlCache = new Map<string, { url: string; expiresAt: number; directPlay: boolean }>();
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -26,24 +26,35 @@ export async function GET(req: NextRequest) {
 
   try {
     let streamUrl: string;
+    let isDirectPlay = false;
 
     if (preResolvedSrc) {
       // Use the pre-resolved URL directly (from Piped or Invidious)
       streamUrl = decodeURIComponent(preResolvedSrc);
       console.log(`[DownloadAPI] Using pre-resolved URL for ${videoId}`);
     } else {
-      // Fall back to internal resolution (youtubei.js, ytdl-core, etc.)
+      // Use the new multi-layer ultra-fast scraping engine
       const attempt = parseInt(searchParams.get("attempt") || "0");
       const cached = streamUrlCache.get(videoId);
 
       if (cached && cached.expiresAt > Date.now() && attempt === 0) {
         streamUrl = cached.url;
+        isDirectPlay = cached.directPlay;
         console.log(`[DownloadAPI] Cache hit for ${videoId}`);
       } else {
-        console.log(`[DownloadAPI] Resolving stream for ${videoId}...`);
-        streamUrl = await resolveStream(videoId, title, artist);
-        streamUrlCache.set(videoId, { url: streamUrl, expiresAt: Date.now() + 3 * 60 * 60 * 1000 });
+        console.log(`[DownloadAPI] Resolving fast stream for ${videoId}...`);
+        const resolved = await resolveStreamUrl(videoId);
+        streamUrl = resolved.url;
+        isDirectPlay = resolved.directPlay;
+        streamUrlCache.set(videoId, { url: streamUrl, directPlay: isDirectPlay, expiresAt: Date.now() + 3 * 60 * 60 * 1000 });
       }
+    }
+
+    // Lightning Fast Optimization: If the URL is direct play (e.g. Cobalt, Piped), redirect the browser!
+    // The browser will stream/download directly from the CDN with ZERO overhead on our server.
+    if (isDirectPlay) {
+      console.log(`[DownloadAPI] Redirecting directly to CDN for lightning fast playback/download!`);
+      return NextResponse.redirect(streamUrl, 302);
     }
 
     // Proxy the audio stream, forwarding Range headers for seek support

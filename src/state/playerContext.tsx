@@ -198,18 +198,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
        }
     }
 
-    // 2. Fetch from /api/stream API to get ultra-fast direct urls (if premium) or pre-resolved proxy
-    try {
-      const res = await fetch(`/api/stream/${videoId}`);
-      const data = await res.json();
-      if (data.streamUrl) {
-         return data.streamUrl;
-      }
-    } catch(e) {
-      console.warn("Failed to fetch /api/stream", e);
-    }
-
-    // Fallback if the above fails
+    // 2. We skip /api/stream pre-fetching and return /api/download instantly.
+    // The backend uses the ultra-fast scraping engine (Piped/Cobalt) and redirects 
+    // the browser instantly (302) to the direct URL if available!
     return `/api/download?videoId=${encodeURIComponent(videoId)}&t=${Date.now()}`;
   };
 

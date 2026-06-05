@@ -17,15 +17,6 @@ async function downloadAudioBlob(
     try {
       // Fetch direct URL from our fast resolver
       let url = `/api/download?videoId=${encodeURIComponent(videoId)}&title=${encodeURIComponent(title)}&attempt=${attempt}`;
-      try {
-        const streamRes = await fetch(`/api/stream/${videoId}`);
-        if (streamRes.ok) {
-          const data = await streamRes.json();
-          if (data.streamUrl) url = data.streamUrl;
-        }
-      } catch (e) {
-        console.warn("[Download] Failed to get fast stream url, falling back to proxy");
-      }
 
       const res = await fetch(url, { cache: "no-store", signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
