@@ -340,8 +340,8 @@ async function resolveWithYoutubei(videoId: string): Promise<string> {
   ]) {
     try {
       const info = await getter();
-      const format = (info as any).chooseFormat?.({ type: "audio", quality: "best", format: "mp4" }) ??
-                     (info as any).chooseFormat?.({ type: "audio", quality: "best" });
+      const format = (info as any).chooseFormat?.({ type: "audio", quality: "best" }) ??
+                     (info as any).chooseFormat?.({ type: "audio", quality: "best", format: "mp4" });
       if (format?.url) return format.url;
       if (format && ((format as any).signature_cipher || (format as any).cipher)) {
         return (format as any).decipher(innertube.session.player);

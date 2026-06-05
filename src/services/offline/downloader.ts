@@ -140,6 +140,7 @@ export async function downloadAlbum(
 
   // Register the job
   startJob(albumId, albumName, "album", total);
+  updateJob(albumId, { totalBytes: total * 3.5 * 1024 * 1024, progressBytes: 0 }); // 3.5MB average per song for smooth progress
   
   const ctrl = new AbortController();
   setJobController(albumId, ctrl);
