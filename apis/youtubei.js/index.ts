@@ -337,11 +337,20 @@ async function resolveWithYoutubei(videoId: string): Promise<string> {
   for (const getter of [
     () => (innertube.music as any).getInfo(videoId),
     () => innertube.getInfo(videoId),
+    () => innertube.getInfo(videoId, "TV_EMBED"), // Bypasses age restriction
+    () => innertube.getInfo(videoId, "IOS"),      // Bypasses some other restrictions
   ]) {
     try {
       const info = await getter();
-      const format = (info as any).chooseFormat?.({ type: "audio", quality: "best" }) ??
-                     (info as any).chooseFormat?.({ type: "audio", quality: "best", format: "mp4" });
+      let format: any;
+      try { format = (info as any).chooseFormat?.({ type: "audio", quality: "best" }); } catch {}
+      if (!format) {
+        try { format = (info as any).chooseFormat?.({ type: "audio", quality: "best", format: "mp4" }); } catch {}
+      }
+      if (!format) {
+        try { format = (info as any).chooseFormat?.({ type: "audio" }); } catch {}
+      }
+      
       if (format?.url) return format.url;
       if (format && ((format as any).signature_cipher || (format as any).cipher)) {
         return (format as any).decipher(innertube.session.player);
