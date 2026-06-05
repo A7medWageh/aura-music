@@ -3,10 +3,11 @@
 import { usePlayer } from "@/state/playerContext";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Play, Heart, TrendingUp, Star, Disc, DownloadCloud, CheckCircle2, ChevronLeft, ChevronRight } from "lucide-react";
+import { Play, Heart, TrendingUp, Star, Disc, DownloadCloud, CheckCircle2, ChevronLeft, ChevronRight, Crown } from "lucide-react";
 import { getProxyUrl } from "@/utils/media";
 import { downloadSong } from "@/services/offline/downloader";
 import { FavoriteButton } from "@/components/FavoriteButton";
+import { PremiumModal } from "@/components/PremiumModal";
 import Link from "next/link";
 
 type ArtistEntry = { name: string; artistId: string; thumbnailUrl: string };
@@ -65,6 +66,9 @@ export default function HomePage() {
   const [toast, setToast] = useState<string | null>(null);
   const [currentSlide, setCurrentSlide] = useState(0);
   const autoPlayRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [isPremium, setIsPremium] = useState(false);
+  const [showPremiumModal, setShowPremiumModal] = useState(false);
+  const [premiumFeatureName, setPremiumFeatureName] = useState("");
 
   const CARDS_PER_SLIDE = 4;
   const totalSlides = Math.max(1, Math.ceil(trending.length / CARDS_PER_SLIDE));
@@ -73,6 +77,11 @@ export default function HomePage() {
 
   const handleDownload = async (e: React.MouseEvent, song: any) => {
     e.stopPropagation();
+    if (!isPremium) {
+      setPremiumFeatureName("تحميل الأغاني بدون إنترنت");
+      setShowPremiumModal(true);
+      return;
+    }
     showToast(`جاري تحميل "${song.title}"...`);
     const ok = await downloadSong(song.songId, song.youtubeVideoId, { title: song.title, artist: song.artist, thumbnailUrl: song.thumbnailUrl });
     showToast(ok ? `تم حفظ "${song.title}" ✅` : `فشل التحميل ❌`);
@@ -120,6 +129,8 @@ export default function HomePage() {
       })
       .catch(() => {})
       .finally(() => setArtistsLoading(false));
+
+    setIsPremium(localStorage.getItem("aura_user_tier") === "premium");
   }, []);
 
   const currentSongs = trending.slice(currentSlide * CARDS_PER_SLIDE, (currentSlide + 1) * CARDS_PER_SLIDE);
@@ -136,6 +147,12 @@ export default function HomePage() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      <PremiumModal 
+        isOpen={showPremiumModal} 
+        onClose={() => setShowPremiumModal(false)} 
+        featureName={premiumFeatureName} 
+      />
 
       {/* Hero */}
       <header>
@@ -198,7 +215,8 @@ export default function HomePage() {
                         </div>
                       </div>
                       <div className="absolute top-2 left-2 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button onClick={(e) => handleDownload(e, item)} className="p-1.5 bg-black/50 backdrop-blur-sm rounded-full hover:text-cyan-400 text-white transition-colors">
+                        <button onClick={(e) => handleDownload(e, item)} className="relative p-1.5 bg-black/50 backdrop-blur-sm rounded-full hover:text-cyan-400 text-white transition-colors">
+                          {!isPremium && <Crown className="absolute -top-1.5 -right-1.5 w-3 h-3 text-amber-500 drop-shadow-md" />}
                           <DownloadCloud className="w-4 h-4" />
                         </button>
                         <FavoriteButton 
@@ -235,7 +253,15 @@ export default function HomePage() {
           <Star className="w-8 h-8 text-indigo-400 group-hover:rotate-12 transition-transform" />
           <div><h3 className="text-xl font-bold">كل مرة شكل</h3><p className="text-sm text-gray-400">بيتغير التريند كل ما تفتح الواجهة</p></div>
         </div>
-        <div className="premium-card bg-gradient-to-br from-orange-500/20 to-red-600/20 border-orange-500/20 flex flex-col justify-between h-40 group cursor-pointer">
+        <div onClick={() => {
+            if (!isPremium) {
+               setPremiumFeatureName("تحميل الأغاني بدون إنترنت");
+               setShowPremiumModal(true);
+            } else {
+               window.location.href = "/library";
+            }
+        }} className="relative premium-card bg-gradient-to-br from-orange-500/20 to-red-600/20 border-orange-500/20 flex flex-col justify-between h-40 group cursor-pointer">
+          {!isPremium && <div className="absolute top-2 left-2 px-2 py-0.5 bg-amber-500/20 text-amber-500 text-[10px] font-black rounded flex items-center gap-1 border border-amber-500/30"><Crown className="w-3 h-3"/> PREMIUM</div>}
           <DownloadCloud className="text-orange-400 w-8 h-8 group-hover:scale-110 transition-transform" />
           <div><h3 className="text-xl font-bold">دعم الأوفلاين</h3><p className="text-sm text-gray-400">حمل أي أغنية واسمعها بدون نت</p></div>
         </div>

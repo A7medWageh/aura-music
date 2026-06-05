@@ -4,7 +4,12 @@ import { getNewReleases } from "@apis/youtubei.js";
 let releasesCache: { data: any[]; ts: number } | null = null;
 const RELEASES_TTL = 15 * 60 * 1000; // 15 min
 
-export async function GET() {
+import { checkTunnelRedirect } from "@/utils/tunnelProxy";
+
+export async function GET(req: Request) {
+  const redirect = await checkTunnelRedirect(req);
+  if (redirect) return redirect;
+
   if (releasesCache && Date.now() - releasesCache.ts < RELEASES_TTL) {
     return NextResponse.json(
       { success: true, data: releasesCache.data },

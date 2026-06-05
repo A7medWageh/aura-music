@@ -16,7 +16,12 @@ export const dynamic = "force-dynamic";
 
 type Params = { params: Promise<{ videoId: string }> };
 
+import { checkTunnelRedirect } from "@/utils/tunnelProxy";
+
 export async function GET(req: NextRequest, { params }: Params) {
+  const redirect = await checkTunnelRedirect(req);
+  if (redirect) return redirect;
+
   const rate = await checkRateLimit(req, { key: "stream", max: 120, windowSec: 60 });
   if (!rate.allowed) return fail("RATE_LIMITED", "Too many requests", 429);
 

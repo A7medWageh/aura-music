@@ -1,36 +1,43 @@
 import { NextRequest, NextResponse } from "next/server";
 
-export const runtime = "edge";
+export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
-  const src = searchParams.get("src");
+  const targetUrl = searchParams.get("url");
 
-  if (!src) return new NextResponse("Missing src", { status: 400 });
-
-  const streamUrl = decodeURIComponent(src);
-
-  // Forward range headers
-  const rangeHeader = req.headers.get("range");
-  const headers = new Headers();
-  headers.set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36");
-  if (rangeHeader) headers.set("Range", rangeHeader);
+  if (!targetUrl) {
+    return new NextResponse("Missing url parameter", { status: 400 });
+  }
 
   try {
-    const res = await fetch(streamUrl, { headers });
+    const url = decodeURIComponent(targetUrl);
     
+    // For images, YouTube usually doesn't block Vercel IPs the same way it blocks video streaming.
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+      },
+    });
+
     if (!res.ok) {
-      return new NextResponse(`Upstream Error: ${res.status}`, { status: res.status });
+      throw new Error(`Failed to fetch image: ${res.status} ${res.statusText}`);
     }
 
-    const responseHeaders = new Headers(res.headers);
-    responseHeaders.set("Access-Control-Allow-Origin", "*");
-    
-    return new NextResponse(res.body, {
-      status: res.status,
-      headers: responseHeaders
+    const contentType = res.headers.get("content-type") || "image/jpeg";
+    const arrayBuffer = await res.arrayBuffer();
+
+    return new NextResponse(arrayBuffer, {
+      status: 200,
+      headers: {
+        "Content-Type": contentType,
+        "Cache-Control": "public, max-age=31536000, immutable",
+        "Access-Control-Allow-Origin": "*",
+      },
     });
   } catch (error: any) {
-    return new NextResponse(`Proxy Error: ${error.message}`, { status: 500 });
+    console.error("[ImageProxy] Error:", error.message);
+    return new NextResponse("Failed to proxy image", { status: 500 });
   }
 }

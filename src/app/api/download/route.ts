@@ -7,7 +7,12 @@ const streamUrlCache = new Map<string, { url: string; expiresAt: number }>();
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
+import { checkTunnelRedirect } from "@/utils/tunnelProxy";
+
 export async function GET(req: NextRequest) {
+  const redirect = await checkTunnelRedirect(req);
+  if (redirect) return redirect;
+
   const { searchParams } = new URL(req.url);
   const videoId = searchParams.get("videoId");
   const title = searchParams.get("title") || "song";
@@ -59,8 +64,10 @@ export async function GET(req: NextRequest) {
 
     // Instead of buffering the stream in Node.js, we redirect to the Edge Proxy
     // The Edge Proxy handles the byte streaming without memory limits or buffering
-    const edgeProxyUrl = `/api/proxy?src=${encodeURIComponent(streamUrl)}`;
-    return NextResponse.redirect(new URL(edgeProxyUrl, req.url));
+    const proxyUrl = `/api/proxy-stream?src=${encodeURIComponent(streamUrl)}`;
+    const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || "localhost:3000";
+    const protocol = req.headers.get("x-forwarded-proto") || (host.includes("localhost") ? "http" : "https");
+    return NextResponse.redirect(new URL(proxyUrl, `${protocol}://${host}`));
   } catch (error: any) {
     console.error("[DownloadAPI] Error:", error.message);
 

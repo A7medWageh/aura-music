@@ -182,7 +182,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     player.playbackRate = state.speed;
   }, [state.speed]);
 
-  // ── Stream Resolution (Reliable backend proxy) ──────────────────────
+  // ─── Stream Resolution (Reliable backend proxy) ──────────────────────
   const resolveStream = async (videoId: string): Promise<string> => {
     // 1. Check Offline Storage First
     if (typeof window !== "undefined") {
@@ -198,18 +198,18 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
        }
     }
 
-    // 2. Fetch from fast stream resolver (Koyeb/Backend)
+    // 2. Fetch from /api/stream API to get ultra-fast direct urls (if premium) or pre-resolved proxy
     try {
       const res = await fetch(`/api/stream/${videoId}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.streamUrl) return data.streamUrl;
+      const data = await res.json();
+      if (data.streamUrl) {
+         return data.streamUrl;
       }
-    } catch (e) {
-      console.warn("[Player] Backend resolver failed:", e);
+    } catch(e) {
+      console.warn("Failed to fetch /api/stream", e);
     }
 
-    // 3. Fallback to reliable backend proxy (part-by-part fetching)
+    // Fallback if the above fails
     return `/api/download?videoId=${encodeURIComponent(videoId)}&t=${Date.now()}`;
   };
 

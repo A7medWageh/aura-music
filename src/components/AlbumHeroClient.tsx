@@ -1,11 +1,12 @@
 "use client";
 
 import { useState, useRef } from "react";
-import { Play, Pause, Heart, DownloadCloud, ChevronRight, MoreHorizontal, Shuffle, CheckCircle2 } from "lucide-react";
+import { Play, Pause, Heart, DownloadCloud, ChevronRight, MoreHorizontal, Shuffle, CheckCircle2, Crown } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { usePlayer } from "@/state/playerContext";
 import { getProxyUrl } from "@/utils/media";
 import { downloadAlbum } from "@/services/offline/downloader";
+import { PremiumModal } from "@/components/PremiumModal";
 
 interface Song {
   songId: string;
@@ -31,6 +32,12 @@ export default function AlbumHeroClient({ albumId, albumTitle, artistName, cover
   const [downloading, setDownloading] = useState(false);
   const [downloaded, setDownloaded] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [isPremium, setIsPremium] = useState(false);
+  const [showPremiumModal, setShowPremiumModal] = useState(false);
+
+  if (typeof window !== "undefined" && !isPremium && localStorage.getItem("aura_user_tier") === "premium") {
+    setIsPremium(true);
+  }
 
   const isAlbumPlaying =
     state.isPlaying &&
@@ -75,6 +82,10 @@ export default function AlbumHeroClient({ albumId, albumTitle, artistName, cover
 
   const handleDownload = async () => {
     if (downloading || downloaded) return;
+    if (!isPremium) {
+      setShowPremiumModal(true);
+      return;
+    }
     setDownloading(true);
     showToast("جاري تحميل الألبوم...");
     try {
@@ -113,6 +124,12 @@ export default function AlbumHeroClient({ albumId, albumTitle, artistName, cover
           </motion.div>
         )}
       </AnimatePresence>
+
+      <PremiumModal 
+        isOpen={showPremiumModal} 
+        onClose={() => setShowPremiumModal(false)} 
+        featureName="تحميل الألبومات بالكامل" 
+      />
 
       {/* ── Desktop Hero (hidden on mobile) ── */}
       <section className="hidden md:block relative mb-10 -mx-8 pt-0 overflow-hidden min-h-[400px]">
@@ -216,7 +233,7 @@ export default function AlbumHeroClient({ albumId, albumTitle, artistName, cover
               <button
                 onClick={handleDownload}
                 disabled={downloading}
-                className="p-4 rounded-full border border-white/10 hover:border-white/30 hover:bg-white/5 transition-all group"
+                className="relative p-4 rounded-full border border-white/10 hover:border-white/30 hover:bg-white/5 transition-all group"
               >
                 {downloaded ? (
                   <CheckCircle2 className="w-6 h-6 text-green-400" />
@@ -225,7 +242,10 @@ export default function AlbumHeroClient({ albumId, albumTitle, artistName, cover
                     <DownloadCloud className="w-6 h-6 text-indigo-400" />
                   </motion.div>
                 ) : (
-                  <DownloadCloud className="w-6 h-6 text-gray-400 group-hover:text-indigo-400" />
+                  <>
+                    {!isPremium && <Crown className="absolute -top-1 -right-1 w-4 h-4 text-amber-500 drop-shadow-md" />}
+                    <DownloadCloud className="w-6 h-6 text-gray-400 group-hover:text-indigo-400" />
+                  </>
                 )}
               </button>
 
@@ -308,7 +328,7 @@ export default function AlbumHeroClient({ albumId, albumTitle, artistName, cover
                 <button
                   onClick={handleDownload}
                   disabled={downloading}
-                  className="w-10 h-10 rounded-full flex items-center justify-center text-gray-400 hover:text-indigo-400 transition-colors"
+                  className="relative w-10 h-10 rounded-full flex items-center justify-center text-gray-400 hover:text-indigo-400 transition-colors"
                 >
                   {downloaded ? (
                     <CheckCircle2 className="w-5 h-5 text-green-400" />
@@ -317,7 +337,10 @@ export default function AlbumHeroClient({ albumId, albumTitle, artistName, cover
                       <DownloadCloud className="w-5 h-5 text-indigo-400" />
                     </motion.div>
                   ) : (
-                    <DownloadCloud className="w-5 h-5" />
+                    <>
+                      {!isPremium && <Crown className="absolute -top-1 -right-1 w-3 h-3 text-amber-500 drop-shadow-md" />}
+                      <DownloadCloud className="w-5 h-5" />
+                    </>
                   )}
                 </button>
                 <button className="w-10 h-10 rounded-full flex items-center justify-center text-gray-400 hover:text-pink-400">

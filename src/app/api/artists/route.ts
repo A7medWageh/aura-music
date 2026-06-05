@@ -61,7 +61,12 @@ async function buildArtistList(): Promise<{egyptian: ArtistEntry[], intl: Artist
   }
 }
 
-export async function GET() {
+import { checkTunnelRedirect } from "@/utils/tunnelProxy";
+
+export async function GET(req: Request) {
+  const redirect = await checkTunnelRedirect(req);
+  if (redirect) return redirect;
+
   if (cache && Date.now() - cache.fetchedAt < CACHE_TTL) {
     return NextResponse.json(
       { egyptian: cache.egyptian, intl: cache.intl },

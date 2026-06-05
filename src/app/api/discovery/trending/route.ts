@@ -4,7 +4,12 @@ import { getMusicCharts } from "@apis/youtubei.js";
 let chartCache: { data: any[]; ts: number } | null = null;
 const CHART_TTL = 15 * 60 * 1000; // 15 min
 
-export async function GET() {
+import { checkTunnelRedirect } from "@/utils/tunnelProxy";
+
+export async function GET(req: Request) {
+  const redirect = await checkTunnelRedirect(req);
+  if (redirect) return redirect;
+
   if (chartCache && Date.now() - chartCache.ts < CHART_TTL) {
     return NextResponse.json(
       { success: true, data: chartCache.data },

@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { getCsrfToken } from "@/services/security/clientCsrf";
 import Link from "next/link";
-import { UserCircle2, LogIn, UserPlus, LogOut, ShieldAlert } from "lucide-react";
+import { UserCircle2, LogIn, UserPlus, LogOut, ShieldAlert, BadgeCheck, Sparkles, Crown } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 type AuthUser = { id: string; email: string; displayName: string; tier?: string };
@@ -74,25 +74,30 @@ export function AuthMenu() {
             >
               <div className={`px-4 py-3 border-b ${isPremium ? 'border-yellow-500/20 bg-yellow-500/10' : 'border-white/5 bg-white/5'}`}>
                 <p className="text-sm font-bold text-white truncate flex items-center justify-end gap-1">
-                  {isPremium && <span className="text-yellow-400 text-xs">👑</span>}
+                  {isPremium && <BadgeCheck className="text-blue-400 w-4 h-4 mr-1 drop-shadow-md" />}
+                  {isPremium && <Sparkles className="text-yellow-400 w-4 h-4" />}
                   {user.displayName}
                 </p>
-                <p className="text-xs text-gray-400 truncate">{user.email}</p>
+                <p className="text-xs text-gray-400 truncate mt-1">{user.email}</p>
                 {isPremium ? (
-                  <div className="mt-1 inline-block px-2 py-0.5 bg-yellow-500/20 text-yellow-400 text-[10px] font-black rounded-md border border-yellow-500/30">PREMIUM</div>
+                  <div className="mt-2 inline-flex items-center gap-1 px-3 py-1 bg-gradient-to-r from-yellow-500/20 to-orange-500/20 text-yellow-400 text-[11px] font-black rounded-lg border border-yellow-500/40 shadow-[0_0_15px_rgba(234,179,8,0.2)]">
+                     <Crown className="w-3 h-3" /> AURA PREMIUM
+                  </div>
                 ) : (
-                  <div className="mt-1 inline-block px-2 py-0.5 bg-gray-500/20 text-gray-400 text-[10px] font-black rounded-md border border-gray-500/30">FREE TIER</div>
+                  <div className="mt-2 inline-block px-2 py-0.5 bg-gray-500/20 text-gray-400 text-[10px] font-black rounded-md border border-gray-500/30">FREE TIER</div>
                 )}
               </div>
               <div className="p-2">
-                <Link
-                  href="/admin/users"
-                  onClick={() => setIsOpen(false)}
-                  className="w-full flex items-center gap-3 px-3 py-2 text-sm font-bold text-gray-300 hover:text-white hover:bg-white/10 rounded-xl transition-colors flex-row-reverse"
-                >
-                  <ShieldAlert className="w-4 h-4 text-yellow-500" />
-                  لوحة الإدارة
-                </Link>
+                {user.email === "emil578jvcvn@gmail.com" && (
+                  <Link
+                    href="/admin/users"
+                    onClick={() => setIsOpen(false)}
+                    className="w-full flex items-center gap-3 px-3 py-2 text-sm font-bold text-gray-300 hover:text-white hover:bg-white/10 rounded-xl transition-colors flex-row-reverse"
+                  >
+                    <ShieldAlert className="w-4 h-4 text-yellow-500" />
+                    لوحة الإدارة
+                  </Link>
+                )}
                 <button
                   onClick={logout}
                   className="w-full flex items-center gap-3 px-3 py-2 text-sm font-bold text-red-400 hover:bg-red-500/10 rounded-xl transition-colors flex-row-reverse"

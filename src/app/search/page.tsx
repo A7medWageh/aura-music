@@ -3,20 +3,24 @@
 import { useSearchParams } from "next/navigation";
 import { useEffect, useState, Suspense } from "react";
 import { usePlayer } from "@/state/playerContext";
-import { Play, Heart, Clock, Music, User, Disc, DownloadCloud, CheckCircle2 } from "lucide-react";
+import { Play, Heart, Clock, Music, User, Disc, DownloadCloud, CheckCircle2, Crown } from "lucide-react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { getProxyUrl } from "@/utils/media";
 import { downloadSong } from "@/services/offline/downloader";
 import { sanitizeTitle } from "@apis/youtubei.js";
+import { PremiumModal } from "@/components/PremiumModal";
 
 function SearchContent() {
   const searchParams = useSearchParams();
-  const q = searchParams.get("q") || "";
+  const q = searchParams?.get("q") || "";
   const [results, setResults] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const { playNow } = usePlayer();
+  const [isPremium, setIsPremium] = useState(false);
+  const [showPremiumModal, setShowPremiumModal] = useState(false);
+  const [premiumFeatureName, setPremiumFeatureName] = useState("");
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -25,6 +29,11 @@ function SearchContent() {
 
   const handleDownload = async (e: React.MouseEvent, song: any) => {
     e.stopPropagation();
+    if (!isPremium) {
+      setPremiumFeatureName("تحميل الأغاني بدون إنترنت");
+      setShowPremiumModal(true);
+      return;
+    }
     showToast(`جاري تحميل "${song.title}" للأوفلاين...`);
     const success = await downloadSong(song.songId, song.youtubeVideoId, {
       title: song.title,
@@ -55,6 +64,8 @@ function SearchContent() {
         setResults(data.data);
       })
       .finally(() => setLoading(false));
+
+    setIsPremium(localStorage.getItem("aura_user_tier") === "premium");
   }, [q]);
 
   if (!q) {
@@ -81,6 +92,12 @@ function SearchContent() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      <PremiumModal 
+        isOpen={showPremiumModal} 
+        onClose={() => setShowPremiumModal(false)} 
+        featureName={premiumFeatureName} 
+      />
 
       <header>
         <h1 className="text-3xl font-extrabold mb-2 text-indigo-100">نتائج البحث عن "{q}"</h1>
@@ -142,8 +159,9 @@ function SearchContent() {
                     </button>
                     <button 
                       onClick={(e) => handleDownload(e, song)}
-                      className="text-gray-500 hover:text-indigo-400 transition-colors p-2"
+                      className="relative text-gray-500 hover:text-indigo-400 transition-colors p-2"
                     >
+                      {!isPremium && <Crown className="absolute -top-1 -right-1 w-3 h-3 text-amber-500 drop-shadow-md" />}
                       <DownloadCloud className="w-5 h-5" />
                     </button>
                     <div className="w-10 h-10 rounded-full bg-indigo-500 flex items-center justify-center shadow-lg opacity-0 group-hover:opacity-100 transition-opacity">

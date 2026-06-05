@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import {
   Play, MoreHorizontal, BadgeCheck, Music,
-  Disc, Users, Share2, BellOff, DownloadCloud, Shuffle
+  Disc, Users, Share2, BellOff, DownloadCloud, Shuffle, Crown
 } from "lucide-react";
 import Link from "next/link";
 import { getProxyUrl } from "@/utils/media";
@@ -12,6 +12,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { downloadSong } from "@/services/offline/downloader";
 import { trackPlay } from "@/services/user/listeningHistory";
 import { FavoriteButton } from "@/components/FavoriteButton";
+import { PremiumModal } from "@/components/PremiumModal";
 
 export default function ArtistClientPage({ id }: { id: string }) {
   const { playNow, enqueueSongs } = usePlayer();
@@ -21,6 +22,9 @@ export default function ArtistClientPage({ id }: { id: string }) {
   const [isFollowing, setIsFollowing] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [notifPermission, setNotifPermission] = useState<NotificationPermission>("default");
+  const [isPremium, setIsPremium] = useState(false);
+  const [showPremiumModal, setShowPremiumModal] = useState(false);
+  const [premiumFeatureName, setPremiumFeatureName] = useState("");
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 3000); };
 
@@ -34,6 +38,8 @@ export default function ArtistClientPage({ id }: { id: string }) {
       .then(data => { if (data.error) setError(true); else setArtist(data); })
       .catch(() => setError(true))
       .finally(() => setLoading(false));
+
+    setIsPremium(localStorage.getItem("aura_user_tier") === "premium");
   }, [id]);
 
   const toggleFollow = async () => {
@@ -128,6 +134,12 @@ export default function ArtistClientPage({ id }: { id: string }) {
           </motion.div>
         )}
       </AnimatePresence>
+
+      <PremiumModal 
+        isOpen={showPremiumModal} 
+        onClose={() => setShowPremiumModal(false)} 
+        featureName={premiumFeatureName} 
+      />
 
       {/* ═══ HERO ═══════════════════════════════ */}
       <section className="relative h-[60vh] -mx-8 -mt-8 flex items-end overflow-hidden">
@@ -279,9 +291,14 @@ export default function ArtistClientPage({ id }: { id: string }) {
           ) : (
             <div className="space-y-1">
               {allSongs.map((song: any, i: number) => (
-                <SongRow key={song.songId || i} song={song} index={i}
+                <SongRow key={song.songId || i} song={song} index={i} isPremium={isPremium}
                   onPlay={() => playSong(song, allSongs.slice(i + 1))}
                   onDownload={() => {
+                    if (!isPremium) {
+                      setPremiumFeatureName("تحميل الأغاني بدون إنترنت");
+                      setShowPremiumModal(true);
+                      return;
+                    }
                     showToast(`جاري تحميل "${song.title}"...`);
                     downloadSong(song.songId, song.youtubeVideoId, {
                       title: song.title, artist: song.artist, thumbnailUrl: song.thumbnailUrl
@@ -342,8 +359,8 @@ export default function ArtistClientPage({ id }: { id: string }) {
   );
 }
 
-function SongRow({ song, index, onPlay, onDownload }: {
-  song: any; index: number; onPlay: () => void; onDownload: () => void;
+function SongRow({ song, index, onPlay, onDownload, isPremium }: {
+  song: any; index: number; onPlay: () => void; onDownload: () => void; isPremium: boolean;
 }) {
   return (
     <div className="group flex items-center gap-4 px-4 py-3 rounded-2xl hover:bg-white/5 cursor-pointer transition-all" onClick={onPlay}>
@@ -370,7 +387,8 @@ function SongRow({ song, index, onPlay, onDownload }: {
           size={18}
         />
         <button onClick={e => { e.stopPropagation(); onDownload(); }}
-          className="p-2 rounded-full hover:bg-white/10 text-gray-400 hover:text-indigo-400 transition-colors">
+          className="relative p-2 rounded-full hover:bg-white/10 text-gray-400 hover:text-indigo-400 transition-colors">
+          {!isPremium && <Crown className="absolute -top-1 -right-1 w-3 h-3 text-amber-500 drop-shadow-md" />}
           <DownloadCloud className="w-4 h-4" />
         </button>
       </div>

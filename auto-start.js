@@ -14,7 +14,7 @@ const nextjs = spawn('npm', ['start'], {
 });
 
 // 2. Start Cloudflare Tunnel
-const tunnel = spawn('npx', ['@cloudflare/cloudflared', 'tunnel', '--url', 'http://localhost:3000'], {
+const tunnel = spawn('cloudflared.exe', ['tunnel', '--url', 'http://localhost:3000'], {
   cwd: __dirname,
   shell: true
 });
@@ -22,8 +22,10 @@ const tunnel = spawn('npx', ['@cloudflare/cloudflared', 'tunnel', '--url', 'http
 let urlFound = false;
 
 tunnel.stderr.on('data', async (data) => {
-  if (urlFound) return;
   const output = data.toString();
+  if (!urlFound) {
+    fs.appendFileSync(desktopPath, "\n" + output);
+  }
   const match = output.match(/https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com/);
   if (match) {
     urlFound = true;

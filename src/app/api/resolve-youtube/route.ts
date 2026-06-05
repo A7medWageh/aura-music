@@ -39,7 +39,12 @@ function scoreMatch(result: any, title: string, artist: string): number {
   return score;
 }
 
+import { checkTunnelRedirect } from "@/utils/tunnelProxy";
+
 export async function GET(req: Request) {
+  const redirect = await checkTunnelRedirect(req);
+  if (redirect) return redirect;
+
   const { searchParams } = new URL(req.url);
   const title = searchParams.get("title")?.trim();
   const artist = searchParams.get("artist")?.trim() ?? "";
