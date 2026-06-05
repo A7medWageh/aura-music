@@ -167,19 +167,35 @@ export async function searchYouTubeInnertube(query: string) {
 
   const innertube = await getYTWeb();
 
-  const [generalResults, songResults, artistResults] = await Promise.all([
+  const [generalResults, songResults, artistResults, ytResults] = await Promise.all([
     innertube.music.search(query).catch(() => null),
     innertube.music.search(query, { type: "song" }).catch(() => null),
     innertube.music.search(query, { type: "artist" }).catch(() => null),
+    innertube.search(query, { type: "video" }).catch(() => null),
   ]);
 
   const songMap = new Map<string, any>();
-  [...extractSongs(generalResults), ...extractSongs(songResults ?? {})].forEach(
+  
+  // Helper to extract standard YT videos
+  const extractVideos = (res: any) => {
+    const raw = res?.videos ?? res?.contents ?? [];
+    return (Array.isArray(raw) ? raw : [])
+      .map((v: any) => ({
+        type: "song",
+        songId: v.id ?? v.videoId,
+        title: sanitizeTitle(v.title?.toString() || ""),
+        artist: v.author?.name ?? v.channel?.name ?? "YouTube",
+        youtubeVideoId: v.id ?? v.videoId,
+        thumbnailUrl: getHighResThumbnail(v.thumbnails),
+      }))
+      .filter((v: any) => v.songId && v.title);
+  };
+
+  [...extractSongs(generalResults), ...extractSongs(songResults ?? {}), ...extractVideos(ytResults)].forEach(
     (s) => { if (s.songId && !songMap.has(s.songId)) songMap.set(s.songId, s); }
   );
 
-
-  const songs = Array.from(songMap.values()).slice(0, 20);
+  const songs = Array.from(songMap.values()).slice(0, 30);
   const albums = extractAlbums(generalResults).slice(0, 8);
   const artists = extractArtists(generalResults, artistResults).slice(0, 5);
 
