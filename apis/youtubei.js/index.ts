@@ -337,8 +337,8 @@ async function resolveWithYoutubei(videoId: string): Promise<string> {
   for (const getter of [
     () => (innertube.music as any).getInfo(videoId),
     () => innertube.getInfo(videoId),
-    () => innertube.getInfo(videoId, "TV_EMBED"), // Bypasses age restriction
-    () => innertube.getInfo(videoId, "IOS"),      // Bypasses some other restrictions
+    () => innertube.getInfo(videoId, { client: "TV_EMBEDDED" } as any), // Bypasses age restriction
+    () => innertube.getInfo(videoId, { client: "IOS" } as any),      // Bypasses some other restrictions
   ]) {
     try {
       const info = await getter();
