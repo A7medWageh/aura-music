@@ -15,12 +15,29 @@ async function downloadAudioBlob(
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
-      // Fetch direct URL from our fast resolver
       let url = `/api/download?videoId=${encodeURIComponent(videoId)}&title=${encodeURIComponent(title)}&attempt=${attempt}`;
       try {
         const streamRes = await fetch(`/api/stream/${videoId}`);
-        const data = await streamRes.json();
-        if (data.streamUrl) url = data.streamUrl;
+        if (streamRes.ok) {
+          const data = await streamRes.json();
+          if (data.streamUrl) url = data.streamUrl;
+        } else {
+           // Fallback to client-side
+           const PIPED_APIS = ["https://api.piped.private.coffee", "https://pipedapi.kavin.rocks", "https://api.piped.yt"];
+           for (const api of PIPED_APIS) {
+             try {
+                const cRes = await fetch(`${api}/streams/${videoId}`);
+                if (cRes.ok) {
+                   const cData = await cRes.json();
+                   const best = (cData.audioStreams || []).filter((s: any) => s.url && !s.url.includes("googlevideo.com")).sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0))[0];
+                   if (best?.url) {
+                      url = best.url;
+                      break;
+                   }
+                }
+             } catch(e) {}
+           }
+        }
       } catch (e) {
         console.warn("[Download] Failed to get fast stream url, falling back to proxy");
       }

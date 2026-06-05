@@ -198,18 +198,47 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
        }
     }
 
-    // 2. Fetch from fast stream resolver
+    // 2. Fetch from fast stream resolver (Vercel backend)
     try {
       const res = await fetch(`/api/stream/${videoId}`);
-      const data = await res.json();
-      if (data.streamUrl) {
-         return data.streamUrl;
+      if (res.ok) {
+        const data = await res.json();
+        if (data.streamUrl) return data.streamUrl;
+      } else {
+        console.warn("[Player] Backend resolver failed with status:", res.status);
       }
     } catch (e) {
-      console.warn("[Player] Stream resolver failed, falling back to proxy:", e);
+      console.warn("[Player] Backend resolver failed:", e);
     }
 
-    // 3. Fallback to reliable backend proxy
+    // 2.5 CLIENT-SIDE RESOLVER FALLBACK (Bypasses Vercel IP Blocks!)
+    // If Vercel is blocked by Cloudflare (403), the user's browser (residential IP) will succeed.
+    const PIPED_APIS = [
+      "https://api.piped.private.coffee",
+      "https://pipedapi.kavin.rocks",
+      "https://api.piped.yt"
+    ];
+    for (const api of PIPED_APIS) {
+      try {
+        console.log(`[Player] Trying client-side fallback: ${api}`);
+        const res = await fetch(`${api}/streams/${videoId}`);
+        if (res.ok) {
+          const data = await res.json();
+          const streams = data.audioStreams || [];
+          const best = streams
+            .filter((s: any) => s.url && !s.url.includes("googlevideo.com"))
+            .sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0))[0];
+          if (best?.url) {
+             console.log("[Player] Client-side fallback succeeded!");
+             return best.url;
+          }
+        }
+      } catch (e) {
+        console.warn(`[Player] Client-side fallback ${api} failed`);
+      }
+    }
+
+    // 3. Fallback to reliable backend proxy (Might also fail if Vercel is completely blocked, but last resort)
     return `/api/download?videoId=${encodeURIComponent(videoId)}&t=${Date.now()}`;
   };
 
