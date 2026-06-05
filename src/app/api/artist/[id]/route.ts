@@ -23,11 +23,15 @@ export async function GET(
     // Add source tag so the frontend knows it's from YT
     const enrichedData = {
       ...data,
-      source: "youtube",
-      songs: data.songs.map((s: any) => ({ ...s, source: "youtube" })),
+      source: data.source || "youtube",
+      songs: (data.songs || []).map((s: any) => ({ ...s, source: "youtube" })),
     };
 
-    cache.set(id, { data: enrichedData, at: Date.now() });
+    // ONLY cache if it's not an error response
+    if (enrichedData.source !== "error" && enrichedData.artistName !== "Unknown Artist") {
+      cache.set(id, { data: enrichedData, at: Date.now() });
+    }
+    
     return NextResponse.json(enrichedData);
   } catch (e: any) {
     console.error(`[ArtistAPI] Error for ${id}:`, e);

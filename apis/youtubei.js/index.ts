@@ -630,11 +630,60 @@ export async function getArtistDetailsYoutube(artistId: string) {
   };
 }
 
+export async function getChannelDetailsYoutube(channelId: string) {
+  const innertube = await getYTWeb();
+  const channel = await innertube.getChannel(channelId);
+  
+  const header = channel.header;
+  const artistName = header?.author?.name || "Unknown Artist";
+  const artistImage = getHighResThumbnail(header?.author?.thumbnails || []) || null;
+  const rawSubscribers = header?.subscribers?.toString() || "";
+
+  const songs: any[] = [];
+  try {
+    const videos = await channel.getVideos();
+    videos.videos.slice(0, 50).forEach((item: any) => {
+      const vid = item.id ?? item.videoId;
+      if (!vid) return;
+      songs.push({
+        songId: vid,
+        youtubeVideoId: vid,
+        title: sanitizeTitle(item.title?.toString() || ""),
+        artist: artistName,
+        thumbnailUrl: getHighResThumbnail(item.thumbnails || []) || artistImage || "",
+        views: item.view_count?.toString() || "",
+      });
+    });
+  } catch (err) {
+    console.warn(`[Artist] Failed to fetch channel videos for ${channelId}`, err);
+  }
+
+  if (songs.length === 0) {
+    throw new Error("No channel videos found");
+  }
+
+  return {
+    artistId: channelId,
+    artistName,
+    artistImage,
+    subscribers: rawSubscribers,
+    isVerified: true,
+    songs,
+    newReleases: [],
+    oldAlbums: [],
+  };
+}
+
 export async function getArtistDetails(artistId: string) {
   try {
-    return await getArtistDetailsYoutube(artistId);
+    try {
+      return await getArtistDetailsYoutube(artistId);
+    } catch (e) {
+      console.warn(`[Artist] music.getArtist failed for ${artistId}, trying getChannel...`);
+      return await getChannelDetailsYoutube(artistId);
+    }
   } catch (e) {
-    console.warn(`[Artist] YouTube failed for ${artistId}, trying Piped fallback...`);
+    console.warn(`[Artist] YouTube failed completely for ${artistId}, trying Piped fallback...`);
     try {
       const res = await fetch(`https://api.piped.yt/channel/${artistId}`, {
         headers: { "Accept": "application/json" }
