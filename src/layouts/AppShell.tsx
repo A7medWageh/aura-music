@@ -62,7 +62,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             }}
           >
             <div className="flex items-center gap-2 flex-1 max-w-full">
-              <img src="/logo.png" alt="Aura" className="w-8 h-8 rounded-lg shadow-sm" />
+              <img src="/logo-v2.png" alt="Aura" className="w-8 h-8 rounded-lg shadow-sm" />
               <SmartSearchBar />
             </div>
             <div className="flex items-center gap-2 mr-2 shrink-0">

@@ -659,9 +659,18 @@ export async function getChannelDetailsYoutube(channelId: string) {
   }
 
   if (songs.length === 0) {
-    throw new Error("No channel videos found");
+    try {
+      console.warn(`[Artist] No channel videos for ${artistName}, falling back to search`);
+      const searchRes = await searchYouTube(artistName);
+      songs.push(...searchRes.songs);
+    } catch(err) {
+      console.warn(`[Artist] Search fallback failed for ${artistName}`, err);
+    }
   }
 
+  if (songs.length === 0) {
+    throw new Error("No channel videos found");
+  }
   return {
     artistId: channelId,
     artistName,

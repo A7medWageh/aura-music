@@ -34,10 +34,10 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     <html dir="rtl" lang="ar">
       <head>
         {/* Favicon and Apple PWA icons */}
-        <link rel="icon" href="/logo.png" />
-        <link rel="apple-touch-icon" href="/logo.png" />
-        <link rel="apple-touch-icon" sizes="192x192" href="/logo.png" />
-        <link rel="apple-touch-icon" sizes="512x512" href="/logo.png" />
+        <link rel="icon" href="/logo-v2.png" />
+        <link rel="apple-touch-icon" href="/logo-v2.png" />
+        <link rel="apple-touch-icon" sizes="192x192" href="/logo-v2.png" />
+        <link rel="apple-touch-icon" sizes="512x512" href="/logo-v2.png" />
         {/* Splash screens for iPhone */}
         <meta name="mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />

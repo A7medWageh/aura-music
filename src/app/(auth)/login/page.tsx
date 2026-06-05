@@ -30,6 +30,7 @@ export default function LoginPage() {
         throw new Error(data.message || "فشل تسجيل الدخول. تأكد من بياناتك.");
       }
 
+      localStorage.setItem("aura_logged_in", "true");
       router.push("/");
     } catch (err: any) {
       setError(err.message);
@@ -50,7 +51,7 @@ export default function LoginPage() {
       >
         <div className="text-center mb-10">
           <div className="w-16 h-16 bg-cyan-500 rounded-2xl mx-auto mb-6 flex items-center justify-center shadow-[0_0_30px_rgba(0,229,255,0.6)]">
-            <img src="/logo.png" alt="Logo" className="w-10 h-10 object-contain drop-shadow-md" />
+            <img src="/logo-v2.png" alt="Logo" className="w-10 h-10 object-contain drop-shadow-md" />
           </div>
           <h1 className="text-3xl font-black text-white mb-2">أهلاً بك مجدداً</h1>
           <p className="text-gray-400">سجل دخولك للاستماع لموسيقاك المفضلة</p>

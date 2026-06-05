@@ -31,6 +31,7 @@ export default function SignupPage() {
         throw new Error(data.message || "فشل إنشاء الحساب. تأكد من بياناتك.");
       }
 
+      localStorage.setItem("aura_logged_in", "true");
       router.push("/");
     } catch (err: any) {
       setError(err.message);

@@ -23,7 +23,7 @@ export function Sidebar() {
       <div className="p-6">
         <div className="flex items-center gap-3 mb-10">
           <div className="w-12 h-12 flex items-center justify-center bg-white/5 rounded-xl border border-white/10 shadow-lg overflow-hidden shrink-0">
-            <img src="/logo.png" alt="Aura Music Logo" className="w-full h-full object-cover" />
+            <img src="/logo-v2.png" alt="Aura Music Logo" className="w-full h-full object-cover" />
           </div>
           <h1 className="text-2xl font-black tracking-tight text-white drop-shadow-[0_0_10px_rgba(0,229,255,0.4)]">Aura Music</h1>
         </div>
