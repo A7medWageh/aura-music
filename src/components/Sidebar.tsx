@@ -22,12 +22,8 @@ export function Sidebar() {
     <aside className="hidden md:flex fixed top-0 bottom-[100px] right-0 w-[280px] glass-dark border-l border-white/5 flex-col z-20 overflow-hidden">
       <div className="p-6">
         <div className="flex items-center gap-3 mb-10">
-          <div className="w-12 h-12 flex items-center justify-center bg-cyan-500/10 rounded-xl border border-cyan-500/20 shadow-[0_0_15px_rgba(0,229,255,0.2)] text-cyan-400">
-            <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M9 18V5l12-2v13" />
-              <circle cx="6" cy="18" r="3" fill="currentColor" />
-              <circle cx="18" cy="16" r="3" fill="currentColor" />
-            </svg>
+          <div className="w-12 h-12 flex items-center justify-center bg-white/5 rounded-xl border border-white/10 shadow-lg overflow-hidden shrink-0">
+            <img src="/logo.png" alt="Aura Music Logo" className="w-full h-full object-cover" />
           </div>
           <h1 className="text-2xl font-black tracking-tight text-white drop-shadow-[0_0_10px_rgba(0,229,255,0.4)]">Aura Music</h1>
         </div>
