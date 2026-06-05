@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Play, Music, Headphones, TrendingUp, Clock, Star, Heart, Users, BarChart3, Disc } from "lucide-react";
+import { Play, Music, Headphones, TrendingUp, Clock, Star, Heart, Users, BarChart3, Disc, CheckCircle2, Crown } from "lucide-react";
 import { getProxyUrl } from "@/utils/media";
 import { usePlayer } from "@/state/playerContext";
 import {
@@ -73,8 +73,13 @@ export default function ProfilePage() {
         <div className="relative z-10 p-8 md:p-12 flex items-center gap-8">
           {/* Avatar */}
           <div className="relative shrink-0">
-            <div className="w-24 h-24 md:w-32 md:h-32 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-2xl text-4xl font-black">
+            <div className={`w-24 h-24 md:w-32 md:h-32 rounded-full flex items-center justify-center shadow-2xl text-4xl font-black relative z-10 ${user?.tier === 'premium' ? 'bg-gradient-to-br from-yellow-400 via-orange-500 to-red-500 shadow-[0_0_40px_rgba(234,179,8,0.6)] border-4 border-yellow-300/50' : 'bg-gradient-to-br from-indigo-500 to-purple-600'}`}>
               {user ? user.displayName?.charAt(0)?.toUpperCase() : "🎧"}
+              {user?.tier === 'premium' && (
+                <div className="absolute -top-3 -right-3 rotate-12">
+                  <Crown className="w-10 h-10 text-yellow-300 drop-shadow-lg" />
+                </div>
+              )}
             </div>
             {!isEmpty && (
               <div className="absolute -bottom-1 -right-1 w-7 h-7 rounded-full bg-emerald-500 border-2 border-black flex items-center justify-center">
@@ -86,8 +91,14 @@ export default function ProfilePage() {
           {/* Info */}
           <div className="flex-1 min-w-0">
             <p className="text-xs font-bold uppercase tracking-widest text-indigo-400 mb-1">الحساب الشخصي</p>
-            <h1 className="text-4xl md:text-5xl font-black mb-2">
+            <h1 className="text-4xl md:text-5xl font-black mb-2 flex items-center gap-3">
               {user ? user.displayName : "مستمع موسيقى"}
+              {user?.tier === 'premium' && (
+                <span title="حساب بريميوم موثق" className="relative flex items-center justify-center w-8 h-8">
+                  <CheckCircle2 className="w-8 h-8 text-blue-500 fill-white drop-shadow-md z-10" />
+                  <span className="absolute inset-0 bg-blue-500 blur-md opacity-50 rounded-full" />
+                </span>
+              )}
             </h1>
             {user && <p className="text-gray-400 text-sm">{user.email}</p>}
             {!user && (
