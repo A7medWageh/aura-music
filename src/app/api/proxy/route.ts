@@ -1,60 +1,66 @@
 import { NextRequest, NextResponse } from "next/server";
 
-export const runtime = "edge"; // Edge runtime bypasses Vercel 10s & 4.5MB payload limits!
+// Domains that need a YouTube Music referer to serve images
+const GOOGLE_CDN_HOSTS = ["lh3.googleusercontent.com", "yt3.ggpht.com", "ggpht.com"];
 
 export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
-  const src = searchParams.get("src");
-  
-  if (!src) {
-    return new NextResponse("Missing src", { status: 400 });
+  let url = req.nextUrl.searchParams.get("url");
+  if (!url) return new Response("Missing URL", { status: 400 });
+
+  if (url.startsWith("//")) {
+    url = "https:" + url;
   }
 
-  const streamUrl = decodeURIComponent(src);
+  // Validate the URL is well-formed before attempting fetch
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    return NextResponse.redirect("/placeholder-song.jpg");
+  }
+
+  // Build request headers — Google CDN requires Referer/Origin or it returns 400
+  const isGoogleCdn = GOOGLE_CDN_HOSTS.some((h) => parsedUrl.hostname.endsWith(h));
+  const fetchHeaders: Record<string, string> = {
+    "User-Agent":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Cache-Control": "no-cache",
+    Pragma: "no-cache",
+    "Sec-Fetch-Dest": "image",
+    "Sec-Fetch-Mode": "no-cors",
+    "Sec-Fetch-Site": "cross-site",
+  };
+
+  if (isGoogleCdn) {
+    fetchHeaders["Referer"] = "https://music.youtube.com/";
+    fetchHeaders["Origin"] = "https://music.youtube.com";
+  }
 
   try {
-    const fetchHeaders: HeadersInit = {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-      "Accept": "audio/webm,audio/ogg,audio/wav,audio/*;q=0.9,*/*;q=0.8",
-      "Accept-Language": "en-US,en;q=0.9",
-    };
-
-    const rangeHeader = req.headers.get("range");
-    if (rangeHeader) {
-      fetchHeaders["Range"] = rangeHeader;
-    }
-
-    if (streamUrl.includes("googlevideo.com")) {
-      fetchHeaders["Origin"] = "https://www.youtube.com";
-      fetchHeaders["Referer"] = "https://www.youtube.com/";
-    }
-
-    const res = await fetch(streamUrl, { headers: fetchHeaders });
-
-    if (!res.ok || !res.body) {
-       console.error(`[EdgeProxy] Upstream failed: ${res.status}`);
-       return new NextResponse("Upstream fetch failed", { status: res.status });
-    }
-
-    const responseHeaders = new Headers();
-    responseHeaders.set("Content-Type", res.headers.get("content-type") || "audio/mpeg");
-    responseHeaders.set("Access-Control-Allow-Origin", "*");
-    responseHeaders.set("Accept-Ranges", "bytes");
-    responseHeaders.set("Cache-Control", "public, max-age=3600");
-
-    const contentRange = res.headers.get("content-range");
-    const contentLength = res.headers.get("content-length");
-    if (contentRange) responseHeaders.set("Content-Range", contentRange);
-    if (contentLength) responseHeaders.set("Content-Length", contentLength);
-
-    const status = (rangeHeader && contentRange) || res.status === 206 ? 206 : 200;
-
-    return new NextResponse(res.body, {
-      status,
-      headers: responseHeaders,
+    const res = await fetch(url, {
+      headers: fetchHeaders,
+      cache: "force-cache",
     });
-  } catch (error: any) {
-    console.error("[EdgeProxy] Error:", error.message);
-    return new NextResponse("Proxy Error", { status: 500 });
+
+    if (!res.ok) {
+      console.error(`Proxy failed for ${url}: ${res.status} ${res.statusText}`);
+      // Return a redirect to placeholder instead of an error, so images degrade gracefully
+      return NextResponse.redirect(new URL("/placeholder-song.jpg", req.url));
+    }
+
+    const blob = await res.blob();
+    const contentType = res.headers.get("Content-Type") || "image/jpeg";
+
+    return new NextResponse(blob, {
+      headers: {
+        "Content-Type": contentType,
+        "Cache-Control": "public, max-age=31536000, immutable",
+      },
+    });
+  } catch (error) {
+    console.error("Image proxy fatal error:", error);
+    return NextResponse.redirect(new URL("/placeholder-song.jpg", req.url));
   }
 }

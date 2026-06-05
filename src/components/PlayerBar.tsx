@@ -9,6 +9,7 @@ import { usePlayer } from "@/state/playerContext";
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { getProxyUrl } from "@/utils/media";
+import { PremiumModal } from "./PremiumModal";
 import { downloadSong } from "@/services/offline/downloader";
 import { upsertFavorite, removeFavorite } from "@/services/user/favoritesStore";
 
@@ -113,10 +114,11 @@ function SeekBar({
 
 // ─── Full Screen Player ───────────────────────────────────────────────
 function FullPlayer({
-  onClose, isLiked, onLike, onDownload
+  onClose, isLiked, onLike, onDownload, isPremium, setIsPremiumModalOpen, setPremiumFeatureName
 }: {
   onClose: () => void; isLiked: boolean;
   onLike: () => void; onDownload: () => void;
+  isPremium: boolean; setIsPremiumModalOpen: (v: boolean) => void; setPremiumFeatureName: (v: string) => void;
 }) {
   const { state, currentSong, togglePlay, next, prev, seekTo, setVolume, cycleRepeat, setShuffle } = usePlayer();
   const art = currentSong?.thumbnailUrl || currentSong?.metadata?.thumbnailUrl;
@@ -225,9 +227,9 @@ function FullPlayer({
           <Volume2 className="w-4 h-4 text-white/40" />
           
           <button onClick={() => {
-            const isPremium = typeof window !== "undefined" && localStorage.getItem("aura_user_tier") === "premium";
             if (!isPremium) {
-              alert("جودة الصوت العالية متوفرة فقط في بريميوم 👑");
+              setPremiumFeatureName("جودة الصوت الخارقة (HQ)");
+              setIsPremiumModalOpen(true);
             } else {
               alert("تم تفعيل جودة الصوت الخارقة 🎧✨");
             }
@@ -251,6 +253,10 @@ export function PlayerBar() {
   const [isLiked, setIsLiked] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [fullOpen, setFullOpen] = useState(false);
+  const [isPremiumModalOpen, setIsPremiumModalOpen] = useState(false);
+  const [premiumFeatureName, setPremiumFeatureName] = useState("");
+
+  const isPremium = typeof window !== "undefined" && localStorage.getItem("aura_user_tier") === "premium";
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 3000); };
 
@@ -296,9 +302,9 @@ export function PlayerBar() {
 
   const handleDownload = async () => {
     if (!currentSong) return;
-    const tier = typeof window !== "undefined" ? localStorage.getItem("aura_user_tier") : "free";
-    if (tier !== "premium") {
-      showToast("👑 هذه الميزة للمشتركين في بريميوم فقط");
+    if (!isPremium) {
+      setPremiumFeatureName("التحميل والاستماع بدون إنترنت");
+      setIsPremiumModalOpen(true);
       return;
     }
     showToast(`جاري تحميل "${currentSong.title}"... بسرعة الصاروخ 🚀`);
