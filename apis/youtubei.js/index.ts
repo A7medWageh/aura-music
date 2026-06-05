@@ -343,9 +343,9 @@ async function resolveWithYoutubei(videoId: string): Promise<string> {
     try {
       const info = await getter();
       let format: any;
-      try { format = (info as any).chooseFormat?.({ type: "audio", quality: "best" }); } catch {}
+      try { format = (info as any).chooseFormat?.({ type: "audio", quality: "best", format: "mp4" }); } catch {}
       if (!format) {
-        try { format = (info as any).chooseFormat?.({ type: "audio", quality: "best", format: "mp4" }); } catch {}
+        try { format = (info as any).chooseFormat?.({ type: "audio", quality: "best" }); } catch {}
       }
       if (!format) {
         try { format = (info as any).chooseFormat?.({ type: "audio" }); } catch {}
