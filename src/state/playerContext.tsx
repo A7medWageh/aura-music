@@ -182,7 +182,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     player.playbackRate = state.speed;
   }, [state.speed]);
 
-  // ── Stream Resolution (Rocket Speed) ────────────────────────────────
+  // ── Stream Resolution (Reliable backend proxy) ──────────────────────
   const resolveStream = async (videoId: string): Promise<string> => {
     // 1. Check Offline Storage First
     if (typeof window !== "undefined") {
@@ -198,30 +198,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
        }
     }
 
-    // 2. Try Piped API for ultra-fast direct browser streaming (Rocket Speed)
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 1500); // 1.5s max wait for Piped
-      const res = await fetch(`https://pipedapi.kavin.rocks/streams/${videoId}`, { signal: controller.signal });
-      clearTimeout(timeoutId);
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data.audioStreams && data.audioStreams.length > 0) {
-          // Sort by highest bitrate
-          const bestAudio = data.audioStreams.sort((a: any, b: any) => b.bitrate - a.bitrate)[0];
-          if (bestAudio?.url) {
-            console.log("[Player] Rocket speed activated: Using direct Piped stream");
-            return bestAudio.url;
-          }
-        }
-      }
-    } catch (err) {
-      console.warn("[Player] Piped fast-lane failed, using reliable fallback");
-    }
-
-    // 3. Fallback to our own proxy
-    return `/api/download?videoId=${encodeURIComponent(videoId)}`;
+    // 2. Use reliable backend proxy which supports part-by-part (Range) fetching
+    // and handles IP bypassing, retries, and rate limits.
+    return `/api/download?videoId=${encodeURIComponent(videoId)}&t=${Date.now()}`;
   };
 
   const preloadNext = (currentId: string, queue: QueueSong[]) => {
@@ -462,18 +441,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
             console.error(`Status: ${codes[error.code] || "خطأ غير معروف"}`);
           }
 
-          // Simple retry logic: if it's a network error, try to reload once
-          if (error?.code === 2 || error?.code === 4) {
-             console.log("Attempting automatic player recover...");
-             setTimeout(() => {
-                if (audioRef.current && state.currentSongId) {
-                   audioRef.current.load();
-                   if (state.isPlaying) audioRef.current.play().catch(() => {});
-                }
-             }, 1000);
-          }
-
-          setState(prev => ({ ...prev, isBuffering: false, error: "فشل تشغيل الملف - جاري المحاولة..." }));
+          // Simple retry logic removed as it causes infinite loops if the source URL is permanently dead.
+          // The user will need to tap play again or we skip to next.
+          setState(prev => ({ ...prev, isBuffering: false, error: "حدث خطأ أثناء تشغيل الأغنية. الرجاء المحاولة مرة أخرى." }));
         }}
       />
     </PlayerContext.Provider>
