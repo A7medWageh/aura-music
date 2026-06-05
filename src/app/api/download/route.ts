@@ -62,12 +62,26 @@ export async function GET(req: NextRequest) {
       fetchHeaders["Range"] = rangeHeader;
     }
 
-    // Instead of buffering the stream in Node.js, we redirect to the Edge Proxy
-    // The Edge Proxy handles the byte streaming without memory limits or buffering
-    const proxyUrl = `/api/proxy-stream?src=${encodeURIComponent(streamUrl)}`;
-    const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || "localhost:3000";
-    const protocol = req.headers.get("x-forwarded-proto") || (host.includes("localhost") ? "http" : "https");
-    return NextResponse.redirect(new URL(proxyUrl, `${protocol}://${host}`));
+    // Direct byte-stream proxying
+    // This allows instant playback by piping YouTube's chunked stream directly to the browser
+    const response = await fetch(streamUrl, {
+      headers: fetchHeaders,
+      redirect: "follow",
+    });
+
+    if (!response.ok) {
+      throw new Error(`Upstream returned ${response.status} ${response.statusText}`);
+    }
+
+    const responseHeaders = new Headers(response.headers);
+    responseHeaders.set("Access-Control-Allow-Origin", "*");
+    
+    // We return the raw ReadableStream from fetch directly.
+    // Next.js handles piping it to the client chunk-by-chunk.
+    return new NextResponse(response.body, {
+      status: response.status,
+      headers: responseHeaders,
+    });
   } catch (error: any) {
     console.error("[DownloadAPI] Error:", error.message);
 
