@@ -3,10 +3,10 @@
 import { FormEvent, useEffect, useState } from "react";
 import { getCsrfToken } from "@/services/security/clientCsrf";
 import Link from "next/link";
-import { UserCircle2, LogIn, UserPlus, LogOut } from "lucide-react";
+import { UserCircle2, LogIn, UserPlus, LogOut, ShieldAlert } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
-type AuthUser = { id: string; email: string; displayName: string };
+type AuthUser = { id: string; email: string; displayName: string; tier?: string };
 
 export function AuthMenu() {
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -23,7 +23,10 @@ export function AuthMenu() {
       }
       const payload = (await response.json()) as { data?: { user?: AuthUser } };
       setUser(payload.data?.user ?? null);
-      if (payload.data?.user && typeof window !== "undefined") localStorage.setItem("aura_logged_in", "true");
+      if (payload.data?.user && typeof window !== "undefined") {
+        localStorage.setItem("aura_logged_in", "true");
+        localStorage.setItem("aura_user_tier", payload.data.user.tier || "free");
+      }
     } catch (err) {
       setUser(null);
     }
@@ -37,21 +40,28 @@ export function AuthMenu() {
     const csrfToken = await getCsrfToken();
     await fetch("/api/auth/logout", { method: "POST", headers: { "x-csrf-token": csrfToken } });
     setUser(null);
-    if (typeof window !== "undefined") localStorage.removeItem("aura_logged_in");
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("aura_logged_in");
+      localStorage.removeItem("aura_user_tier");
+    }
     setIsOpen(false);
   };
 
   if (user) {
+    const isPremium = user.tier === "premium";
     return (
       <div className="relative">
         <button
           onClick={() => setIsOpen(!isOpen)}
-          className="flex items-center gap-2 pl-2 pr-1 py-1 rounded-full bg-white/5 border border-white/10 hover:bg-white/10 transition-colors"
+          className={`flex items-center gap-2 pl-2 pr-1 py-1 rounded-full bg-white/5 border transition-colors ${isPremium ? 'border-yellow-500/50 hover:bg-yellow-500/10' : 'border-white/10 hover:bg-white/10'}`}
         >
-          <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-cyan-400 to-blue-500 flex items-center justify-center text-black font-black text-xs uppercase shadow-[0_0_10px_rgba(0,229,255,0.3)]">
+          <div className={`w-8 h-8 rounded-full flex items-center justify-center text-black font-black text-xs uppercase shadow-lg ${isPremium ? 'bg-gradient-to-tr from-yellow-400 to-orange-500 shadow-yellow-500/40' : 'bg-gradient-to-tr from-cyan-400 to-blue-500 shadow-[0_0_10px_rgba(0,229,255,0.3)]'}`}>
             {user.displayName.substring(0, 2)}
           </div>
-          <span className="text-sm font-bold text-white pl-2">{user.displayName.split(" ")[0]}</span>
+          <div className="flex items-center gap-1 pl-2">
+             <span className={`text-sm font-bold ${isPremium ? 'text-yellow-400' : 'text-white'}`}>{user.displayName.split(" ")[0]}</span>
+             {isPremium && <span title="Premium Member" className="text-yellow-400 text-xs">👑</span>}
+          </div>
         </button>
 
         <AnimatePresence>
@@ -62,11 +72,27 @@ export function AuthMenu() {
               exit={{ opacity: 0, y: 10, scale: 0.95 }}
               className="absolute left-0 top-full mt-2 w-48 bg-black/90 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl overflow-hidden z-50 text-right"
             >
-              <div className="px-4 py-3 border-b border-white/5 bg-white/5">
-                <p className="text-sm font-bold text-white truncate">{user.displayName}</p>
+              <div className={`px-4 py-3 border-b ${isPremium ? 'border-yellow-500/20 bg-yellow-500/10' : 'border-white/5 bg-white/5'}`}>
+                <p className="text-sm font-bold text-white truncate flex items-center justify-end gap-1">
+                  {isPremium && <span className="text-yellow-400 text-xs">👑</span>}
+                  {user.displayName}
+                </p>
                 <p className="text-xs text-gray-400 truncate">{user.email}</p>
+                {isPremium ? (
+                  <div className="mt-1 inline-block px-2 py-0.5 bg-yellow-500/20 text-yellow-400 text-[10px] font-black rounded-md border border-yellow-500/30">PREMIUM</div>
+                ) : (
+                  <div className="mt-1 inline-block px-2 py-0.5 bg-gray-500/20 text-gray-400 text-[10px] font-black rounded-md border border-gray-500/30">FREE TIER</div>
+                )}
               </div>
               <div className="p-2">
+                <Link
+                  href="/admin/users"
+                  onClick={() => setIsOpen(false)}
+                  className="w-full flex items-center gap-3 px-3 py-2 text-sm font-bold text-gray-300 hover:text-white hover:bg-white/10 rounded-xl transition-colors flex-row-reverse"
+                >
+                  <ShieldAlert className="w-4 h-4 text-yellow-500" />
+                  لوحة الإدارة
+                </Link>
                 <button
                   onClick={logout}
                   className="w-full flex items-center gap-3 px-3 py-2 text-sm font-bold text-red-400 hover:bg-red-500/10 rounded-xl transition-colors flex-row-reverse"

@@ -29,11 +29,12 @@ export async function POST(req: NextRequest) {
     display_name: string;
     password_hash: string;
     role: string;
+    tier: string;
     failed_login_attempts: number;
     locked_until: string | null;
   }>(
     `
-      SELECT u.id, u.email, u.display_name, u.role, a.password_hash, a.failed_login_attempts, a.locked_until
+      SELECT u.id, u.email, u.display_name, u.role, u.tier, a.password_hash, a.failed_login_attempts, a.locked_until
       FROM users u
       JOIN auth_accounts a ON a.user_id = u.id
       WHERE u.email = $1
@@ -78,7 +79,8 @@ export async function POST(req: NextRequest) {
     sub: user.id,
     email: user.email,
     displayName: user.display_name,
-    role: user.role
+    role: user.role,
+    tier: user.tier
   });
   await setSessionCookie(token);
   const csrf = createCsrfToken();
@@ -86,6 +88,6 @@ export async function POST(req: NextRequest) {
   log("info", "login_success", { requestId, userId: user.id });
 
   return ok({
-    user: { id: user.id, email: user.email, displayName: user.display_name }
+    user: { id: user.id, email: user.email, displayName: user.display_name, tier: user.tier }
   });
 }

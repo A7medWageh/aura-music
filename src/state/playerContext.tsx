@@ -198,8 +198,18 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
        }
     }
 
-    // 2. Use reliable backend proxy which supports part-by-part (Range) fetching
-    // and handles IP bypassing, retries, and rate limits.
+    // 2. Fetch from fast stream resolver
+    try {
+      const res = await fetch(`/api/stream/${videoId}`);
+      const data = await res.json();
+      if (data.streamUrl) {
+         return data.streamUrl;
+      }
+    } catch (e) {
+      console.warn("[Player] Stream resolver failed, falling back to proxy:", e);
+    }
+
+    // 3. Fallback to reliable backend proxy
     return `/api/download?videoId=${encodeURIComponent(videoId)}&t=${Date.now()}`;
   };
 

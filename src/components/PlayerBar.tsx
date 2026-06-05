@@ -216,14 +216,26 @@ function FullPlayer({
           </button>
         </div>
 
-        {/* Volume + Download */}
+        {/* Volume + Download + HQ */}
         <div className="flex items-center gap-4 mt-8">
           <VolumeX className="w-4 h-4 text-white/40" />
           <input type="range" min="0" max="1" step="0.01" value={state.volume}
             onChange={e => setVolume(parseFloat(e.target.value))}
             className="flex-1 accent-white h-1 cursor-pointer" />
           <Volume2 className="w-4 h-4 text-white/40" />
-          <button onClick={onDownload} className="ml-2 p-2 rounded-full hover:bg-white/10 text-white/50 hover:text-white transition">
+          
+          <button onClick={() => {
+            const isPremium = typeof window !== "undefined" && localStorage.getItem("aura_user_tier") === "premium";
+            if (!isPremium) {
+              alert("جودة الصوت العالية متوفرة فقط في بريميوم 👑");
+            } else {
+              alert("تم تفعيل جودة الصوت الخارقة 🎧✨");
+            }
+          }} className="ml-2 p-2 rounded-full hover:bg-white/10 text-white/50 hover:text-white transition flex items-center gap-1">
+             <span className="text-[10px] font-black border border-white/20 px-1 rounded">HQ</span>
+          </button>
+          
+          <button onClick={onDownload} className="p-2 rounded-full hover:bg-white/10 text-white/50 hover:text-white transition">
             <DownloadCloud className="w-5 h-5" />
           </button>
         </div>
@@ -284,7 +296,12 @@ export function PlayerBar() {
 
   const handleDownload = async () => {
     if (!currentSong) return;
-    showToast(`جاري تحميل "${currentSong.title}"...`);
+    const tier = typeof window !== "undefined" ? localStorage.getItem("aura_user_tier") : "free";
+    if (tier !== "premium") {
+      showToast("👑 هذه الميزة للمشتركين في بريميوم فقط");
+      return;
+    }
+    showToast(`جاري تحميل "${currentSong.title}"... بسرعة الصاروخ 🚀`);
     const ok = await downloadSong(currentSong.songId, currentSong.youtubeVideoId, {
       title: currentSong.title,
       artist: currentSong.artist || "فنان",

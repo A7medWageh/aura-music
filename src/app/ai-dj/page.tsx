@@ -3,7 +3,7 @@
 import { usePlayer } from "@/state/playerContext";
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Sparkles, Play, Loader2, Music4 } from "lucide-react";
+import { Sparkles, Play, Loader2, Music4, Lock } from "lucide-react";
 
 const moods = [
   { id: "روقان", label: "روقان وقهوة", color: "from-amber-400 to-orange-500", shadow: "shadow-orange-500/30" },
@@ -16,8 +16,23 @@ const moods = [
 export default function SmartDJPage() {
   const { setQueue, playNow } = usePlayer();
   const [loadingMood, setLoadingMood] = useState<string | null>(null);
+  const [isPremium, setIsPremium] = useState<boolean>(true);
+
+  if (typeof window !== "undefined" && !isPremium) {
+     // initial render check bypass
+  }
+
+  useState(() => {
+    if (typeof window !== "undefined") {
+      setIsPremium(localStorage.getItem("aura_user_tier") === "premium");
+    }
+  });
 
   const startMix = async (moodId: string) => {
+    if (!isPremium) {
+      alert("الدي جي الذكي متوفر فقط لمشتركي بريميوم 👑");
+      return;
+    }
     setLoadingMood(moodId);
     try {
       const res = await fetch(`/api/dj?mood=${encodeURIComponent(moodId)}`);
@@ -61,8 +76,14 @@ export default function SmartDJPage() {
             onClick={() => {
               if (!loadingMood) startMix(mood.id);
             }}
-            className={`cursor-pointer overflow-hidden rounded-3xl h-48 relative p-6 flex flex-col justify-end bg-gradient-to-br ${mood.color} shadow-lg ${mood.shadow} group`}
+            className={`cursor-pointer overflow-hidden rounded-3xl h-48 relative p-6 flex flex-col justify-end bg-gradient-to-br ${mood.color} shadow-lg ${mood.shadow} group ${!isPremium && 'opacity-60 grayscale'}`}
           >
+            {!isPremium && (
+              <div className="absolute inset-0 bg-black/50 z-30 flex flex-col items-center justify-center">
+                 <Lock className="w-10 h-10 text-yellow-400 mb-2" />
+                 <p className="text-yellow-400 font-bold text-sm">حصري للبريميوم</p>
+              </div>
+            )}
             <div className="absolute inset-0 bg-black/20 group-hover:bg-transparent transition-colors z-10" />
             <Music4 className="absolute top-4 right-4 w-16 h-16 text-white/10 group-hover:-rotate-12 transition-transform duration-500" />
             

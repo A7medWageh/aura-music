@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { checkRateLimit } from "@/services/security/rateLimit";
 import { fail } from "@/services/http/response";
 import { resolveStreamUrl } from "@apis/scraping";
+import { getUserFromRequest } from "@/services/auth/session";
 
 export const maxDuration = 30; // Reduced from 60 — our engine is faster now
 export const dynamic = "force-dynamic";
@@ -27,21 +28,23 @@ export async function GET(req: NextRequest, { params }: Params) {
     }
 
     const resolved = await resolveStreamUrl(videoId);
+    const user = await getUserFromRequest(req);
+    const isPremium = user?.tier === 'premium';
 
     let streamUrl: string;
 
-    if (resolved.directPlay) {
-      // Piped CDN / Cobalt URL — browser plays directly, zero Vercel overhead!
+    if (resolved.directPlay && isPremium) {
+      // Piped CDN / Cobalt URL — browser plays directly, zero Vercel overhead! (PREMIUM ONLY)
       streamUrl = resolved.url;
     } else {
-      // googlevideo.com URL — must proxy through server (Invidious/youtubei fallback)
+      // googlevideo.com URL or Free User — must proxy through server (Invidious/youtubei fallback)
       streamUrl = `/api/download?videoId=${videoId}&src=${encodeURIComponent(resolved.url)}`;
     }
 
     return NextResponse.json({
       streamUrl,
       source: resolved.source,
-      directPlay: resolved.directPlay,
+      directPlay: resolved.directPlay && isPremium,
       durationSec: resolved.durationSec,
     });
   } catch (error) {

@@ -33,11 +33,11 @@ export async function POST(req: NextRequest) {
   }
 
   const passwordHash = await hashPassword(password);
-  const userResult = await query<{ id: string; email: string; display_name: string; role: string }>(
+  const userResult = await query<{ id: string; email: string; display_name: string; role: string; tier: string }>(
     `
       INSERT INTO users (email, display_name, role)
       VALUES ($1, $2, 'user')
-      RETURNING id, email, display_name, role
+      RETURNING id, email, display_name, role, tier
     `,
     [email, displayName]
   );
@@ -49,7 +49,8 @@ export async function POST(req: NextRequest) {
     sub: user.id,
     email: user.email,
     displayName: user.display_name,
-    role: user.role
+    role: user.role,
+    tier: user.tier
   });
   await setSessionCookie(token);
   const csrf = createCsrfToken();
@@ -57,6 +58,6 @@ export async function POST(req: NextRequest) {
   log("info", "signup_success", { requestId, userId: user.id });
 
   return ok({
-    user: { id: user.id, email: user.email, displayName: user.display_name }
+    user: { id: user.id, email: user.email, displayName: user.display_name, tier: user.tier }
   });
 }

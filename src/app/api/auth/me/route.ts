@@ -10,6 +10,6 @@ export async function GET(req: NextRequest) {
   await rotateSessionCookie(user);
   return ok({
     authenticated: true,
-    user: { id: user.sub, email: user.email, displayName: user.displayName, role: user.role }
+    user: { id: user.sub, email: user.email, displayName: user.displayName, role: user.role, tier: user.tier }
   });
 }

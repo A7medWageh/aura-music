@@ -8,6 +8,7 @@ type AuthTokenPayload = {
   email: string;
   displayName: string;
   role: string;
+  tier: string;
 };
 
 const AUTH_COOKIE = "musicweb_session";
