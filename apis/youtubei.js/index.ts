@@ -133,6 +133,7 @@ export async function getMusicCharts() {
   // ── Ultimate Fallback: Piped API (Bypasses IP Blocks) ──
   try {
     const res = await fetch("https://api.piped.yt/trending?region=EG", {
+      cache: "no-store",
       headers: { "Accept": "application/json" }
     });
     const data = await res.json();
@@ -214,6 +215,7 @@ export async function searchYouTube(query: string) {
     console.warn(`[Search] YouTube failed for "${query}", trying Piped fallback...`);
     try {
       const res = await fetch(`https://api.piped.yt/search?q=${encodeURIComponent(query)}&filter=all`, {
+        cache: "no-store",
         headers: { "Accept": "application/json" }
       });
       const data = await res.json();
@@ -284,6 +286,7 @@ async function resolveWithPiped(videoId: string): Promise<string> {
   return Promise.any(PIPED_INSTANCES.map(async (api) => {
     const res = await withTimeout(
       fetch(`${api}/streams/${videoId}`, {
+        cache: "no-store",
         headers: { "User-Agent": "Mozilla/5.0 (compatible; Aura/1.0)", "Accept": "application/json" }
       }), 7000, null
     );
@@ -375,7 +378,7 @@ const PUBLIC_INVIDIOUS = [
 async function resolveWithInvidious(videoId: string): Promise<string> {
   return Promise.any(PUBLIC_INVIDIOUS.map(async (proxy) => {
     const res = await withTimeout(
-      fetch(`${proxy}/api/v1/videos/${videoId}`, { headers: { "User-Agent": "Mozilla/5.0" } }), 7000, null
+      fetch(`${proxy}/api/v1/videos/${videoId}`, { cache: "no-store", headers: { "User-Agent": "Mozilla/5.0" } }), 7000, null
     );
     if (!res || !res.ok) throw new Error("failed");
     const data = await res.json();

@@ -69,7 +69,7 @@ async function timedFetch(url: string, opts: RequestInit = {}, ms = 6000): Promi
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), ms);
   try {
-    return await fetch(url, { ...opts, signal: ctrl.signal });
+    return await fetch(url, { cache: "no-store", ...opts, signal: ctrl.signal });
   } finally {
     clearTimeout(t);
   }
