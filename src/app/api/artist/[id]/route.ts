@@ -4,14 +4,13 @@ import { getArtistDetails } from "@apis/youtubei.js";
 const cache = new Map<string, { data: any; at: number }>();
 const TTL = 30 * 60 * 1000; // 30 min
 
-import { checkTunnelRedirect } from "@/utils/tunnelProxy";
+
 
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const redirect = await checkTunnelRedirect(req);
-  if (redirect) return redirect;
+
 
   const { id } = await params;
 

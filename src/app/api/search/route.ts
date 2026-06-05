@@ -4,11 +4,8 @@ import { checkRateLimit } from "@/services/security/rateLimit";
 import { fail } from "@/services/http/response";
 import { log } from "@/services/http/logger";
 
-import { checkTunnelRedirect } from "@/utils/tunnelProxy";
 
 export async function GET(req: NextRequest) {
-  const redirect = await checkTunnelRedirect(req);
-  if (redirect) return redirect;
 
   const startedAt = Date.now();
   const rate = await checkRateLimit(req, { key: "search", max: 120, windowSec: 60 });
