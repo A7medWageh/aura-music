@@ -340,6 +340,7 @@ export function PlayerBar() {
           <FullPlayer
             onClose={() => setFullOpen(false)}
             isLiked={isLiked} onLike={toggleLike} onDownload={handleDownload}
+            isPremium={isPremium} setIsPremiumModalOpen={setIsPremiumModalOpen} setPremiumFeatureName={setPremiumFeatureName}
           />
         )}
       </AnimatePresence>
