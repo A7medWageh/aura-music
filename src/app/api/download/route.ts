@@ -57,64 +57,10 @@ export async function GET(req: NextRequest) {
       fetchHeaders["Range"] = rangeHeader;
     }
 
-    console.log(`[DownloadAPI] Proxying audio for ${videoId}...`);
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 55000);
-
-    let res: Response;
-    try {
-      res = await fetch(streamUrl, {
-        headers: fetchHeaders,
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timeoutId);
-    }
-
-    // If URL expired (403/410), force re-resolve and retry (only for non-pre-resolved URLs)
-    if ((res.status === 403 || res.status === 410) && !preResolvedSrc) {
-      console.warn(`[DownloadAPI] URL expired (${res.status}) for ${videoId} — re-resolving...`);
-      streamUrlCache.delete(videoId);
-      const freshUrl = await resolveStream(videoId);
-      streamUrlCache.set(videoId, { url: freshUrl, expiresAt: Date.now() + 3 * 60 * 60 * 1000 });
-
-      const retryController = new AbortController();
-      const retryTimeout = setTimeout(() => retryController.abort(), 55000);
-      try {
-        res = await fetch(freshUrl, {
-          headers: fetchHeaders,
-          signal: retryController.signal,
-        });
-      } finally {
-        clearTimeout(retryTimeout);
-      }
-    }
-
-    if (!res.ok || !res.body) {
-      throw new Error(`Upstream fetch failed with status ${res.status} for ${streamUrl.substring(0, 80)}...`);
-    }
-
-    // Build response headers
-    const responseHeaders: HeadersInit = {
-      "Content-Type": res.headers.get("content-type") || "audio/mpeg",
-      "Content-Disposition": `inline; filename="${encodeURIComponent(title)}.mp3"`,
-      "Cache-Control": "public, max-age=3600",
-      "Accept-Ranges": "bytes",
-      "Access-Control-Allow-Origin": "*",
-    };
-
-    const contentRange = res.headers.get("content-range");
-    const contentLength = res.headers.get("content-length");
-    if (contentRange) responseHeaders["Content-Range"] = contentRange;
-    if (contentLength) responseHeaders["Content-Length"] = contentLength;
-
-    const status = rangeHeader && contentRange ? 206 : res.status === 206 ? 206 : 200;
-
-    return new NextResponse(res.body, {
-      status,
-      headers: responseHeaders,
-    });
+    // Instead of buffering the stream in Node.js, we redirect to the Edge Proxy
+    // The Edge Proxy handles the byte streaming without memory limits or buffering
+    const edgeProxyUrl = `/api/proxy?src=${encodeURIComponent(streamUrl)}`;
+    return NextResponse.redirect(new URL(edgeProxyUrl, req.url));
   } catch (error: any) {
     console.error("[DownloadAPI] Error:", error.message);
 
