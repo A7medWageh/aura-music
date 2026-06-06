@@ -33,14 +33,22 @@ export async function GET(req: NextRequest, { params }: Params) {
     }
 
     const resolved = await resolveStreamUrl(videoId);
-    // Client is deployed on Railway, so direct URLs to googlevideo/piped are allowed
-    // We return the raw URL directly so it plays instantly in the frontend without proxying.
-    const streamUrl = resolved.url;
+    let streamUrl: string;
+    const isDirect = resolved.directPlay && !resolved.url.includes("googlevideo.com");
+
+    if (isDirect) {
+      // Piped / Invidious URLs can be played directly by the browser from any IP
+      streamUrl = resolved.url;
+    } else {
+      // googlevideo.com URLs (from youtubei.js or yt-dlp) are IP-locked.
+      // Since we are on Railway, we can just proxy the stream using a fast fetch instead of spawning yt-dlp!
+      streamUrl = `/api/stream-proxy?url=${encodeURIComponent(resolved.url)}`;
+    }
 
     return NextResponse.json({
       streamUrl,
       source: resolved.source,
-      directPlay: true,
+      directPlay: isDirect,
       durationSec: resolved.durationSec,
     });
   } catch (error) {

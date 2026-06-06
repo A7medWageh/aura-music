@@ -15,8 +15,13 @@ async function downloadAudioBlob(
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
-      // Fetch direct URL from our fast resolver
-      let url = `/api/download?videoId=${encodeURIComponent(videoId)}&title=${encodeURIComponent(title)}&attempt=${attempt}`;
+      // Fetch direct URL from our fast resolver instead of relying on yt-dlp
+      const resolveRes = await fetch(`/api/stream/${videoId}`);
+      if (!resolveRes.ok) throw new Error(`Stream resolve failed: ${resolveRes.status}`);
+      const resolvedData = await resolveRes.json();
+      
+      let url = resolvedData.streamUrl;
+      if (!url) throw new Error("No stream URL returned");
 
       const res = await fetch(url, { cache: "no-store", signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
