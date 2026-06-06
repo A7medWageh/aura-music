@@ -24,6 +24,12 @@
 
 import { getRedisClient } from "../redis";
 import { resolveStream as ytjsResolveStream } from "../youtubei.js";
+import { exec } from "child_process";
+import { promisify } from "util";
+import * as path from "path";
+
+const execPromise = promisify(exec);
+const YT_DLP_PATH = process.env.YT_DLP_PATH || path.join(process.cwd(), "yt-dlp-master", "yt-dlp.cmd");
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export interface StreamResult {
@@ -112,11 +118,8 @@ async function saveToCache(videoId: string, result: StreamResult): Promise<void>
 // ONLY verified-working instances with good uptime (2025-04)
 // Piped CDN URLs are served by Piped infrastructure — not googlevideo!
 const PIPED_APIS = [
-  "https://api.piped.private.coffee",   // 🇦🇹 90% uptime (best)
-  "https://pipedapi.kavin.rocks",        // original — sometimes slow
-  "https://pipedapi.adminforge.de",
-  "https://piped-api.garudalinux.org",
-  "https://api.piped.yt",
+  "https://api.piped.private.coffee",   // 🇦🇹 Working
+  "https://pipedapi.kescher.at",        // Backup
 ];
 
 async function resolveViaPiped(videoId: string): Promise<StreamResult> {
@@ -270,6 +273,20 @@ async function resolveViaYoutubei(videoId: string): Promise<StreamResult> {
   };
 }
 
+// ─── Layer 5: yt-dlp ──────────────────────────────────────────────────────────
+async function resolveViaYtDlp(videoId: string): Promise<StreamResult> {
+  const { stdout } = await execPromise(
+    `"${YT_DLP_PATH}" -g -f "bestaudio[ext=m4a]/bestaudio" --no-playlist "https://www.youtube.com/watch?v=${videoId}"`
+  );
+  const url = stdout.trim();
+  if (!url) throw new Error("yt-dlp: empty url");
+  return {
+    url,
+    directPlay: false, // always proxy googlevideo.com urls
+    source: "youtubei", // mock as youtubei so it's treated the same
+  };
+}
+
 // ─── Main export ──────────────────────────────────────────────────────────────
 export async function resolveStreamUrl(videoId: string): Promise<StreamResult> {
   const start = Date.now();
@@ -291,9 +308,8 @@ export async function resolveStreamUrl(videoId: string): Promise<StreamResult> {
   try {
     const result = await raceAll(
       [
+        resolveViaYtDlp(videoId).catch(() => { throw new Error('yt-dlp failed') }),
         resolveViaYoutubei(videoId).then(async (r) => { 
-          // Artificially delay youtubei so that Piped/Cobalt/Invidious can win the race if they are fast.
-          // This ensures we get directPlay=true URLs and can 302 redirect the browser to the CDN directly!
           await new Promise(res => setTimeout(res, 1500)); 
           return r; 
         }).catch(() => { throw new Error('youtubei failed') }),
