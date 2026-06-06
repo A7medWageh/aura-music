@@ -1,16 +1,16 @@
 "use client";
 
-import { Home, Compass, Search, Library, Heart } from "lucide-react";
+import { Home, Search, Library, User, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
 
 const navItems = [
   { name: "الرئيسية", icon: Home, href: "/" },
-  { name: "اكتشف", icon: Compass, href: "/discover" },
   { name: "بحث", icon: Search, href: "/search" },
+  { name: "ميكس AI", icon: Sparkles, href: "/ai-dj" },
   { name: "مكتبتي", icon: Library, href: "/library" },
-  { name: "المفضلة", icon: Heart, href: "/favorites" },
+  { name: "حسابي", icon: User, href: "/profile" },
 ];
 
 /**

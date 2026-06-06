@@ -3,7 +3,8 @@
 import {
   Play, Pause, SkipForward, SkipBack, Shuffle,
   Repeat, Volume2, VolumeX, Heart, DownloadCloud,
-  ChevronDown, Maximize2, ListMusic, Share2, CheckCircle2, Crown
+  ChevronDown, Maximize2, ListMusic, Share2, CheckCircle2, Crown,
+  MoreHorizontal, Settings, AlignRight, Mic2
 } from "lucide-react";
 import { usePlayer } from "@/state/playerContext";
 import { useEffect, useRef, useState } from "react";
@@ -125,6 +126,8 @@ function FullPlayer({
 }) {
   const { state, currentSong, togglePlay, next, prev, seekTo, setVolume, cycleRepeat, setShuffle, setHighQuality } = usePlayer();
   const art = currentSong?.thumbnailUrl || currentSong?.metadata?.thumbnailUrl;
+  const [isAiMix, setIsAiMix] = useState(false);
+  const [activeTab, setActiveTab] = useState("lyrics"); // lyrics, queue, audio
 
   return (
     <motion.div
@@ -132,122 +135,157 @@ function FullPlayer({
       animate={{ y: 0 }}
       exit={{ y: "100%" }}
       transition={{ type: "spring", damping: 28, stiffness: 220 }}
-      className="fixed inset-0 z-50 flex flex-col overflow-hidden"
+      className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-[#4A2C1D]"
     >
       {/* Blurred BG */}
       <div className="absolute inset-0">
-        <img src={getProxyUrl(art)} alt="" className="w-full h-full object-cover scale-110 blur-3xl opacity-40" />
-        <div className="absolute inset-0 bg-black/70" />
+        <img src={getProxyUrl(art)} alt="" className="w-full h-full object-cover scale-125 blur-[80px] opacity-40 mix-blend-overlay" />
+        <div className="absolute inset-0 bg-gradient-to-b from-black/30 via-black/40 to-black/80" />
       </div>
 
-      <div className="relative z-10 flex flex-col h-full px-8 pt-6 pb-10 max-w-xl mx-auto w-full">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-10">
+      <div className="relative z-10 flex flex-col h-full w-full max-w-md mx-auto">
+        
+        {/* Top Bar */}
+        <div className="flex items-center justify-between px-6 pt-[env(safe-area-inset-top,40px)] pb-4">
+          <div className="flex items-center gap-3">
+            <button 
+              onClick={() => setIsAiMix(!isAiMix)} 
+              className={`w-12 h-6 rounded-full p-0.5 transition-colors duration-300 ease-in-out flex items-center shadow-inner ${isAiMix ? 'bg-white' : 'bg-white/20'}`}
+              dir="ltr"
+            >
+              <div className={`w-5 h-5 rounded-full bg-[#4A2C1D] shadow-md transition-transform duration-300 ${isAiMix ? 'translate-x-6' : 'translate-x-0'}`} />
+            </button>
+            <span className="text-white font-bold text-[15px]">ميكس AI</span>
+          </div>
           <button onClick={onClose} className="p-2 rounded-full hover:bg-white/10 transition">
-            <ChevronDown className="w-7 h-7 text-white" />
+            <ChevronDown className="w-8 h-8 text-white" />
           </button>
-          <div className="text-center">
-            <p className="text-xs text-white/50 uppercase tracking-widest">يتم التشغيل الآن</p>
+        </div>
+
+        {/* Header Info (Art + Texts + Actions) */}
+        <div className="flex items-start justify-between px-6 py-2">
+          {/* Actions (Left) */}
+          <div className="flex gap-4 items-center mt-2">
+            <button className="p-2 hover:bg-white/10 rounded-full transition"><MoreHorizontal className="text-white w-6 h-6"/></button>
+            <button className="p-2 hover:bg-white/10 rounded-full transition"><Share2 className="text-white w-5 h-5"/></button>
           </div>
-          <button className="p-2 rounded-full hover:bg-white/10 transition">
-            <Share2 className="w-5 h-5 text-white/70" />
-          </button>
-        </div>
-
-        {/* Album Art */}
-        <motion.div
-          key={currentSong?.songId}
-          initial={{ scale: 0.9, opacity: 0 }}
-          animate={{ scale: state.isPlaying ? 1 : 0.9, opacity: 1 }}
-          transition={{ duration: 0.4, ease: "easeOut" }}
-          className="mx-auto w-72 h-72 md:w-80 md:h-80 rounded-3xl overflow-hidden shadow-[0_30px_80px_rgba(0,0,0,0.6)] mb-10"
-        >
-          <img src={getProxyUrl(art)} alt={currentSong?.title} className="w-full h-full object-cover" />
-        </motion.div>
-
-        {/* Song Info + Like */}
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex-1 min-w-0">
-            <h2 className="text-2xl font-black truncate text-white">{currentSong?.title || "—"}</h2>
-            <p className="text-sm text-white/60 truncate mt-1">{currentSong?.artist || "فنان"}</p>
-          </div>
-          <button onClick={onLike} className="ml-4 shrink-0">
-            <Heart className={`w-7 h-7 transition-colors ${isLiked ? "text-pink-500 fill-current" : "text-white/40 hover:text-white"}`} />
-          </button>
-        </div>
-
-        {/* Seek Bar */}
-        <div className="mb-2">
-          <SeekBar progress={state.currentTime} duration={state.duration} onSeek={seekTo} height="h-1.5" />
-          <div className="flex justify-between mt-2 text-xs text-white/40 tabular-nums">
-            <span>{fmtTime(state.currentTime)}</span>
-            <span>{fmtTime(state.duration)}</span>
-          </div>
-        </div>
-
-        {/* Controls */}
-        <div className="flex items-center justify-between mt-4">
-          <button onClick={() => setShuffle(!state.shuffle)}
-            className={`p-3 rounded-full transition-colors ${state.shuffle ? "text-indigo-400" : "text-white/40 hover:text-white"}`}>
-            <Shuffle className="w-5 h-5" />
-          </button>
-          <button onClick={prev} className="p-3 rounded-full text-white hover:text-white/80 transition">
-            <SkipBack className="w-7 h-7 fill-current" />
-          </button>
-
-          {/* Play / Pause */}
-          <button
-            onClick={togglePlay}
-            className="w-18 h-18 w-[72px] h-[72px] rounded-full bg-white flex items-center justify-center shadow-2xl hover:scale-105 active:scale-95 transition-transform"
-          >
-            {state.isBuffering ? (
-              <div className="flex flex-col items-center">
-                 <div className="w-7 h-7 border-3 border-indigo-500/30 border-t-indigo-500 rounded-full animate-spin" />
-              </div>
-            ) : state.isPlaying ? (
-              <Pause className="w-7 h-7 text-black fill-current" />
-            ) : (
-              <Play className="w-7 h-7 text-black fill-current ml-1" />
-            )}
-          </button>
-
-          <button onClick={next} className="p-3 rounded-full text-white hover:text-white/80 transition">
-            <SkipForward className="w-7 h-7 fill-current" />
-          </button>
-          <button onClick={cycleRepeat}
-            className={`p-3 rounded-full relative transition-colors ${state.repeat !== "off" ? "text-indigo-400" : "text-white/40 hover:text-white"}`}>
-            <Repeat className="w-5 h-5" />
-            {state.repeat === "one" && <span className="absolute -top-0 -right-0 text-[8px] font-black bg-indigo-500 text-white w-4 h-4 rounded-full flex items-center justify-center">1</span>}
-          </button>
-        </div>
-
-        {/* Volume + Download + HQ */}
-        <div className="flex items-center gap-4 mt-8">
-          <VolumeX className="w-4 h-4 text-white/40" />
-          <input type="range" min="0" max="1" step="0.01" value={state.volume}
-            onChange={e => setVolume(parseFloat(e.target.value))}
-            className="flex-1 accent-white h-1 cursor-pointer" />
-          <Volume2 className="w-4 h-4 text-white/40" />
           
-          <button onClick={() => {
-            if (!isPremium) {
-              setPremiumFeatureName("جودة الصوت الخارقة (HQ)");
-              setIsPremiumModalOpen(true);
-            } else {
-              const newVal = !state.isHighQuality;
-              setHighQuality(newVal);
-              showToast(newVal ? "تم تفعيل جودة الصوت الخارقة 🎧✨" : "تم إيقاف الجودة الخارقة", "hq");
-            }
-          }} className={`ml-2 p-2 rounded-full transition flex items-center gap-1 relative ${state.isHighQuality ? "bg-gradient-to-tr from-yellow-400/20 to-orange-500/20 text-yellow-400 shadow-[0_0_15px_rgba(234,179,8,0.4)]" : "hover:bg-white/10 text-white/50 hover:text-white"}`}>
-             <span className="text-[10px] font-black border border-current px-1 rounded">HQ</span>
-             {!isPremium && <Crown className="w-3 h-3 text-amber-500 absolute -top-1 -right-1 drop-shadow-md" />}
-          </button>
-          
-          <button onClick={onDownload} className="p-2 rounded-full hover:bg-white/10 text-white/50 hover:text-white transition relative">
-            <DownloadCloud className="w-5 h-5" />
-            {!isPremium && <Crown className="w-3 h-3 text-amber-500 absolute -top-1 -right-1 drop-shadow-md" />}
-          </button>
+          {/* Art & Info (Right) */}
+          <div className="flex items-center gap-4 text-right" dir="rtl">
+            <div className="flex flex-col justify-center">
+              <h2 className="text-white font-black text-xl leading-tight truncate w-[160px]">{currentSong?.title || "—"}</h2>
+              <p className="text-white/70 text-sm font-medium mt-1 truncate w-[160px]">{currentSong?.artist || "فنان"}</p>
+            </div>
+            <div className="w-[72px] h-[72px] rounded-xl overflow-hidden shadow-2xl shrink-0 border border-white/10">
+              <img src={getProxyUrl(art)} className="w-full h-full object-cover" />
+            </div>
+          </div>
         </div>
+
+        {/* Center Area (Lyrics) */}
+        <div className="flex-1 flex flex-col justify-center px-8 text-center space-y-6 overflow-hidden relative">
+           {/* Mock Lyrics View */}
+           <h1 className="text-white font-black text-[28px] leading-[1.4] drop-shadow-lg">
+             ليه سكتي ليه بتخبي عن قلبي ايه ؟
+           </h1>
+           <h2 className="text-white/70 font-bold text-[22px] leading-tight drop-shadow-md">
+             حضني بينده عليكي و انتي بعيده عليه
+           </h2>
+           <h3 className="text-white/50 font-bold text-[19px] leading-tight">
+             مين غيري مين يفهم بنظرة عين ؟
+           </h3>
+           
+           <div className="space-y-4 pt-6 pb-4 opacity-50">
+             <div className="h-8 bg-white/20 rounded-full w-[200px] mx-auto blur-[2px]" />
+             <div className="h-8 bg-white/10 rounded-full w-[260px] mx-auto blur-[2px]" />
+             <div className="h-8 bg-white/5 rounded-full w-[220px] mx-auto blur-[2px]" />
+             <div className="h-8 bg-white/5 rounded-full w-[140px] ml-auto mr-12 blur-[2px]" />
+           </div>
+
+           <div className="absolute bottom-8 left-0 right-0 flex justify-center z-10">
+             <button className="bg-white text-black font-black py-3.5 px-8 rounded-full text-sm shadow-[0_10px_30px_rgba(0,0,0,0.3)] hover:scale-105 transition-transform">
+               اطلع على الكلمات كاملةً
+             </button>
+           </div>
+           
+           <div className="absolute bottom-12 left-6">
+             <button className="w-10 h-10 rounded-full bg-white/10 border border-white/20 flex items-center justify-center text-white/50 hover:text-white transition-colors">
+               <Mic2 className="w-5 h-5" />
+             </button>
+           </div>
+        </div>
+
+        {/* Bottom Controls Area */}
+        <div className="px-6 pb-[env(safe-area-inset-bottom,20px)] pt-2">
+          {/* Seek Bar */}
+          <div className="mb-6 px-2">
+            <SeekBar progress={state.currentTime} duration={state.duration} onSeek={seekTo} height="h-1" rtl={false} />
+            <div className="flex justify-between mt-3 text-[11px] font-bold text-white/50 tabular-nums" dir="ltr">
+               <span>{fmtTime(state.currentTime)}</span>
+               <span>-{fmtTime(state.duration - state.currentTime)}</span>
+            </div>
+          </div>
+
+          {/* Main Playback Controls */}
+          <div className="flex items-center justify-between px-2 mb-8">
+            <button onClick={onLike} className="p-2">
+              <Heart className={`w-7 h-7 transition-colors ${isLiked ? "text-white fill-current" : "text-white/60 hover:text-white"}`} />
+            </button>
+            
+            <div className="flex items-center gap-7">
+               <button onClick={prev} className="active:scale-90 transition-transform">
+                 <SkipBack className="text-white w-9 h-9 fill-current" />
+               </button>
+               
+               <button 
+                 onClick={togglePlay} 
+                 className="w20 h-20 w-[72px] h-[72px] bg-white rounded-full flex items-center justify-center shadow-[0_10px_40px_rgba(255,255,255,0.2)] active:scale-95 transition-transform"
+               >
+                 {state.isBuffering ? (
+                    <div className="w-8 h-8 border-4 border-black/10 border-t-black rounded-full animate-spin" />
+                 ) : state.isPlaying ? (
+                    <Pause className="text-[#4A2C1D] w-9 h-9 fill-current" />
+                 ) : (
+                    <Play className="text-[#4A2C1D] w-9 h-9 fill-current ml-1" />
+                 )}
+               </button>
+               
+               <button onClick={next} className="active:scale-90 transition-transform">
+                 <SkipForward className="text-white w-9 h-9 fill-current" />
+               </button>
+            </div>
+            
+            <button onClick={onDownload} className="p-2 relative">
+              <DownloadCloud className="text-white/60 hover:text-white w-7 h-7" />
+              {!isPremium && <Crown className="w-3 h-3 text-amber-400 absolute top-1 right-1 drop-shadow-md" />}
+            </button>
+          </div>
+
+          {/* Bottom Tabs */}
+          <div className="flex items-center justify-between px-2 border-t border-white/10 pt-5">
+            <button 
+              onClick={() => setActiveTab("audio")}
+              className={`flex items-center gap-2 font-bold text-sm transition-colors ${activeTab === 'audio' ? 'text-white' : 'text-white/50'}`}
+            >
+               <Settings className="w-5 h-5" /> الصوت
+            </button>
+            
+            <button 
+              onClick={() => setActiveTab("queue")}
+              className={`flex items-center gap-2 font-bold text-sm transition-colors ${activeTab === 'queue' ? 'text-white' : 'text-white/50'}`}
+            >
+               <ListMusic className="w-5 h-5" /> قائمة الاستماع
+            </button>
+            
+            <button 
+              onClick={() => setActiveTab("lyrics")}
+              className={`flex items-center gap-2 font-bold text-sm px-4 py-2 rounded-full transition-all ${activeTab === 'lyrics' ? 'bg-white text-black' : 'text-white/50 hover:bg-white/10'}`}
+            >
+               <AlignRight className="w-5 h-5" /> كلمات
+            </button>
+          </div>
+        </div>
+
       </div>
     </motion.div>
   );

@@ -196,13 +196,10 @@ function JobRow({ job }: { job: DownloadJob }) {
 
   const progressSubText =
     job.totalBytes
-      ? `${((job.progressBytes || 0) / (1024 * 1024)).toFixed(1)} / ${(
-          job.totalBytes /
-          (1024 * 1024)
-        ).toFixed(1)} MB`
+      ? `${((job.progressBytes || 0) / (1024 * 1024)).toFixed(2)} / ${(job.totalBytes / (1024 * 1024)).toFixed(2)} MB`
       : job.progressBytes && job.progressBytes > 0
-      ? `${((job.progressBytes || 0) / (1024 * 1024)).toFixed(1)} MB`
-      : `${job.done}/${job.total}`;
+      ? `تم تحميل ${((job.progressBytes || 0) / (1024 * 1024)).toFixed(2)} MB`
+      : `جاري بدء التحميل...`;
 
   return (
     <div className="px-6 py-6 hover:bg-white/[0.02] transition-colors relative group text-right" dir="rtl">
@@ -261,9 +258,9 @@ function JobRow({ job }: { job: DownloadJob }) {
           <motion.div
             className={`absolute left-0 top-0 h-full rounded-full ${
               job.status === "done" ? "bg-emerald-500" : job.status === "error" ? "bg-red-500" : "bg-cyan-400 shadow-[0_0_15px_rgba(0,229,255,0.6)]"
-            }`}
+            } ${job.status === "downloading" && job.progressBytes && !job.totalBytes ? "w-full animate-pulse opacity-50" : ""}`}
             initial={{ width: 0 }}
-            animate={{ width: `${pct}%` }}
+            animate={{ width: job.status === "downloading" && job.progressBytes && !job.totalBytes ? "100%" : `${pct}%` }}
             transition={{ duration: 0.5 }}
           />
         </div>
