@@ -21,7 +21,11 @@ async function downloadAudioBlob(
       const res = await fetch(url, { cache: "no-store", signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-      const contentLength = parseInt(res.headers.get("content-length") || "0");
+      const contentLength = parseInt(
+        res.headers.get("x-original-content-length") || 
+        res.headers.get("content-length") || 
+        "0"
+      );
       if (!onProgress) {
         updateJob(jobId, { totalBytes: contentLength, progressBytes: 0 });
       }

@@ -87,6 +87,11 @@ export async function GET(req: NextRequest) {
     const responseHeaders = new Headers(response.headers);
     responseHeaders.set("Access-Control-Allow-Origin", "*");
     
+    // Vercel strips Content-Length on chunked streams, so we add our own header
+    const cl = response.headers.get("content-length");
+    if (cl) responseHeaders.set("X-Original-Content-Length", cl);
+    responseHeaders.set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges, X-Original-Content-Length");
+    
     // We return the raw ReadableStream from fetch directly.
     // Next.js handles piping it to the client chunk-by-chunk.
     return new NextResponse(response.body, {

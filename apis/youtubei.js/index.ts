@@ -1,4 +1,5 @@
 import { Innertube, UniversalCache } from "youtubei.js";
+import { JSDOM } from "jsdom";
 import * as dns from "node:dns";
 
 // Fix for ENOTFOUND errors in environments where IPv6 is flaky
@@ -18,6 +19,14 @@ let ytInitPromise: Promise<Innertube> | null = null;
 async function getYTWeb(): Promise<Innertube> {
   if (ytWeb) return ytWeb;
   if (!ytInitPromise) {
+    // Setup jsdom environment for deciphering
+    const dom = new JSDOM();
+    Object.assign(globalThis, {
+      window: dom.window,
+      document: dom.window.document,
+      DOMParser: dom.window.DOMParser,
+    });
+
     ytInitPromise = Innertube.create({
       cache: new UniversalCache(false),
       generate_session_locally: true,

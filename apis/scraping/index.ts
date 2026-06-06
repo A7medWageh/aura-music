@@ -118,8 +118,10 @@ async function saveToCache(videoId: string, result: StreamResult): Promise<void>
 // ONLY verified-working instances with good uptime (2025-04)
 // Piped CDN URLs are served by Piped infrastructure — not googlevideo!
 const PIPED_APIS = [
-  "https://api.piped.private.coffee",   // 🇦🇹 Working
-  "https://pipedapi.kescher.at",        // Backup
+  "https://api.piped.projectsegfau.lt",
+  "https://pipedapi.in.projectsegfau.lt",
+  "https://pipedapi.lunar.icu",
+  "https://piapi.ggtyler.dev",
 ];
 
 async function resolveViaPiped(videoId: string): Promise<StreamResult> {
