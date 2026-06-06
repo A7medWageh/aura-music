@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { spawn } from "child_process";
+import { Readable } from "stream";
 import * as path from "path";
 
 export const maxDuration = 60;
@@ -27,46 +28,24 @@ export async function GET(req: NextRequest) {
     // Using iOS client to bypass YouTube's heavy throttling (speeds up to 500KB/s instead of 18KB/s)
     const ytDlp = spawn(YT_DLP_PATH, [
       "-o", "-", 
-      "-f", "bestaudio[ext=m4a]/bestaudio", 
-      "--extractor-args", "youtube:client=ios",
+      "-f", "bestaudio[ext=m4a]/bestaudio/best",
       "--no-playlist", 
+      "--extractor-args", "youtube:client=ios",
       youtubeUrl
-    ]);
-
-    // Create a ReadableStream from the child process stdout
-    const stream = new ReadableStream({
-      start(controller) {
-        ytDlp.stdout.on("data", (chunk) => {
-          controller.enqueue(chunk);
-        });
-
-        ytDlp.stdout.on("end", () => {
-          controller.close();
-        });
-
-        ytDlp.stderr.on("data", (chunk) => {
-          // Log errors but don't close the stream unless the process fails
-          console.log(`[yt-dlp] ${chunk.toString().trim()}`);
-        });
-
-        ytDlp.on("error", (err) => {
-          console.error("[yt-dlp error]", err);
-          controller.error(err);
-        });
-
-        ytDlp.on("close", (code) => {
-          if (code !== 0) {
-            console.error(`[yt-dlp] Process exited with code ${code}`);
-            try { controller.error(new Error(`Exit code ${code}`)); } catch {}
-          }
-        });
-      },
-      cancel() {
-        // Kill the process if the client aborts the request
-        console.log(`[yt-dlp] Client aborted download for ${videoId}, killing process...`);
-        ytDlp.kill("SIGKILL");
-      }
+    ], {
+      shell: process.platform === "win32"
     });
+
+    ytDlp.on("error", (err) => {
+      console.error("[yt-dlp] Spawn error:", err);
+    });
+
+    req.signal.addEventListener("abort", () => {
+      console.log(`[yt-dlp] Client aborted download for ${videoId}, killing process...`);
+      ytDlp.kill("SIGKILL");
+    });
+
+    const webStream = Readable.toWeb(ytDlp.stdout as any);
 
     // Provide a hardcoded Content-Length estimate (e.g. 3.5MB) so the frontend downloader progress bar doesn't break
     // Since yt-dlp piped stdout has no Content-Length
@@ -76,8 +55,9 @@ export async function GET(req: NextRequest) {
     headers.set("Access-Control-Allow-Origin", "*");
     headers.set("X-Original-Content-Length", (3.5 * 1024 * 1024).toString()); 
     headers.set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges, X-Original-Content-Length");
+    headers.set("X-Aura-Test", "Hello-World");
 
-    return new NextResponse(stream, { headers });
+    return new NextResponse(webStream as any, { headers });
 
   } catch (error: any) {
     console.error("[DownloadAPI] Error:", error.message);

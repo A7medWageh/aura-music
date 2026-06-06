@@ -36,10 +36,13 @@ async function downloadAudioBlob(
       const chunks: Uint8Array[] = [];
       let receivedBytes = 0;
 
+      console.log(`[Download] Starting read loop for ${title}...`);
+      let chunksRead = 0;
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         chunks.push(value);
+        chunksRead++;
         const delta = value.length;
         receivedBytes += delta;
         
@@ -49,9 +52,11 @@ async function downloadAudioBlob(
           updateJob(jobId, { progressBytes: receivedBytes });
         }
       }
+      console.log(`[Download] Finished read loop for ${title}. Read ${chunksRead} chunks, ${receivedBytes} bytes.`);
 
       const blob = new Blob(chunks as any, { type: "audio/mpeg" });
       await storeAudioBlob(songId, blob);
+      console.log(`[Download] Stored ${title} successfully in DB!`);
       return true;
     } catch (err: any) {
       if (err.name === "AbortError") {
