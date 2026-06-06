@@ -25,7 +25,7 @@ export async function checkTunnelRedirect(req: Request): Promise<NextResponse | 
       
       // We use 302 redirect so the client directly hits the tunnel,
       // saving Cloud bandwidth and bypassing IP blocks.
-      return NextResponse.redirect(targetUrl);
+      return NextResponse.redirect(targetUrl, 302);
     }
   } catch (err) {
     console.error("[TunnelProxy] Error fetching tunnel_url:", err);

@@ -291,7 +291,12 @@ export async function resolveStreamUrl(videoId: string): Promise<StreamResult> {
   try {
     const result = await raceAll(
       [
-        resolveViaYoutubei(videoId).catch(() => { throw new Error('youtubei failed') }),
+        resolveViaYoutubei(videoId).then(async (r) => { 
+          // Artificially delay youtubei so that Piped/Cobalt/Invidious can win the race if they are fast.
+          // This ensures we get directPlay=true URLs and can 302 redirect the browser to the CDN directly!
+          await new Promise(res => setTimeout(res, 1500)); 
+          return r; 
+        }).catch(() => { throw new Error('youtubei failed') }),
         resolveViaPiped(videoId).catch(() => { throw new Error('piped failed') }),
         resolveViaCobalt(videoId).catch(() => { throw new Error('cobalt failed') }),
         resolveViaInvidiousProxy(videoId).catch(() => { throw new Error('invidious proxy failed') })
