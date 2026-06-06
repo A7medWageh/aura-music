@@ -270,17 +270,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
        }
     }
 
-    try {
-      const res = await fetch(`/api/stream/${videoId}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.streamUrl) return data.streamUrl;
-      }
-    } catch (e) {
-      console.error("[Player] Failed to resolve fast stream:", e);
-    }
-
-    // 3. Fallback
+    // Reverted to use /api/download instantly to use yt-dlp as requested by user
     return `/api/download?videoId=${encodeURIComponent(videoId)}&t=${Date.now()}`;
   };
 

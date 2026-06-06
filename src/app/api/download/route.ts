@@ -25,12 +25,14 @@ export async function GET(req: NextRequest) {
     const youtubeUrl = `https://www.youtube.com/watch?v=${videoId}`;
     
     // Spawn yt-dlp to stream directly to stdout
-    // Using iOS client to bypass YouTube's heavy throttling (speeds up to 500KB/s instead of 18KB/s)
+    // Optimized for maximum startup speed
     const ytDlp = spawn(YT_DLP_PATH, [
       "-o", "-", 
-      "-f", "bestaudio[ext=m4a]/bestaudio/best",
+      "-f", "140", // Use format 140 directly to skip format parsing/evaluation
       "--no-playlist", 
-      "--extractor-args", "youtube:client=ios",
+      "--no-warnings", 
+      "--no-cache-dir", // Skip checking python cache directory for faster startup
+      "--extractor-args", "youtube:player_client=ios,android", // Fast clients to bypass bot detection
       youtubeUrl
     ], {
       shell: process.platform === "win32"
