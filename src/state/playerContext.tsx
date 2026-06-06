@@ -270,9 +270,17 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
        }
     }
 
-    // 2. We skip /api/stream pre-fetching and return /api/download instantly.
-    // The backend uses the ultra-fast scraping engine (Piped/Cobalt) and redirects 
-    // the browser instantly (302) to the direct URL if available!
+    try {
+      const res = await fetch(`/api/stream/${videoId}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.streamUrl) return data.streamUrl;
+      }
+    } catch (e) {
+      console.error("[Player] Failed to resolve fast stream:", e);
+    }
+
+    // 3. Fallback
     return `/api/download?videoId=${encodeURIComponent(videoId)}&t=${Date.now()}`;
   };
 
