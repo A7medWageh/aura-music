@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { resolveStreamUrl } from "@apis/scraping";
-
-// In-memory resolved URL cache
-const streamUrlCache = new Map<string, { url: string; expiresAt: number; directPlay: boolean }>();
+import { spawn } from "child_process";
+import * as path from "path";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
 import { checkTunnelRedirect } from "@/utils/tunnelProxy";
+
+const YT_DLP_PATH = process.env.YT_DLP_PATH || path.join(process.cwd(), "yt-dlp-master", "yt-dlp.cmd");
 
 export async function GET(req: NextRequest) {
   const redirect = await checkTunnelRedirect(req);
@@ -15,99 +15,72 @@ export async function GET(req: NextRequest) {
 
   const { searchParams } = new URL(req.url);
   const videoId = searchParams.get("videoId");
-  const title = searchParams.get("title") || "song";
-  const artist = searchParams.get("artist") || "";
-  // Pre-resolved URL passed from /api/stream (Piped/Invidious)
-  const preResolvedSrc = searchParams.get("src");
 
   if (!videoId) {
     return NextResponse.json({ error: "Missing videoId" }, { status: 400 });
   }
 
   try {
-    let streamUrl: string;
-    let isDirectPlay = false;
+    const youtubeUrl = `https://www.youtube.com/watch?v=${videoId}`;
+    
+    // Spawn yt-dlp to stream directly to stdout
+    // Using iOS client to bypass YouTube's heavy throttling (speeds up to 500KB/s instead of 18KB/s)
+    const ytDlp = spawn(YT_DLP_PATH, [
+      "-o", "-", 
+      "-f", "bestaudio[ext=m4a]/bestaudio", 
+      "--extractor-args", "youtube:client=ios",
+      "--no-playlist", 
+      youtubeUrl
+    ]);
 
-    if (preResolvedSrc) {
-      // Use the pre-resolved URL directly (from Piped or Invidious)
-      streamUrl = decodeURIComponent(preResolvedSrc);
-      console.log(`[DownloadAPI] Using pre-resolved URL for ${videoId}`);
-    } else {
-      // Use the new multi-layer ultra-fast scraping engine
-      const attempt = parseInt(searchParams.get("attempt") || "0");
-      const cached = streamUrlCache.get(videoId);
+    // Create a ReadableStream from the child process stdout
+    const stream = new ReadableStream({
+      start(controller) {
+        ytDlp.stdout.on("data", (chunk) => {
+          controller.enqueue(chunk);
+        });
 
-      if (cached && cached.expiresAt > Date.now() && attempt === 0) {
-        streamUrl = cached.url;
-        isDirectPlay = cached.directPlay;
-        console.log(`[DownloadAPI] Cache hit for ${videoId}`);
-      } else {
-        console.log(`[DownloadAPI] Resolving fast stream for ${videoId}...`);
-        const resolved = await resolveStreamUrl(videoId);
-        streamUrl = resolved.url;
-        isDirectPlay = resolved.directPlay;
-        streamUrlCache.set(videoId, { url: streamUrl, directPlay: isDirectPlay, expiresAt: Date.now() + 3 * 60 * 60 * 1000 });
+        ytDlp.stdout.on("end", () => {
+          controller.close();
+        });
+
+        ytDlp.stderr.on("data", (chunk) => {
+          // Log errors but don't close the stream unless the process fails
+          console.log(`[yt-dlp] ${chunk.toString().trim()}`);
+        });
+
+        ytDlp.on("error", (err) => {
+          console.error("[yt-dlp error]", err);
+          controller.error(err);
+        });
+
+        ytDlp.on("close", (code) => {
+          if (code !== 0) {
+            console.error(`[yt-dlp] Process exited with code ${code}`);
+            try { controller.error(new Error(`Exit code ${code}`)); } catch {}
+          }
+        });
+      },
+      cancel() {
+        // Kill the process if the client aborts the request
+        console.log(`[yt-dlp] Client aborted download for ${videoId}, killing process...`);
+        ytDlp.kill("SIGKILL");
       }
-    }
-
-    // Lightning Fast Optimization: If the URL is direct play (e.g. Cobalt, Piped), redirect the browser!
-    // The browser will stream/download directly from the CDN with ZERO overhead on our server.
-    if (isDirectPlay) {
-      console.log(`[DownloadAPI] Redirecting directly to CDN for lightning fast playback/download!`);
-      return NextResponse.redirect(streamUrl, 302);
-    }
-
-    // Proxy the audio stream, forwarding Range headers for seek support
-    const isGoogleVideo = streamUrl.includes("googlevideo.com");
-    const rangeHeader = req.headers.get("range");
-    const fetchHeaders: HeadersInit = {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-      "Accept": "audio/webm,audio/ogg,audio/wav,audio/*;q=0.9,*/*;q=0.8",
-      "Accept-Language": "en-US,en;q=0.9",
-    };
-    if (isGoogleVideo) {
-      fetchHeaders["Origin"] = "https://www.youtube.com";
-      fetchHeaders["Referer"] = "https://www.youtube.com/";
-    }
-    if (rangeHeader) {
-      fetchHeaders["Range"] = rangeHeader;
-    }
-
-    // Direct byte-stream proxying
-    // This allows instant playback by piping YouTube's chunked stream directly to the browser
-    const response = await fetch(streamUrl, {
-      headers: fetchHeaders,
-      redirect: "follow",
     });
 
-    if (!response.ok) {
-      throw new Error(`Upstream returned ${response.status} ${response.statusText}`);
-    }
+    // Provide a hardcoded Content-Length estimate (e.g. 3.5MB) so the frontend downloader progress bar doesn't break
+    // Since yt-dlp piped stdout has no Content-Length
+    const headers = new Headers();
+    headers.set("Content-Type", "audio/mp4");
+    headers.set("Transfer-Encoding", "chunked");
+    headers.set("Access-Control-Allow-Origin", "*");
+    headers.set("X-Original-Content-Length", (3.5 * 1024 * 1024).toString()); 
+    headers.set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges, X-Original-Content-Length");
 
-    const responseHeaders = new Headers(response.headers);
-    responseHeaders.set("Access-Control-Allow-Origin", "*");
-    
-    // Vercel strips Content-Length on chunked streams, so we add our own header
-    const cl = response.headers.get("content-length");
-    if (cl) responseHeaders.set("X-Original-Content-Length", cl);
-    responseHeaders.set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges, X-Original-Content-Length");
-    
-    // We return the raw ReadableStream from fetch directly.
-    // Next.js handles piping it to the client chunk-by-chunk.
-    return new NextResponse(response.body, {
-      status: response.status,
-      headers: responseHeaders,
-    });
+    return new NextResponse(stream, { headers });
+
   } catch (error: any) {
     console.error("[DownloadAPI] Error:", error.message);
-
-    if (error.name === "AbortError") {
-      return NextResponse.json(
-        { error: "Gateway Timeout", details: "Audio stream timed out" },
-        { status: 504 }
-      );
-    }
-
     return NextResponse.json(
       { error: "Failed to process audio", details: error.message },
       { status: 500 }

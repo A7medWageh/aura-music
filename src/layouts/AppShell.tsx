@@ -11,6 +11,7 @@ import { AuthMenu } from "@/components/AuthMenu";
 import { NotificationBell } from "@/components/NotificationBell";
 import { useArtistNotifications } from "@/services/notifications/artistNotifications";
 import { DownloadProgressPanel } from "@/components/DownloadProgressPanel";
+import { GlobalToaster } from "@/components/GlobalToaster";
 import { motion, AnimatePresence } from "framer-motion";
 
 function NotificationsRunner() {
@@ -61,11 +62,11 @@ export function AppShell({ children }: { children: ReactNode }) {
               borderBottom: "1px solid rgba(255,255,255,0.05)"
             }}
           >
-            <div className="flex items-center gap-2 flex-1 max-w-full">
+            <div className="flex items-center gap-2">
               <img src="/logo-v2.png" alt="Aura" className="w-8 h-8 rounded-lg shadow-sm" />
-              <SmartSearchBar />
+              <span className="font-black tracking-wider text-xl bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 to-cyan-400">AURA</span>
             </div>
-            <div className="flex items-center gap-2 mr-2 shrink-0">
+            <div className="flex items-center gap-2 shrink-0">
               <NotificationBell />
               <AuthMenu />
             </div>
@@ -88,6 +89,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
         <GlobalCommandPalette />
         <DownloadProgressPanel />
+        <GlobalToaster />
       </div>
     </PlayerProvider>
   );

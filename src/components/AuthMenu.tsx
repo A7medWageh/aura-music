@@ -98,9 +98,17 @@ export function AuthMenu() {
                     لوحة الإدارة
                   </Link>
                 )}
+                <Link
+                  href="/profile"
+                  onClick={() => setIsOpen(false)}
+                  className="w-full flex items-center gap-3 px-3 py-2 text-sm font-bold text-gray-300 hover:text-white hover:bg-white/10 rounded-xl transition-colors flex-row-reverse"
+                >
+                  <UserCircle2 className="w-4 h-4" />
+                  حسابي
+                </Link>
                 <button
                   onClick={logout}
-                  className="w-full flex items-center gap-3 px-3 py-2 text-sm font-bold text-red-400 hover:bg-red-500/10 rounded-xl transition-colors flex-row-reverse"
+                  className="w-full flex items-center gap-3 px-3 py-2 text-sm font-bold text-red-400 hover:bg-red-500/10 rounded-xl transition-colors flex-row-reverse mt-1"
                 >
                   <LogOut className="w-4 h-4" />
                   تسجيل الخروج
@@ -114,14 +122,15 @@ export function AuthMenu() {
   }
 
   return (
-    <div className="flex items-center gap-3">
+    <div className="flex items-center gap-2 sm:gap-3">
       <Link href="/login" className="hidden sm:flex items-center gap-2 px-4 py-2 rounded-full bg-white/5 hover:bg-white/10 text-sm font-bold text-white transition-colors border border-white/10">
         <LogIn className="w-4 h-4 text-gray-400" />
         تسجيل الدخول
       </Link>
-      <Link href="/signup" className="flex items-center gap-2 px-5 py-2 rounded-full bg-cyan-500 hover:bg-cyan-400 text-sm font-black text-black transition-all shadow-[0_0_15px_rgba(0,229,255,0.3)] hover:shadow-[0_0_25px_rgba(0,229,255,0.5)]">
-        <UserPlus className="w-4 h-4" />
-        حساب جديد
+      <Link href="/signup" className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-5 py-1.5 sm:py-2 rounded-full bg-cyan-500 hover:bg-cyan-400 text-xs sm:text-sm font-black text-black transition-all shadow-[0_0_15px_rgba(0,229,255,0.3)] hover:shadow-[0_0_25px_rgba(0,229,255,0.5)]">
+        <UserPlus className="w-4 h-4 sm:w-4 sm:h-4" />
+        <span className="hidden sm:inline">حساب جديد</span>
+        <span className="sm:hidden">تسجيل</span>
       </Link>
     </div>
   );

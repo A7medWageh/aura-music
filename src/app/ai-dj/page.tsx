@@ -1,9 +1,10 @@
 "use client";
 
 import { usePlayer } from "@/state/playerContext";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Sparkles, Play, Loader2, Music4, Lock } from "lucide-react";
+import { useToastStore } from "@/state/toastStore";
 
 const moods = [
   { id: "روقان", label: "روقان وقهوة", color: "from-amber-400 to-orange-500", shadow: "shadow-orange-500/30" },
@@ -15,22 +16,19 @@ const moods = [
 
 export default function SmartDJPage() {
   const { setQueue, playNow } = usePlayer();
+  const { addToast } = useToastStore();
   const [loadingMood, setLoadingMood] = useState<string | null>(null);
   const [isPremium, setIsPremium] = useState<boolean>(true);
 
-  if (typeof window !== "undefined" && !isPremium) {
-     // initial render check bypass
-  }
-
-  useState(() => {
+  useEffect(() => {
     if (typeof window !== "undefined") {
       setIsPremium(localStorage.getItem("aura_user_tier") === "premium");
     }
-  });
+  }, []);
 
   const startMix = async (moodId: string) => {
     if (!isPremium) {
-      alert("الدي جي الذكي متوفر فقط لمشتركي بريميوم 👑");
+      addToast("الدي جي الذكي متوفر فقط لمشتركي بريميوم 👑", "error");
       return;
     }
     setLoadingMood(moodId);
@@ -45,7 +43,7 @@ export default function SmartDJPage() {
         // wait, setQueue expects the exact queue array
         setQueue(data.slice(1));
       } else {
-        alert("لم يتم العثور على تشكيلة مناسبة دي الوقتي، جرب بعدين.");
+        addToast("لم يتم العثور على تشكيلة مناسبة دي الوقتي، جرب بعدين.", "error");
       }
     } catch (e) {
       console.error(e);

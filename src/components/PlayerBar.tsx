@@ -12,6 +12,7 @@ import { getProxyUrl } from "@/utils/media";
 import { PremiumModal } from "./PremiumModal";
 import { downloadSong } from "@/services/offline/downloader";
 import { upsertFavorite, removeFavorite } from "@/services/user/favoritesStore";
+import { useToastStore } from "@/state/toastStore";
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 function fmtTime(s: number) {
@@ -257,17 +258,12 @@ export function PlayerBar() {
   const { state, currentSong, next, prev, togglePlay, setVolume, seekTo, cycleRepeat, setShuffle, setHighQuality } = usePlayer();
   const [progress, setProgress] = useState(0);
   const [isLiked, setIsLiked] = useState(false);
-  const [toast, setToast] = useState<{ msg: string; type: "normal" | "hq" } | null>(null);
   const [fullOpen, setFullOpen] = useState(false);
   const [isPremiumModalOpen, setIsPremiumModalOpen] = useState(false);
   const [premiumFeatureName, setPremiumFeatureName] = useState("");
+  const { addToast } = useToastStore();
 
   const isPremium = typeof window !== "undefined" && localStorage.getItem("aura_user_tier") === "premium";
-
-  const showToast = (msg: string, type: "normal" | "hq" = "normal") => {
-    setToast({ msg, type });
-    setTimeout(() => setToast(null), 3000);
-  };
 
   // Sync local progress
   useEffect(() => {
@@ -305,7 +301,7 @@ export function PlayerBar() {
       } else {
         removeFavorite(currentSong.songId);
       }
-      showToast(d.liked ? "تمت الإضافة للمفضلة ❤️" : "تمت الإزالة من المفضلة");
+      addToast(d.liked ? "تمت الإضافة للمفضلة ❤️" : "تمت الإزالة من المفضلة");
     }
   };
 
@@ -316,14 +312,14 @@ export function PlayerBar() {
       setIsPremiumModalOpen(true);
       return;
     }
-    showToast(`جاري تحميل "${currentSong.title}"... بسرعة الصاروخ 🚀`);
+    addToast(`جاري تحميل "${currentSong.title}"... بسرعة الصاروخ 🚀`);
     const ok = await downloadSong(currentSong.songId, currentSong.youtubeVideoId, {
       title: currentSong.title,
       artist: currentSong.artist || "فنان",
       thumbnailUrl: currentSong.thumbnailUrl,
       folderName: currentSong.artist || "أخرى"
     });
-    showToast(ok ? "تم الحفظ للأوفلاين ✅" : "فشل التحميل ❌");
+    addToast(ok ? "تم الحفظ للأوفلاين ✅" : "فشل التحميل ❌", ok ? "success" : "error");
   };
 
   const art = currentSong?.thumbnailUrl || currentSong?.metadata?.thumbnailUrl;
@@ -333,30 +329,6 @@ export function PlayerBar() {
 
   return (
     <>
-      {/* Toast Notification */}
-      <AnimatePresence>
-        {toast && (
-          <motion.div
-            initial={{ y: -50, opacity: 0, scale: 0.9 }}
-            animate={{ y: 0, opacity: 1, scale: 1 }}
-            exit={{ y: -50, opacity: 0, scale: 0.9 }}
-            className={`fixed top-8 left-1/2 -translate-x-1/2 z-[100] px-6 py-3 rounded-2xl flex items-center gap-3 backdrop-blur-xl border shadow-2xl ${
-              toast.type === "hq" 
-                ? "bg-gradient-to-r from-yellow-500/20 to-orange-500/20 border-yellow-500/50 text-yellow-300 shadow-[0_0_40px_rgba(234,179,8,0.3)]" 
-                : "bg-black/80 border-white/10 text-white"
-            }`}
-          >
-            <CheckCircle2 className={`w-5 h-5 ${toast.type === "hq" ? "text-yellow-400" : "text-[#1db954]"}`} />
-            <span className={`font-bold ${toast.type === "hq" ? "text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 to-orange-400" : ""}`}>
-              {toast.msg}
-            </span>
-            {toast.type === "hq" && (
-               <div className="absolute inset-0 rounded-2xl bg-gradient-to-r from-yellow-400/20 to-orange-500/20 blur-xl -z-10 animate-pulse" />
-            )}
-          </motion.div>
-        )}
-      </AnimatePresence>
-
       {/* Full Player */}
       <AnimatePresence>
         {fullOpen && (
@@ -368,7 +340,7 @@ export function PlayerBar() {
             isPremium={isPremium}
             setIsPremiumModalOpen={setIsPremiumModalOpen}
             setPremiumFeatureName={setPremiumFeatureName}
-            showToast={showToast}
+            showToast={addToast}
           />
         )}
       </AnimatePresence>
