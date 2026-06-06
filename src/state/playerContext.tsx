@@ -21,6 +21,7 @@ type PlayerContextValue = {
   setSpeed: (value: number) => void;
   seekTo: (time: number) => void;
   prewarm: (videoId: string) => void;
+  setHighQuality: (value: boolean) => void;
 };
 
 const PlayerContext = createContext<PlayerContextValue | null>(null);
@@ -165,6 +166,77 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     player.currentTime = Math.max(0, Math.min(time, player.duration || 0));
     setState((prev) => ({ ...prev, currentTime: player.currentTime }));
   };
+
+  const setHighQuality = (value: boolean) => {
+    setState((prev) => ({ ...prev, isHighQuality: value }));
+  };
+
+  // ─── Web Audio API (High Quality Equalizer) ──────────────────────
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const mediaSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
+  const bassNodeRef = useRef<BiquadFilterNode | null>(null);
+  const trebleNodeRef = useRef<BiquadFilterNode | null>(null);
+
+  useEffect(() => {
+    const player = audioRef.current;
+    if (!player || typeof window === "undefined") return;
+
+    // Initialize AudioContext only once when needed
+    if (state.isHighQuality && !audioCtxRef.current) {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      audioCtxRef.current = ctx;
+
+      try {
+        const source = ctx.createMediaElementSource(player);
+        mediaSourceRef.current = source;
+
+        // Create EQ nodes
+        const bass = ctx.createBiquadFilter();
+        bass.type = "lowshelf";
+        bass.frequency.value = 150; // Enhance frequencies below 150Hz
+        bass.gain.value = 6; // +6dB
+        bassNodeRef.current = bass;
+
+        const treble = ctx.createBiquadFilter();
+        treble.type = "highshelf";
+        treble.frequency.value = 4000; // Enhance frequencies above 4kHz
+        treble.gain.value = 4; // +4dB
+        trebleNodeRef.current = treble;
+
+        // Connect graph
+        source.connect(bass);
+        bass.connect(treble);
+        treble.connect(ctx.destination);
+      } catch (err) {
+        console.warn("[WebAudio] Failed to create source:", err);
+      }
+    }
+
+    if (!audioCtxRef.current || !mediaSourceRef.current || !bassNodeRef.current || !trebleNodeRef.current) return;
+
+    if (state.isHighQuality) {
+      if (audioCtxRef.current.state === "suspended") {
+        audioCtxRef.current.resume();
+      }
+      // Re-enable EQ
+      mediaSourceRef.current.disconnect();
+      bassNodeRef.current.disconnect();
+      trebleNodeRef.current.disconnect();
+
+      mediaSourceRef.current.connect(bassNodeRef.current);
+      bassNodeRef.current.connect(trebleNodeRef.current);
+      trebleNodeRef.current.connect(audioCtxRef.current.destination);
+    } else {
+      // Disable EQ (bypass)
+      mediaSourceRef.current.disconnect();
+      bassNodeRef.current.disconnect();
+      trebleNodeRef.current.disconnect();
+
+      mediaSourceRef.current.connect(audioCtxRef.current.destination);
+    }
+  }, [state.isHighQuality]);
 
   useEffect(() => {
     isPlayingRef.current = state.isPlaying;
@@ -402,6 +474,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     setVolume,
     setSpeed,
     seekTo,
+    setHighQuality,
     prewarm: (videoId: string) => {
       // Prewarming removed for direct download chunking proxy
     }

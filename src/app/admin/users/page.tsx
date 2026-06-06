@@ -18,7 +18,7 @@ export default function AdminUsersPage() {
         body: JSON.stringify({ email, tier }),
       });
       const data = await res.json();
-      if (res.ok && data.success) {
+      if (res.ok && data.ok) {
         setResult({ success: true, msg: `تم ترقية ${data.data.user.display_name} بنجاح إلى ${tier === 'premium' ? 'بريميوم' : 'مجاني'}` });
       } else {
         setResult({ success: false, msg: data.error?.message || "حدث خطأ" });

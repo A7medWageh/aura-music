@@ -24,6 +24,7 @@ export type PlayerState = {
   duration: number;
   isBuffering: boolean;
   error: string | null;
+  isHighQuality: boolean;
 };
 
 export const initialPlayerState: PlayerState = {
@@ -38,5 +39,6 @@ export const initialPlayerState: PlayerState = {
   currentTime: 0,
   duration: 0,
   isBuffering: false,
-  error: null
+  error: null,
+  isHighQuality: false
 };
