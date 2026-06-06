@@ -33,23 +33,14 @@ export async function GET(req: NextRequest, { params }: Params) {
     }
 
     const resolved = await resolveStreamUrl(videoId);
-    const user = await getUserFromRequest(req);
-    const isPremium = user?.tier === 'premium';
-
-    let streamUrl: string;
-
-    if (resolved.directPlay && isPremium) {
-      // Piped CDN / Cobalt URL — browser plays directly, zero Vercel overhead! (PREMIUM ONLY)
-      streamUrl = resolved.url;
-    } else {
-      // googlevideo.com URL or Free User — must proxy through server (Invidious/youtubei fallback)
-      streamUrl = `/api/download?videoId=${videoId}&src=${encodeURIComponent(resolved.url)}`;
-    }
+    // Client is deployed on Railway, so direct URLs to googlevideo/piped are allowed
+    // We return the raw URL directly so it plays instantly in the frontend without proxying.
+    const streamUrl = resolved.url;
 
     return NextResponse.json({
       streamUrl,
       source: resolved.source,
-      directPlay: resolved.directPlay && isPremium,
+      directPlay: true,
       durationSec: resolved.durationSec,
     });
   } catch (error) {
