@@ -14,6 +14,7 @@ export async function GET(req: NextRequest) {
     const url = decodeURIComponent(targetUrl);
     
     const res = await fetch(url, {
+      cache: "no-store",
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Range": req.headers.get("Range") || "bytes=0-",
@@ -30,6 +31,8 @@ export async function GET(req: NextRequest) {
     
     headers.set("Access-Control-Allow-Origin", "*");
     headers.set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges");
+
+    console.log(`[StreamProxy] Fetched URL. Status: ${res.status}. Range req: ${req.headers.get("Range")}`);
 
     return new NextResponse(res.body, {
       status: res.status,

@@ -1,8 +1,14 @@
-import { Innertube, UniversalCache } from "youtubei.js";
+import { Innertube, UniversalCache, Platform } from "youtubei.js";
 import * as dns from "node:dns";
 
 // Fix for ENOTFOUND errors in environments where IPv6 is flaky
 dns.setDefaultResultOrder("ipv4first");
+
+// Fix for Next.js stripping vm module which breaks youtubei.js deciphering
+Platform.shim.eval = async (data: any) => {
+  return new Function(data.output)();
+};
+
 import * as path from "path";
 import { getRedisClient } from "../redis";
 import { resolveAlbumatyStream } from "../../src/services/scrapers/albumaty";
