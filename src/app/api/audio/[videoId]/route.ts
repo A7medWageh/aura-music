@@ -1,31 +1,30 @@
 /**
  * /api/audio/[videoId] — Direct audio pipe endpoint
  *
- * Unlike /api/stream which returns a JSON url, this endpoint:
- * 1. Resolves the youtube stream URL server-side
- * 2. Fetches the audio bytes using the same youtubei.js session (matching IP + PO-Token)
- * 3. Pipes the bytes directly to the browser — no IP mismatch, no URL expiry issues
- *
- * The HTML audio element src is set to this endpoint directly.
- * Range requests (for seeking) are also handled here.
+ * The audio element src is set to this endpoint directly.
+ * This endpoint:
+ * 1. Resolves the googlevideo stream URL via youtubei.js (Railway IP)
+ * 2. Fetches it with a plain fetch (also from Railway IP = same IP = no 403)
+ * 3. Pipes the bytes directly to the browser
+ * 4. Handles Range requests for seeking support
  */
 import { NextRequest, NextResponse } from "next/server";
 import { resolveStreamUrl } from "@apis/scraping";
-import { getYTWeb } from "../../../../../apis/youtubei.js";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 type Params = { params: Promise<{ videoId: string }> };
 
-// In-memory cache for resolved URLs (per server process, ~30 min TTL)
+// In-process URL cache — avoids re-resolving on every range request
 const urlCache = new Map<string, { url: string; expiresAt: number }>();
 
-async function getCachedStreamUrl(videoId: string): Promise<string> {
-  const cached = urlCache.get(videoId);
-  if (cached && cached.expiresAt > Date.now()) return cached.url;
+async function getCachedUrl(videoId: string): Promise<string> {
+  const hit = urlCache.get(videoId);
+  if (hit && hit.expiresAt > Date.now()) return hit.url;
 
   const resolved = await resolveStreamUrl(videoId);
+  // Cache for 20 min (googlevideo URLs expire in ~30 min)
   urlCache.set(videoId, { url: resolved.url, expiresAt: Date.now() + 20 * 60 * 1000 });
   return resolved.url;
 }
@@ -39,66 +38,51 @@ export async function GET(req: NextRequest, { params }: Params) {
     }
 
     const rangeHeader = req.headers.get("range");
+    let streamUrl = await getCachedUrl(videoId);
 
-    // Resolve the googlevideo URL (cached)
-    const streamUrl = await getCachedStreamUrl(videoId);
-
-    // Build upstream request headers
-    const upstreamHeaders: Record<string, string> = {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-      "Referer": "https://www.youtube.com/",
-      "Origin": "https://www.youtube.com",
-    };
-    if (rangeHeader) upstreamHeaders["Range"] = rangeHeader;
-
-    let upstreamRes: Response;
-    if (streamUrl.includes("googlevideo.com")) {
-      // Use the youtubei.js session to carry the correct PO-Token and cookies
-      const innertube = await getYTWeb();
-      upstreamRes = await innertube.session.http.fetch(streamUrl, {
-        headers: upstreamHeaders,
-      });
-    } else {
-      upstreamRes = await fetch(streamUrl, {
+    const makeUpstreamReq = (url: string) =>
+      fetch(url, {
         cache: "no-store",
-        headers: upstreamHeaders,
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+          "Referer": "https://www.youtube.com/",
+          "Origin":  "https://www.youtube.com",
+          ...(rangeHeader ? { Range: rangeHeader } : {}),
+        },
       });
-    }
 
-    if (!upstreamRes.ok && upstreamRes.status !== 206) {
-      // If expired, clear cache and retry once
+    let upstream = await makeUpstreamReq(streamUrl);
+
+    // If we get 403/404, the URL likely expired — resolve fresh and retry once
+    if (upstream.status === 403 || upstream.status === 404 || upstream.status === 410) {
+      console.warn(`[Audio] ${videoId} got ${upstream.status}, resolving fresh URL...`);
       urlCache.delete(videoId);
-      const freshUrl = await getCachedStreamUrl(videoId);
-      if (freshUrl.includes("googlevideo.com")) {
-        const innertube = await getYTWeb();
-        upstreamRes = await innertube.session.http.fetch(freshUrl, { headers: upstreamHeaders });
-      } else {
-        upstreamRes = await fetch(freshUrl, { cache: "no-store", headers: upstreamHeaders });
-      }
+      streamUrl = await getCachedUrl(videoId);
+      upstream = await makeUpstreamReq(streamUrl);
     }
 
-    // Forward safe headers
-    const responseHeaders = new Headers();
-    const allowed = ["content-type", "content-length", "content-range", "accept-ranges"];
-    upstreamRes.headers.forEach((value, key) => {
-      if (allowed.includes(key.toLowerCase())) responseHeaders.set(key, value);
+    // Build response headers
+    const resHeaders = new Headers();
+    const allow = ["content-type", "content-length", "content-range", "accept-ranges"];
+    upstream.headers.forEach((v, k) => {
+      if (allow.includes(k.toLowerCase())) resHeaders.set(k, v);
     });
+    if (!resHeaders.has("accept-ranges")) resHeaders.set("accept-ranges", "bytes");
+    resHeaders.set("cache-control", "no-store");
+    resHeaders.set("Access-Control-Allow-Origin", "*");
 
-    // Ensure the browser knows we support seeking
-    if (!responseHeaders.has("accept-ranges")) {
-      responseHeaders.set("accept-ranges", "bytes");
-    }
-    responseHeaders.set("cache-control", "no-store");
-    responseHeaders.set("Access-Control-Allow-Origin", "*");
+    console.log(
+      `[Audio] ${videoId} → ${upstream.status}${rangeHeader ? " (range)" : ""}`
+    );
 
-    console.log(`[Audio] ${videoId} → ${upstreamRes.status} (range: ${rangeHeader ?? "none"})`);
-
-    return new NextResponse(upstreamRes.body, {
-      status: upstreamRes.status,
-      headers: responseHeaders,
+    return new NextResponse(upstream.body, {
+      status: upstream.status,
+      headers: resHeaders,
     });
   } catch (err: any) {
     console.error("[Audio] Error:", err.message);
-    return new NextResponse("Failed to stream audio", { status: 500 });
+    return new NextResponse("Failed to stream audio: " + err.message, { status: 500 });
   }
 }

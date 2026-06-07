@@ -395,9 +395,9 @@ async function resolveWithInvidious(videoId: string): Promise<string> {
   }));
 }
 
-export async function resolveStream(videoId: string, providedTitle?: string, providedArtist?: string): Promise<string> {
+export async function resolveStream(videoId: string): Promise<string> {
   const start = Date.now();
-  console.log(`[Stream] Resolving ${videoId}...`);
+  console.log(`[Stream] Resolving ${videoId} via InnerTube...`);
 
   // 1. In-memory process cache (fastest)
   const cached = streamCache.get(videoId);
@@ -427,75 +427,10 @@ export async function resolveStream(videoId: string, providedTitle?: string, pro
     return url;
   };
 
-  // Enforce a strict 28-second global timeout
-  return withTimeout(
-    (async () => {
-      // ── Strategy 1: youtubei.js (Fastest Server-side streaming) ─────────
-      try {
-        console.log(`[Stream] Trying youtubei.js for ${videoId}...`);
-        const url = await withTimeout(resolveWithYoutubei(videoId), 8000, "");
-        if (url) return await cacheAndReturn(url);
-      } catch (e: any) {
-        console.warn(`[Stream] youtubei.js failed: ${e.message}`);
-      }
-
-      // ── Strategy 2: @distube/ytdl-core ──────────────────────────────────
-      try {
-        console.log(`[Stream] Trying ytdl-core for ${videoId}...`);
-        const url = await withTimeout(resolveWithYtdlCore(videoId), 8000, "");
-        if (url) return await cacheAndReturn(url);
-      } catch (e: any) {
-        console.warn(`[Stream] ytdl-core failed: ${e.message}`);
-      }
-
-      // ── Strategy 3: Piped API (Primary — bypasses IP blocks) ────────
-      try {
-        console.log(`[Stream] Trying Piped API for ${videoId}...`);
-        const url = await withTimeout(resolveWithPiped(videoId), 10000, "");
-        if (url) return await cacheAndReturn(url);
-      } catch (e: any) {
-        console.warn(`[Stream] Piped failed: ${e.message}`);
-      }
-
-      // ── Strategy 4: Invidious Public Proxy Pool ─────────────────────────
-      try {
-        console.log(`[Stream] Trying Invidious for ${videoId}...`);
-        const url = await withTimeout(resolveWithInvidious(videoId), 10000, "");
-        if (url) return await cacheAndReturn(url);
-      } catch (e: any) {
-        console.warn(`[Stream] Invidious failed: ${e.message}`);
-      }
-
-      // ── Strategy 5: Albumaty Direct MP3 (for Arabic music) ──────────────
-      // REMOVED: Albumaty uses fuzzy text search and often returns the wrong song (e.g. Indian songs)
-      // which ruins the player experience. Better to fail than play the wrong track.
-
-      // ── Strategy 6: yt-dlp (Local dev only) ─────────────────────────────
-      try {
-        const { existsSync } = await import("fs");
-        if (existsSync(YT_DLP_PATH)) {
-          const { exec } = await import("child_process");
-          const { promisify } = await import("util");
-          const execPromise = promisify(exec);
-          console.log(`[Stream] Trying yt-dlp (dev mode) for ${videoId}...`);
-          const { stdout } = await execPromise(
-            `"${YT_DLP_PATH}" -g -f "bestaudio[ext=m4a]/bestaudio" --no-playlist "https://www.youtube.com/watch?v=${videoId}"`
-          );
-          const url = stdout.trim();
-          if (url) return await cacheAndReturn(url);
-        }
-      } catch (e: any) {
-        console.warn(`[Stream] yt-dlp failed: ${e.message}`);
-      }
-
-      throw new Error("stream_resolve_failed: all strategies exhausted");
-    })(),
-    60000,
-    ""
-  ).then((res) => {
-    if (!res) throw new Error("stream_resolve_timeout");
-    return res;
-  });
+  // Only use InnerTube — all other scrapers are dead (Piped/Cobalt/Invidious broken, yt-dlp not on Railway)
+  const url = await withTimeout(resolveWithYoutubei(videoId), 20000, "");
+  if (!url) throw new Error("stream_resolve_failed: InnerTube returned empty URL");
+  return await cacheAndReturn(url);
 }
 
 // ── getArtistDetails ──────────────────────────────────────────────────────────
