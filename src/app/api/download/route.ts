@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { resolveStreamUrl } from "@apis/scraping";
+import { spawn } from "child_process";
+import { Readable } from "stream";
+import * as path from "path";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
 import { checkTunnelRedirect } from "@/utils/tunnelProxy";
+
+const YT_DLP_PATH = process.env.YT_DLP_PATH || (process.platform === "win32" ? path.join(process.cwd(), "yt-dlp-master", "yt-dlp.cmd") : "yt-dlp");
 
 export async function GET(req: NextRequest) {
   const redirect = await checkTunnelRedirect(req);
@@ -18,43 +22,41 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const resolved = await resolveStreamUrl(videoId);
+    const youtubeUrl = `https://www.youtube.com/watch?v=${videoId}`;
     
-    // Fetch the resolved URL to get the actual stream and headers (Content-Length)
-    const res = await fetch(resolved.url, {
-      cache: "no-store",
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Range": "bytes=0-", // Request the full file
-      },
-      signal: req.signal,
+    // Spawn yt-dlp to stream directly to stdout
+    // Optimized for maximum startup speed (3 seconds)
+    const ytDlp = spawn(YT_DLP_PATH, [
+      "-o", "-", 
+      "-f", "140", // Use format 140 directly to skip format parsing/evaluation
+      "--no-playlist", 
+      "--no-warnings", 
+      "--no-cache-dir", // Skip checking python cache directory for faster startup
+      "--extractor-args", "youtube:player_client=ios,android", // Fast clients to bypass bot detection
+      youtubeUrl
+    ], {
+      shell: process.platform === "win32"
     });
 
-    if (!res.ok) {
-      throw new Error(`Failed to fetch from upstream: ${res.status}`);
-    }
+    ytDlp.on("error", (err) => {
+      console.error("[yt-dlp] Spawn error:", err);
+    });
+
+    req.signal.addEventListener("abort", () => {
+      console.log(`[yt-dlp] Client aborted download for ${videoId}, killing process...`);
+      ytDlp.kill("SIGKILL");
+    });
+
+    const webStream = Readable.toWeb(ytDlp.stdout as any);
 
     const headers = new Headers();
-    // Copy content headers safely
-    res.headers.forEach((value, key) => {
-      if (['content-type', 'content-length', 'content-range', 'accept-ranges'].includes(key.toLowerCase())) {
-        headers.set(key, value);
-      }
-    });
-
-    // Make sure we expose Content-Length so the frontend can calculate exact progress
+    headers.set("Content-Type", "audio/mp4");
+    headers.set("Transfer-Encoding", "chunked");
     headers.set("Access-Control-Allow-Origin", "*");
-    headers.set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges, X-Original-Content-Length");
-    
-    // In case content-length is missing, provide a fallback, but usually the APIs provide it.
-    if (!headers.has("content-length")) {
-       headers.set("X-Original-Content-Length", (3.5 * 1024 * 1024).toString());
-       headers.set("Transfer-Encoding", "chunked");
-    } else {
-       headers.set("X-Original-Content-Length", headers.get("content-length")!);
-    }
+    // Without exact totalBytes, we let the client show raw MB downloaded
+    headers.set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges");
 
-    return new NextResponse(res.body, { headers });
+    return new NextResponse(webStream as any, { headers });
 
   } catch (error: any) {
     console.error("[DownloadAPI] Error:", error.message);

@@ -7,7 +7,7 @@ import {
   MoreHorizontal, Settings, AlignRight, Mic2
 } from "lucide-react";
 import { usePlayer } from "@/state/playerContext";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { getProxyUrl } from "@/utils/media";
 import { PremiumModal } from "./PremiumModal";
@@ -164,24 +164,26 @@ function FullPlayer({
   }, [currentSong?.songId]);
 
   // Auto-scroll lyrics
+  const activeLineIndex = useMemo(() => {
+    if (syncedLyrics.length === 0) return -1;
+    return syncedLyrics.findIndex((l, i) => {
+      const nextTime = syncedLyrics[i + 1]?.time || Infinity;
+      return state.currentTime >= l.time && state.currentTime < nextTime;
+    });
+  }, [state.currentTime, syncedLyrics]);
+
   useEffect(() => {
-    if (activeTab === "lyrics" && syncedLyrics.length > 0 && lyricsScrollRef.current) {
-      const activeLineIndex = syncedLyrics.findIndex((l, i) => {
-        const nextTime = syncedLyrics[i + 1]?.time || Infinity;
-        return state.currentTime >= l.time && state.currentTime < nextTime;
-      });
-      if (activeLineIndex !== -1) {
-        const container = lyricsScrollRef.current;
-        const activeEl = container.children[activeLineIndex] as HTMLElement;
-        if (activeEl) {
-          container.scrollTo({
-            top: activeEl.offsetTop - container.clientHeight / 2 + activeEl.clientHeight / 2,
-            behavior: "smooth"
-          });
-        }
+    if (activeTab === "lyrics" && activeLineIndex !== -1 && lyricsScrollRef.current) {
+      const container = lyricsScrollRef.current;
+      const activeEl = container.children[activeLineIndex] as HTMLElement;
+      if (activeEl) {
+        container.scrollTo({
+          top: activeEl.offsetTop - container.clientHeight / 2 + activeEl.clientHeight / 2,
+          behavior: "smooth"
+        });
       }
     }
-  }, [state.currentTime, activeTab, syncedLyrics]);
+  }, [activeLineIndex, activeTab]);
 
   return (
     <motion.div
@@ -254,11 +256,20 @@ function FullPlayer({
                  <div className="m-auto w-10 h-10 border-4 border-white/20 border-t-white rounded-full animate-spin" />
                ) : syncedLyrics.length > 0 ? (
                  syncedLyrics.map((line, i) => {
-                   const nextTime = syncedLyrics[i + 1]?.time || Infinity;
-                   const isActive = state.currentTime >= line.time && state.currentTime < nextTime;
-                   const isPassed = state.currentTime >= nextTime;
+                   const isActive = i === activeLineIndex;
+                   const isPassed = i < activeLineIndex;
                    return (
-                     <p key={i} className={`transition-all duration-300 py-3 ${isActive ? 'text-white font-black text-[26px] drop-shadow-[0_0_15px_rgba(255,255,255,0.4)] scale-105' : isPassed ? 'text-white/40 font-bold text-[20px]' : 'text-white/50 font-bold text-[20px] blur-[1px]'}`}>
+                     <p 
+                       key={i} 
+                       onClick={() => seekTo(line.time)}
+                       className={`transition-all duration-500 ease-out py-3 px-4 rounded-2xl cursor-pointer origin-center
+                         ${isActive 
+                           ? 'text-white font-black text-[28px] drop-shadow-[0_0_25px_rgba(255,255,255,0.5)] scale-110 opacity-100' 
+                           : isPassed 
+                             ? 'text-white/30 font-bold text-[22px] opacity-40 blur-[1px]' 
+                             : 'text-white/20 font-bold text-[22px] opacity-30 blur-[2px]'
+                         } hover:text-white/80 hover:blur-none`}
+                     >
                        {line.text}
                      </p>
                    );

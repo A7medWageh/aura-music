@@ -185,21 +185,20 @@ function JobRow({ job }: { job: DownloadJob }) {
     setLastTime(now);
   }, [job.progressBytes]);
 
-  const progress = job.totalBytes ? (job.progressBytes || 0) : job.done;
-  const total = job.totalBytes || job.total;
-  const pct = total > 0 ? Math.round((progress / total) * 100) : 0;
+  // Estimate total to be ~3.5MB for a song if not provided
+  const assumedTotal = job.totalBytes && job.totalBytes > 0 ? job.totalBytes : (3.5 * 1024 * 1024);
+  const progress = job.progressBytes || 0;
   
-  const isPending = job.status === "downloading" && pct === 0;
+  let pct = Math.round((progress / assumedTotal) * 100);
+  if (pct > 95 && job.status === "downloading") pct = 95; // hold at 95% until done
+  if (job.status === "done") pct = 100;
+  
+  const isPending = job.status === "downloading" && progress === 0;
 
   const speedText = speed > 0 ? `${(speed / (1024 * 1024)).toFixed(1)} MB/s` : "";
-  const etaText = eta !== null && eta < 3600 ? `متبقي ${eta} ثانية` : "";
+  const etaText = speed > 0 ? `متبقي ${Math.ceil((assumedTotal - progress) / speed)} ثانية` : "";
 
-  const progressSubText =
-    job.totalBytes
-      ? `${((job.progressBytes || 0) / (1024 * 1024)).toFixed(2)} / ${(job.totalBytes / (1024 * 1024)).toFixed(2)} MB`
-      : job.progressBytes && job.progressBytes > 0
-      ? `تم تحميل ${((job.progressBytes || 0) / (1024 * 1024)).toFixed(2)} MB`
-      : `جاري بدء التحميل...`;
+  const progressSubText = `تم تحميل ${(progress / (1024 * 1024)).toFixed(2)} MB`;
 
   return (
     <div className="px-6 py-6 hover:bg-white/[0.02] transition-colors relative group text-right" dir="rtl">
@@ -258,9 +257,9 @@ function JobRow({ job }: { job: DownloadJob }) {
           <motion.div
             className={`absolute left-0 top-0 h-full rounded-full ${
               job.status === "done" ? "bg-emerald-500" : job.status === "error" ? "bg-red-500" : "bg-cyan-400 shadow-[0_0_15px_rgba(0,229,255,0.6)]"
-            } ${job.status === "downloading" && job.progressBytes && !job.totalBytes ? "w-full animate-pulse opacity-50" : ""}`}
+            } ${job.status === "downloading" && isPending ? "w-full animate-pulse opacity-50" : ""}`}
             initial={{ width: 0 }}
-            animate={{ width: job.status === "downloading" && job.progressBytes && !job.totalBytes ? "100%" : `${pct}%` }}
+            animate={{ width: isPending ? "100%" : `${pct}%` }}
             transition={{ duration: 0.5 }}
           />
         </div>

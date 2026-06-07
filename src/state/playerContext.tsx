@@ -270,16 +270,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
        }
     }
 
-    // Use fast /api/stream API for direct playback
-    try {
-      const res = await fetch(`/api/stream/${encodeURIComponent(videoId)}`);
-      const data = await res.json();
-      if (data.streamUrl) return data.streamUrl;
-    } catch (e) {
-      console.warn("[Player] Stream API failed, falling back to proxy", e);
-    }
-    
-    // Fallback just in case
+    // Use fast /api/download API directly via yt-dlp for guaranteed playback
     return `/api/download?videoId=${encodeURIComponent(videoId)}&t=${Date.now()}`;
   };
 
