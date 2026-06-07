@@ -29,7 +29,7 @@ import { promisify } from "util";
 import * as path from "path";
 
 const execPromise = promisify(exec);
-const YT_DLP_PATH = process.env.YT_DLP_PATH || path.join(process.cwd(), "yt-dlp-master", "yt-dlp.cmd");
+const YT_DLP_PATH = process.env.YT_DLP_PATH || (process.platform === "win32" ? path.join(process.cwd(), "yt-dlp-master", "yt-dlp.cmd") : "yt-dlp");
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export interface StreamResult {
@@ -278,7 +278,7 @@ async function resolveViaYoutubei(videoId: string): Promise<StreamResult> {
 // ─── Layer 5: yt-dlp ──────────────────────────────────────────────────────────
 async function resolveViaYtDlp(videoId: string): Promise<StreamResult> {
   const { stdout } = await execPromise(
-    `"${YT_DLP_PATH}" -g -f "bestaudio[ext=m4a]/bestaudio" --no-playlist "https://www.youtube.com/watch?v=${videoId}"`
+    `"${YT_DLP_PATH}" -g -f "140" --no-cache-dir --no-warnings --extractor-args "youtube:player_client=ios,android" --no-playlist "https://www.youtube.com/watch?v=${videoId}"`
   );
   const url = stdout.trim();
   if (!url) throw new Error("yt-dlp: empty url");
