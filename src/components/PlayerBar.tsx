@@ -178,14 +178,26 @@ function FullPlayer({
       .finally(() => setIsLyricsLoading(false));
   }, [currentSong?.songId]);
 
+  const displaySyncedLyrics = useMemo(() => {
+    if (syncedLyrics.length > 0) return syncedLyrics;
+    if (plainLyrics && state.duration > 0) {
+      const lines = plainLyrics.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+      // Ignore first 5 seconds and distribute the rest evenly
+      const duration = Math.max(state.duration - 5, 1);
+      const timePerLine = duration / Math.max(lines.length, 1);
+      return lines.map((text, i) => ({ time: 5 + i * timePerLine, text }));
+    }
+    return [];
+  }, [syncedLyrics, plainLyrics, state.duration]);
+
   // Auto-scroll lyrics
   const activeLineIndex = useMemo(() => {
-    if (syncedLyrics.length === 0) return -1;
-    return syncedLyrics.findIndex((l, i) => {
-      const nextTime = syncedLyrics[i + 1]?.time || Infinity;
+    if (displaySyncedLyrics.length === 0) return -1;
+    return displaySyncedLyrics.findIndex((l, i) => {
+      const nextTime = displaySyncedLyrics[i + 1]?.time || Infinity;
       return state.currentTime >= l.time && state.currentTime < nextTime;
     });
-  }, [state.currentTime, syncedLyrics]);
+  }, [state.currentTime, displaySyncedLyrics]);
 
   useEffect(() => {
     if (activeTab === "lyrics" && activeLineIndex !== -1 && lyricsScrollRef.current) {
@@ -269,8 +281,8 @@ function FullPlayer({
              <div className="absolute inset-0 flex flex-col overflow-y-auto no-scrollbar pt-20 pb-32 px-4 scroll-smooth" ref={lyricsScrollRef} dir="rtl">
                {isLyricsLoading ? (
                  <div className="m-auto w-10 h-10 border-4 border-white/20 border-t-white rounded-full animate-spin" />
-               ) : syncedLyrics.length > 0 ? (
-                 syncedLyrics.map((line, i) => {
+               ) : displaySyncedLyrics.length > 0 ? (
+                 displaySyncedLyrics.map((line, i) => {
                     const isActive = i === activeLineIndex;
                     return (
                       <p 
@@ -286,8 +298,6 @@ function FullPlayer({
                       </p>
                     );
                   })
-               ) : plainLyrics ? (
-                 <p className="text-white/70 whitespace-pre-line text-lg font-bold leading-relaxed m-auto">{plainLyrics}</p>
                ) : (
                  <p className="text-white/40 text-lg font-bold m-auto">الكلمات غير متوفرة حالياً</p>
                )}

@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Client } from "genius-lyrics";
 
 export const dynamic = "force-dynamic";
+
+const genius = new Client();
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -12,41 +15,49 @@ export async function GET(req: NextRequest) {
   }
 
   try {
+    // 1. Try LRCLIB for REAL synced lyrics first
     const url = `https://lrclib.net/api/get?track_name=${encodeURIComponent(trackName)}&artist_name=${encodeURIComponent(artistName)}`;
-    
-    const response = await fetch(url, {
-      headers: {
-        "User-Agent": "AuraMusic/1.0.0 (https://github.com/A7medWageh)"
+    const response = await fetch(url, { headers: { "User-Agent": "AuraMusic/1.0.0 (https://github.com/A7medWageh)" } });
+
+    if (response.ok) {
+      const data = await response.json();
+      if (data.syncedLyrics) {
+        return NextResponse.json(data);
       }
-    });
-
-    if (!response.ok) {
-      // If not found, lrclib returns 404
-      if (response.status === 404) {
-        // Fallback: search for trackName only if first fetch failed
-        const searchUrl = `https://lrclib.net/api/search?q=${encodeURIComponent(trackName + " " + artistName)}`;
-        const searchResponse = await fetch(searchUrl, {
-          headers: {
-            "User-Agent": "AuraMusic/1.0.0 (https://github.com/A7medWageh)"
-          }
-        });
-
-        if (searchResponse.ok) {
-          const results = await searchResponse.json();
-          if (results && results.length > 0 && results[0].syncedLyrics) {
-            return NextResponse.json(results[0]);
-          }
+    } else if (response.status === 404) {
+      // 2. Try LRCLIB Search
+      const searchUrl = `https://lrclib.net/api/search?q=${encodeURIComponent(trackName + " " + artistName)}`;
+      const searchResponse = await fetch(searchUrl, { headers: { "User-Agent": "AuraMusic/1.0.0 (https://github.com/A7medWageh)" } });
+      if (searchResponse.ok) {
+        const results = await searchResponse.json();
+        if (results && results.length > 0 && results[0].syncedLyrics) {
+          return NextResponse.json(results[0]);
         }
-
-        return NextResponse.json({ error: "Lyrics not found" }, { status: 404 });
       }
-      throw new Error(`LRCLIB returned ${response.status}`);
     }
 
-    const data = await response.json();
-    return NextResponse.json(data);
+    // 3. Fallback to Genius if LRCLIB fails or has no synced lyrics
+    console.log(`[Lyrics] Falling back to Genius for: ${trackName} ${artistName}`);
+    const searches = await genius.songs.search(`${trackName} ${artistName}`);
+    if (searches && searches.length > 0) {
+      const firstSong = searches[0];
+      const rawLyrics = await firstSong.lyrics();
+      
+      // Clean Genius tags: remove metadata before "Lyrics", remove [Chorus] tags, remove empty lines
+      const cleanLines = rawLyrics
+        .replace(/^.*Lyrics\s*/i, "")
+        .replace(/\[.*?\]/g, "")
+        .split("\n")
+        .map(l => l.trim())
+        .filter(l => l.length > 0);
+        
+      const plainLyrics = cleanLines.join("\n");
+      return NextResponse.json({ plainLyrics, source: "genius" });
+    }
+
+    return NextResponse.json({ error: "Lyrics not found anywhere" }, { status: 404 });
   } catch (err: any) {
-    console.error("[LRCLIB] Error fetching lyrics:", err);
+    console.error("[Lyrics] Error fetching lyrics:", err);
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }
