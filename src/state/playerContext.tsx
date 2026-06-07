@@ -254,9 +254,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     player.playbackRate = state.speed;
   }, [state.speed]);
 
-  // ─── Stream Resolution (Reliable backend proxy) ──────────────────────
+  // ─── Stream Resolution ──────────────────────────────────────────────────
   const resolveStream = async (videoId: string): Promise<string> => {
-    // 1. Check Offline Storage First
+    // 1. Check Offline Storage First (instant)
     if (typeof window !== "undefined") {
        try {
          const { getAudioBlob } = await import("@/offline/indexedDbCache");
@@ -270,13 +270,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
        }
     }
 
-    // 2. Fetch from fast /api/stream resolver (bypasses proxy if directPlay is available)
-    const res = await fetch(`/api/stream/${encodeURIComponent(videoId)}?t=${Date.now()}`);
-    if (!res.ok) throw new Error("Failed to resolve stream URL");
-    const data = await res.json();
-    if (!data.streamUrl) throw new Error("No stream URL returned");
-    
-    return data.streamUrl;
+    // 2. Use /api/audio/[videoId] — a direct pipe endpoint.
+    // Railway resolves + fetches the googlevideo URL server-side with the correct
+    // youtubei.js session (matching IP + PO-Token). No IP mismatch, no URL expiry.
+    return `/api/audio/${encodeURIComponent(videoId)}`;
   };
 
   const preloadNext = (currentId: string, queue: QueueSong[]) => {
@@ -364,7 +361,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         player.src = targetUrl;
         player.preload = "auto";
         player.load();
-        if (state.isPlaying) player.play().catch(console.error);
+        if (isPlayingRef.current) player.play().catch(console.error);
         preloadNext(state.currentSongId!, state.queue);
         return;
 
