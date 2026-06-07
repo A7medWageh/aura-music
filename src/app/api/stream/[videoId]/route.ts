@@ -34,7 +34,7 @@ export async function GET(req: NextRequest, { params }: Params) {
 
     const resolved = await resolveStreamUrl(videoId);
     let streamUrl: string;
-    const isDirect = resolved.directPlay;
+    const isDirect = resolved.directPlay && !resolved.url.includes("googlevideo.com");
 
     if (isDirect) {
       // Piped / Invidious URLs can be played directly by the browser from any IP

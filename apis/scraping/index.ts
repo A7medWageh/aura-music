@@ -264,7 +264,7 @@ async function resolveViaYoutubei(videoId: string): Promise<StreamResult> {
   if (!url) throw new Error("youtubei: empty url");
   return {
     url,
-    directPlay: true, // We allow direct play for googlevideo.com since it's running locally
+    directPlay: !url.includes("googlevideo.com"), // MUST BE FALSE for googlevideo so Railway proxies it to bypass IP lock
     source: "youtubei",
   };
 }
