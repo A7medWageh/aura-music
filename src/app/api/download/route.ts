@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 
 import { checkTunnelRedirect } from "@/utils/tunnelProxy";
 
-const YT_DLP_PATH = process.env.YT_DLP_PATH || path.join(process.cwd(), "yt-dlp-master", "yt-dlp.cmd");
+const YT_DLP_PATH = process.env.YT_DLP_PATH || (process.platform === "win32" ? path.join(process.cwd(), "yt-dlp-master", "yt-dlp.cmd") : "yt-dlp");
 
 export async function GET(req: NextRequest) {
   const redirect = await checkTunnelRedirect(req);

@@ -128,6 +128,60 @@ function FullPlayer({
   const art = currentSong?.thumbnailUrl || currentSong?.metadata?.thumbnailUrl;
   const [isAiMix, setIsAiMix] = useState(false);
   const [activeTab, setActiveTab] = useState("lyrics"); // lyrics, queue, audio
+  const [syncedLyrics, setSyncedLyrics] = useState<{time: number, text: string}[]>([]);
+  const [plainLyrics, setPlainLyrics] = useState("");
+  const [isLyricsLoading, setIsLyricsLoading] = useState(false);
+  const lyricsScrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!currentSong) return;
+    setIsLyricsLoading(true);
+    setSyncedLyrics([]);
+    setPlainLyrics("");
+    fetch(`/api/lyrics?trackName=${encodeURIComponent(currentSong.title)}&artistName=${encodeURIComponent(currentSong.artist)}`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.syncedLyrics) {
+          const lines = data.syncedLyrics.split("\n");
+          const parsed = [];
+          const regex = /\[(\d{2}):(\d{2}\.\d{2})\](.*)/;
+          for (const line of lines) {
+            const match = line.match(regex);
+            if (match) {
+              const min = parseInt(match[1]);
+              const sec = parseFloat(match[2]);
+              const text = match[3].trim();
+              if (text) parsed.push({ time: min * 60 + sec, text });
+            }
+          }
+          setSyncedLyrics(parsed);
+        } else if (data.plainLyrics) {
+          setPlainLyrics(data.plainLyrics);
+        }
+      })
+      .catch(err => console.error("Lyrics error:", err))
+      .finally(() => setIsLyricsLoading(false));
+  }, [currentSong?.songId]);
+
+  // Auto-scroll lyrics
+  useEffect(() => {
+    if (activeTab === "lyrics" && syncedLyrics.length > 0 && lyricsScrollRef.current) {
+      const activeLineIndex = syncedLyrics.findIndex((l, i) => {
+        const nextTime = syncedLyrics[i + 1]?.time || Infinity;
+        return state.currentTime >= l.time && state.currentTime < nextTime;
+      });
+      if (activeLineIndex !== -1) {
+        const container = lyricsScrollRef.current;
+        const activeEl = container.children[activeLineIndex] as HTMLElement;
+        if (activeEl) {
+          container.scrollTo({
+            top: activeEl.offsetTop - container.clientHeight / 2 + activeEl.clientHeight / 2,
+            behavior: "smooth"
+          });
+        }
+      }
+    }
+  }, [state.currentTime, activeTab, syncedLyrics]);
 
   return (
     <motion.div
@@ -182,37 +236,89 @@ function FullPlayer({
           </div>
         </div>
 
-        {/* Center Area (Lyrics) */}
-        <div className="flex-1 flex flex-col justify-center px-8 text-center space-y-6 overflow-hidden relative">
-           {/* Mock Lyrics View */}
-           <h1 className="text-white font-black text-[28px] leading-[1.4] drop-shadow-lg">
-             ليه سكتي ليه بتخبي عن قلبي ايه ؟
-           </h1>
-           <h2 className="text-white/70 font-bold text-[22px] leading-tight drop-shadow-md">
-             حضني بينده عليكي و انتي بعيده عليه
-           </h2>
-           <h3 className="text-white/50 font-bold text-[19px] leading-tight">
-             مين غيري مين يفهم بنظرة عين ؟
-           </h3>
-           
-           <div className="space-y-4 pt-6 pb-4 opacity-50">
-             <div className="h-8 bg-white/20 rounded-full w-[200px] mx-auto blur-[2px]" />
-             <div className="h-8 bg-white/10 rounded-full w-[260px] mx-auto blur-[2px]" />
-             <div className="h-8 bg-white/5 rounded-full w-[220px] mx-auto blur-[2px]" />
-             <div className="h-8 bg-white/5 rounded-full w-[140px] ml-auto mr-12 blur-[2px]" />
-           </div>
+        {/* Center Area (Dynamic Tabs) */}
+        <div className="flex-1 flex flex-col justify-center px-8 text-center overflow-hidden relative">
+           {activeTab === "lyrics" && (
+             <div className="absolute inset-0 flex flex-col overflow-y-auto no-scrollbar pt-20 pb-32 px-4 scroll-smooth" ref={lyricsScrollRef} dir="rtl">
+               {isLyricsLoading ? (
+                 <div className="m-auto w-10 h-10 border-4 border-white/20 border-t-white rounded-full animate-spin" />
+               ) : syncedLyrics.length > 0 ? (
+                 syncedLyrics.map((line, i) => {
+                   const nextTime = syncedLyrics[i + 1]?.time || Infinity;
+                   const isActive = state.currentTime >= line.time && state.currentTime < nextTime;
+                   const isPassed = state.currentTime >= nextTime;
+                   return (
+                     <p key={i} className={`transition-all duration-300 py-3 ${isActive ? 'text-white font-black text-[26px] drop-shadow-[0_0_15px_rgba(255,255,255,0.4)] scale-105' : isPassed ? 'text-white/40 font-bold text-[20px]' : 'text-white/50 font-bold text-[20px] blur-[1px]'}`}>
+                       {line.text}
+                     </p>
+                   );
+                 })
+               ) : plainLyrics ? (
+                 <p className="text-white/70 whitespace-pre-line text-lg font-bold leading-relaxed m-auto">{plainLyrics}</p>
+               ) : (
+                 <p className="text-white/40 text-lg font-bold m-auto">الكلمات غير متوفرة حالياً</p>
+               )}
+               <div className="h-40 shrink-0" />
+             </div>
+           )}
 
-           <div className="absolute bottom-8 left-0 right-0 flex justify-center z-10">
-             <button className="bg-white text-black font-black py-3.5 px-8 rounded-full text-sm shadow-[0_10px_30px_rgba(0,0,0,0.3)] hover:scale-105 transition-transform">
-               اطلع على الكلمات كاملةً
-             </button>
-           </div>
-           
-           <div className="absolute bottom-12 left-6">
-             <button className="w-10 h-10 rounded-full bg-white/10 border border-white/20 flex items-center justify-center text-white/50 hover:text-white transition-colors">
-               <Mic2 className="w-5 h-5" />
-             </button>
-           </div>
+           {activeTab === "queue" && (
+             <div className="absolute inset-0 flex flex-col overflow-y-auto no-scrollbar p-6" dir="rtl">
+               <h3 className="text-white font-black text-xl mb-4 text-right">قائمة الاستماع</h3>
+               <div className="space-y-3">
+                 {state.queue.map((song, i) => {
+                   const isCurrent = song.songId === currentSong?.songId;
+                   return (
+                     <div key={i} className={`flex items-center gap-3 p-2 rounded-xl transition ${isCurrent ? 'bg-white/20 border border-white/10' : 'hover:bg-white/5'}`}>
+                       <img src={getProxyUrl(song.thumbnailUrl)} className="w-12 h-12 rounded-lg object-cover" />
+                       <div className="text-right flex-1 min-w-0">
+                         <p className={`truncate font-bold text-sm ${isCurrent ? 'text-white' : 'text-white/80'}`}>{song.title}</p>
+                         <p className="truncate text-xs text-white/50">{song.artist}</p>
+                       </div>
+                       {isCurrent && <div className="w-4 h-4 rounded-full bg-white animate-pulse" />}
+                     </div>
+                   );
+                 })}
+               </div>
+               <div className="h-20 shrink-0" />
+             </div>
+           )}
+
+           {activeTab === "audio" && (
+             <div className="absolute inset-0 flex flex-col justify-center items-center p-8 space-y-12">
+               <div className="w-full space-y-4">
+                 <div className="flex items-center justify-between text-white font-bold text-sm">
+                   <VolumeX className="w-5 h-5 text-white/50" />
+                   <span>مستوى الصوت</span>
+                   <Volume2 className="w-5 h-5 text-white/50" />
+                 </div>
+                 <input type="range" min="0" max="1" step="0.01" value={state.volume} onChange={e => setVolume(parseFloat(e.target.value))} className="w-full accent-white h-2 rounded-full cursor-pointer" />
+               </div>
+               
+               <button onClick={() => {
+                  if (!isPremium) {
+                    setPremiumFeatureName("جودة الصوت الخارقة (HQ)");
+                    setIsPremiumModalOpen(true);
+                  } else {
+                    const newVal = !state.isHighQuality;
+                    setHighQuality(newVal);
+                    showToast(newVal ? "تم تفعيل جودة الصوت الخارقة 🎧✨" : "تم إيقاف الجودة الخارقة", "hq");
+                  }
+               }} className={`w-full py-4 rounded-2xl flex items-center justify-center gap-3 font-black text-lg transition-all ${state.isHighQuality ? 'bg-gradient-to-r from-yellow-500 to-orange-500 text-white shadow-[0_0_30px_rgba(234,179,8,0.4)]' : 'bg-white/10 text-white/70 hover:bg-white/20'}`}>
+                 <span className="border-2 border-current px-2 rounded-lg">HQ</span>
+                 جودة صوت خارقة
+                 {!isPremium && <Crown className="w-5 h-5 text-amber-400 drop-shadow-md" />}
+               </button>
+             </div>
+           )}
+
+           {activeTab === "lyrics" && (
+             <div className="absolute bottom-12 left-6 z-20 pointer-events-none">
+               <button className="w-12 h-12 rounded-full bg-white/10 backdrop-blur-md border border-white/20 flex items-center justify-center text-white shadow-lg pointer-events-auto">
+                 <Mic2 className="w-6 h-6" />
+               </button>
+             </div>
+           )}
         </div>
 
         {/* Bottom Controls Area */}
