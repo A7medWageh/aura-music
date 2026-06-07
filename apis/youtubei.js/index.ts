@@ -21,7 +21,7 @@ const YT_DLP_PATH = process.env.YT_DLP_PATH || path.join(process.cwd(), "yt-dlp-
 let ytWeb: Innertube | null = null;
 let ytInitPromise: Promise<Innertube> | null = null;
 
-async function getYTWeb(): Promise<Innertube> {
+export async function getYTWeb(): Promise<Innertube> {
   if (ytWeb) return ytWeb;
   if (!ytInitPromise) {
     ytInitPromise = Innertube.create({

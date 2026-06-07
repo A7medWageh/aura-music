@@ -293,9 +293,10 @@ export async function resolveStreamUrl(videoId: string): Promise<StreamResult> {
         resolveViaPiped(videoId).catch(() => { throw new Error('piped failed') }),
         resolveViaCobalt(videoId).catch(() => { throw new Error('cobalt failed') }),
         resolveViaInvidiousProxy(videoId).catch(() => { throw new Error('invidious proxy failed') }),
+        // youtubei returns googlevideo.com which fails on Railway (IP mismatch or proxy block).
+        // It must be a strict fallback if all CDNs fail.
         resolveViaYoutubei(videoId).then(async (r) => { 
-          // Slight delay so directPlay CDNs (Piped/Cobalt) win if they are fast enough
-          await new Promise(res => setTimeout(res, 800)); 
+          await new Promise(res => setTimeout(res, 4000)); 
           return r; 
         }).catch(() => { throw new Error('youtubei failed') }),
       ],
