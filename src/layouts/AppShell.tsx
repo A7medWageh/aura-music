@@ -32,7 +32,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         {/* ── Main Content Area ── */}
         <div className={`
           md:pr-[280px]
-          pb-[calc(140px+env(safe-area-inset-bottom,0px))]
+          pb-[calc(180px+env(safe-area-inset-bottom,0px))]
           md:pb-[100px]
           pt-6
           min-h-screen flex flex-col

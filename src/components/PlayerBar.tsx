@@ -200,13 +200,23 @@ function FullPlayer({
       <div className="relative z-10 flex flex-col h-full w-full max-w-md mx-auto">
         
         {/* Top Bar */}
-        <div className="flex items-center justify-between px-6 pt-[env(safe-area-inset-top,40px)] pb-4">
+        <div className="flex items-center justify-between px-6 pt-[env(safe-area-inset-top,20px)] mt-4 pb-4">
           <div className="flex items-center gap-3">
             <button 
-              onClick={() => setIsAiMix(!isAiMix)} 
-              className={`w-12 h-6 rounded-full p-0.5 transition-colors duration-300 ease-in-out flex items-center shadow-inner ${isAiMix ? 'bg-white' : 'bg-white/20'}`}
+              onClick={() => {
+                if (!isPremium) {
+                  setPremiumFeatureName("ميكس AI (الدي جي الذكي)");
+                  setIsPremiumModalOpen(true);
+                } else {
+                  const newVal = !isAiMix;
+                  setIsAiMix(newVal);
+                  showToast(newVal ? "تم تفعيل ميكس AI 🤖✨" : "تم إيقاف ميكس AI");
+                }
+              }} 
+              className={`w-12 h-6 rounded-full p-0.5 transition-colors duration-300 ease-in-out flex items-center shadow-inner relative ${isAiMix ? 'bg-white' : 'bg-white/20'}`}
               dir="ltr"
             >
+              {!isPremium && <Crown className="w-3 h-3 text-amber-400 absolute -top-1 -right-1 drop-shadow-md z-10" />}
               <div className={`w-5 h-5 rounded-full bg-[#4A2C1D] shadow-md transition-transform duration-300 ${isAiMix ? 'translate-x-6' : 'translate-x-0'}`} />
             </button>
             <span className="text-white font-bold text-[15px]">ميكس AI</span>
@@ -263,24 +273,24 @@ function FullPlayer({
            )}
 
            {activeTab === "queue" && (
-             <div className="absolute inset-0 flex flex-col overflow-y-auto no-scrollbar p-6" dir="rtl">
-               <h3 className="text-white font-black text-xl mb-4 text-right">قائمة الاستماع</h3>
-               <div className="space-y-3">
+             <div className="absolute inset-0 flex flex-col overflow-y-auto no-scrollbar p-4" dir="rtl">
+               <h3 className="text-white font-black text-xl mb-4 text-right px-2">قائمة الاستماع</h3>
+               <div className="space-y-2">
                  {state.queue.map((song, i) => {
                    const isCurrent = song.songId === currentSong?.songId;
                    return (
-                     <div key={i} className={`flex items-center gap-3 p-2 rounded-xl transition ${isCurrent ? 'bg-white/20 border border-white/10' : 'hover:bg-white/5'}`}>
-                       <img src={getProxyUrl(song.thumbnailUrl)} className="w-12 h-12 rounded-lg object-cover" />
+                     <div key={i} className={`flex items-center gap-3 p-2 rounded-xl transition ${isCurrent ? 'bg-white/20 border border-white/10 shadow-lg' : 'hover:bg-white/5'}`}>
+                       <img src={getProxyUrl(song.thumbnailUrl)} className="w-12 h-12 rounded-lg object-cover shadow-md" />
                        <div className="text-right flex-1 min-w-0">
-                         <p className={`truncate font-bold text-sm ${isCurrent ? 'text-white' : 'text-white/80'}`}>{song.title}</p>
-                         <p className="truncate text-xs text-white/50">{song.artist}</p>
+                         <p className={`truncate font-bold text-[15px] leading-tight ${isCurrent ? 'text-white' : 'text-white/80'}`}>{song.title}</p>
+                         <p className="truncate text-[11px] text-white/50 mt-0.5">{song.artist}</p>
                        </div>
-                       {isCurrent && <div className="w-4 h-4 rounded-full bg-white animate-pulse" />}
+                       {isCurrent && <div className="w-3 h-3 rounded-full bg-white animate-pulse shadow-[0_0_10px_rgba(255,255,255,0.8)]" />}
                      </div>
                    );
                  })}
                </div>
-               <div className="h-20 shrink-0" />
+               <div className="h-24 shrink-0" />
              </div>
            )}
 
@@ -322,9 +332,9 @@ function FullPlayer({
         </div>
 
         {/* Bottom Controls Area */}
-        <div className="px-6 pb-[env(safe-area-inset-bottom,20px)] pt-2">
+        <div className="px-4 pb-[env(safe-area-inset-bottom,20px)] pt-2 relative z-20">
           {/* Seek Bar */}
-          <div className="mb-6 px-2">
+          <div className="mb-4 px-2">
             <SeekBar progress={state.currentTime} duration={state.duration} onSeek={seekTo} height="h-1" rtl={false} />
             <div className="flex justify-between mt-3 text-[11px] font-bold text-white/50 tabular-nums" dir="ltr">
                <span>{fmtTime(state.currentTime)}</span>
@@ -490,7 +500,7 @@ export function PlayerBar() {
       </AnimatePresence>
 
       {/* Mini Bar — on mobile, sits above the bottom tab bar */}
-      <footer className="fixed left-0 right-0 z-30 bottom-[calc(env(safe-area-inset-bottom,0px)+55px)] md:bottom-0">
+      <footer className="fixed left-0 right-0 z-30 bottom-[calc(env(safe-area-inset-bottom,0px)+64px)] md:bottom-0">
         {/* Interactive Seek Bar at very top of mini-bar */}
         <div className="h-1 relative group">
           <SeekBar progress={state.currentTime} duration={state.duration} onSeek={seekTo} height="h-full" />
