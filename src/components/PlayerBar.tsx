@@ -114,6 +114,8 @@ function SeekBar({
   );
 }
 
+const lyricsCache: Record<string, { synced: {time: number, text: string}[], plain: string }> = {};
+
 // ─── Full Screen Player ───────────────────────────────────────────────
 function FullPlayer({
   onClose, isLiked, onLike, onDownload,
@@ -135,15 +137,25 @@ function FullPlayer({
 
   useEffect(() => {
     if (!currentSong) return;
+    
+    const cacheKey = currentSong.songId;
+    if (lyricsCache[cacheKey]) {
+      setSyncedLyrics(lyricsCache[cacheKey].synced);
+      setPlainLyrics(lyricsCache[cacheKey].plain);
+      return;
+    }
+
     setIsLyricsLoading(true);
     setSyncedLyrics([]);
     setPlainLyrics("");
     fetch(`/api/lyrics?trackName=${encodeURIComponent(currentSong.title)}&artistName=${encodeURIComponent(currentSong.artist)}`)
       .then(res => res.json())
       .then(data => {
+        const parsed = [];
+        let plain = "";
+        
         if (data.syncedLyrics) {
           const lines = data.syncedLyrics.split("\n");
-          const parsed = [];
           const regex = /\[(\d{2}):(\d{2}\.\d{2})\](.*)/;
           for (const line of lines) {
             const match = line.match(regex);
@@ -154,10 +166,13 @@ function FullPlayer({
               if (text) parsed.push({ time: min * 60 + sec, text });
             }
           }
-          setSyncedLyrics(parsed);
         } else if (data.plainLyrics) {
-          setPlainLyrics(data.plainLyrics);
+          plain = data.plainLyrics;
         }
+        
+        lyricsCache[cacheKey] = { synced: parsed, plain: plain };
+        setSyncedLyrics(parsed);
+        setPlainLyrics(plain);
       })
       .catch(err => console.error("Lyrics error:", err))
       .finally(() => setIsLyricsLoading(false));
