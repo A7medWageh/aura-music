@@ -270,12 +270,17 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
        }
     }
 
-    // Use fast /api/download API directly via yt-dlp for guaranteed playback
-    return `/api/download?videoId=${encodeURIComponent(videoId)}&t=${Date.now()}`;
+    // 2. Fetch from fast /api/stream resolver (bypasses proxy if directPlay is available)
+    const res = await fetch(`/api/stream/${encodeURIComponent(videoId)}?t=${Date.now()}`);
+    if (!res.ok) throw new Error("Failed to resolve stream URL");
+    const data = await res.json();
+    if (!data.streamUrl) throw new Error("No stream URL returned");
+    
+    return data.streamUrl;
   };
 
   const preloadNext = (currentId: string, queue: QueueSong[]) => {
-    // Preloading is not necessary with instant /api/download buffering
+    // Preloading disabled to save bandwidth
   };
 
   useEffect(() => {

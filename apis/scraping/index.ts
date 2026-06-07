@@ -24,12 +24,6 @@
 
 import { getRedisClient } from "../redis";
 import { resolveStream as ytjsResolveStream } from "../youtubei.js";
-import { exec } from "child_process";
-import { promisify } from "util";
-import * as path from "path";
-
-const execPromise = promisify(exec);
-const YT_DLP_PATH = process.env.YT_DLP_PATH || (process.platform === "win32" ? path.join(process.cwd(), "yt-dlp-master", "yt-dlp.cmd") : "yt-dlp");
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export interface StreamResult {
@@ -270,22 +264,8 @@ async function resolveViaYoutubei(videoId: string): Promise<StreamResult> {
   if (!url) throw new Error("youtubei: empty url");
   return {
     url,
-    directPlay: !url.includes("googlevideo.com"),
+    directPlay: true, // We allow direct play for googlevideo.com since it's running locally
     source: "youtubei",
-  };
-}
-
-// ─── Layer 5: yt-dlp ──────────────────────────────────────────────────────────
-async function resolveViaYtDlp(videoId: string): Promise<StreamResult> {
-  const { stdout } = await execPromise(
-    `"${YT_DLP_PATH}" -g -f "140" --no-cache-dir --no-warnings --extractor-args "youtube:player_client=ios,android" --no-playlist "https://www.youtube.com/watch?v=${videoId}"`
-  );
-  const url = stdout.trim();
-  if (!url) throw new Error("yt-dlp: empty url");
-  return {
-    url,
-    directPlay: false, // always proxy googlevideo.com urls
-    source: "youtubei", // mock as youtubei so it's treated the same
   };
 }
 
@@ -310,16 +290,16 @@ export async function resolveStreamUrl(videoId: string): Promise<StreamResult> {
   try {
     const result = await raceAll(
       [
-        resolveViaYtDlp(videoId).catch(() => { throw new Error('yt-dlp failed') }),
-        resolveViaYoutubei(videoId).then(async (r) => { 
-          await new Promise(res => setTimeout(res, 1500)); 
-          return r; 
-        }).catch(() => { throw new Error('youtubei failed') }),
         resolveViaPiped(videoId).catch(() => { throw new Error('piped failed') }),
         resolveViaCobalt(videoId).catch(() => { throw new Error('cobalt failed') }),
-        resolveViaInvidiousProxy(videoId).catch(() => { throw new Error('invidious proxy failed') })
+        resolveViaInvidiousProxy(videoId).catch(() => { throw new Error('invidious proxy failed') }),
+        resolveViaYoutubei(videoId).then(async (r) => { 
+          // Slight delay so directPlay CDNs (Piped/Cobalt) win if they are fast enough
+          await new Promise(res => setTimeout(res, 800)); 
+          return r; 
+        }).catch(() => { throw new Error('youtubei failed') }),
       ],
-      12000
+      10000
     );
     return await succeed(result, result.source);
   } catch (e: any) {
