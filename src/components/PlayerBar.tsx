@@ -101,14 +101,14 @@ function SeekBar({
       
       {/* Progress fill */}
       <div
-        className={`absolute inset-y-0 right-0 bg-white rounded-full transition-all ${isDragging ? "" : "duration-200"}`}
+        className={`absolute inset-y-0 ${rtl ? "right-0" : "left-0"} bg-white rounded-full transition-all ${isDragging ? "" : "duration-200"}`}
         style={{ width: `${pct}%` }}
       />
       
       {/* Knob */}
       <div
         className={`absolute top-1/2 -translate-y-1/2 w-3.5 h-3.5 bg-white rounded-full shadow-xl transition-transform ${isDragging ? "scale-125" : "scale-100 opacity-0 group-hover:opacity-100"}`}
-        style={{ right: `calc(${pct}% - 7px)` }}
+        style={rtl ? { right: `calc(${pct}% - 7px)` } : { left: `calc(${pct}% - 7px)` }}
       />
     </div>
   );
@@ -256,24 +256,21 @@ function FullPlayer({
                  <div className="m-auto w-10 h-10 border-4 border-white/20 border-t-white rounded-full animate-spin" />
                ) : syncedLyrics.length > 0 ? (
                  syncedLyrics.map((line, i) => {
-                   const isActive = i === activeLineIndex;
-                   const isPassed = i < activeLineIndex;
-                   return (
-                     <p 
-                       key={i} 
-                       onClick={() => seekTo(line.time)}
-                       className={`transition-all duration-500 ease-out py-3 px-4 rounded-2xl cursor-pointer origin-center
-                         ${isActive 
-                           ? 'text-white font-black text-[28px] drop-shadow-[0_0_25px_rgba(255,255,255,0.5)] scale-110 opacity-100' 
-                           : isPassed 
-                             ? 'text-white/30 font-bold text-[22px] opacity-40 blur-[1px]' 
-                             : 'text-white/20 font-bold text-[22px] opacity-30 blur-[2px]'
-                         } hover:text-white/80 hover:blur-none`}
-                     >
-                       {line.text}
-                     </p>
-                   );
-                 })
+                    const isActive = i === activeLineIndex;
+                    return (
+                      <p 
+                        key={i} 
+                        onClick={() => seekTo(line.time)}
+                        className={`transition-opacity duration-500 py-4 px-4 rounded-2xl cursor-pointer text-[24px] leading-relaxed
+                          ${isActive 
+                            ? 'text-white font-black opacity-100' 
+                            : 'text-white font-bold opacity-30'
+                          } hover:opacity-100`}
+                      >
+                        {line.text}
+                      </p>
+                    );
+                  })
                ) : plainLyrics ? (
                  <p className="text-white/70 whitespace-pre-line text-lg font-bold leading-relaxed m-auto">{plainLyrics}</p>
                ) : (
@@ -512,9 +509,9 @@ export function PlayerBar() {
 
       {/* Mini Bar — on mobile, sits above the bottom tab bar */}
       <footer className="fixed left-0 right-0 z-30 bottom-[calc(env(safe-area-inset-bottom,0px)+64px)] md:bottom-0">
-        {/* Interactive Seek Bar at very top of mini-bar */}
-        <div className="h-1 relative group">
-          <SeekBar progress={state.currentTime} duration={state.duration} onSeek={seekTo} height="h-full" />
+        {/* Progress bar at the top edge of mini player */}
+        <div className="absolute top-0 left-0 right-0 h-[2px] bg-white/10" dir="ltr">
+          <SeekBar progress={state.currentTime} duration={state.duration} onSeek={seekTo} height="h-full" rtl={false} />
         </div>
 
         <div className="glass-dark border-t border-white/5 px-4 py-3 flex items-center gap-4">
