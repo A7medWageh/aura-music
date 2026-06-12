@@ -70,9 +70,9 @@ export async function GET(req: NextRequest) {
     if (!songPageUrl) {
       if (videoId) {
         console.warn(`[ytdownload] Song not found on Albumaty, falling back to YouTube for videoId: ${videoId}`);
-        return NextResponse.json({ url: `/api/audio/${videoId}` }, { headers: noCacheHeaders });
+        return NextResponse.json({ url: `/api/audio/${videoId}`, debugQueries: queries }, { headers: noCacheHeaders });
       }
-      return NextResponse.json({ error: "Song not found on Albumaty" }, { status: 404, headers: noCacheHeaders });
+      return NextResponse.json({ error: "Song not found on Albumaty", debugQueries: queries }, { status: 404, headers: noCacheHeaders });
     }
 
     // 2. Fetch the song page
@@ -87,9 +87,9 @@ export async function GET(req: NextRequest) {
     if (!mp3Link) {
       if (videoId) {
         console.warn(`[ytdownload] MP3 link not found on song page, falling back to YouTube for videoId: ${videoId}`);
-        return NextResponse.json({ url: `/api/audio/${videoId}` }, { headers: noCacheHeaders });
+        return NextResponse.json({ url: `/api/audio/${videoId}`, debugNoMp3: songPageUrl }, { headers: noCacheHeaders });
       }
-      return NextResponse.json({ error: "MP3 link not found on song page" }, { status: 404, headers: noCacheHeaders });
+      return NextResponse.json({ error: "Could not find valid audio source on Albumaty", debugNoMp3: songPageUrl }, { status: 404, headers: noCacheHeaders });
     }
 
     // Return the direct Albumaty MP3 URL
