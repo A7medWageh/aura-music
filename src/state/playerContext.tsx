@@ -344,7 +344,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
         // 2. Online Streaming (Albumaty / YouTube Fallback)
         // We fetch the API to get the direct URL to avoid Service Worker crashes on 307 Redirects
-        const ytdownloadApiUrl = `/api/ytdownload?videoId=${encodeURIComponent(videoIdToPlay)}&title=${encodeURIComponent(song.title)}&artist=${encodeURIComponent(song.artist || "")}&t=${Date.now()}`;
+        const qParams = new URLSearchParams({
+          videoId: videoIdToPlay,
+          title: song.title,
+          artist: song.artist || "",
+          q: (song as any).searchQuery || "",
+          t: Date.now().toString()
+        });
+        const ytdownloadApiUrl = `/api/ytdownload?${qParams.toString()}`;
         
         try {
           const proxyRes = await fetch(ytdownloadApiUrl);

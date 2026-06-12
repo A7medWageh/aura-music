@@ -95,7 +95,7 @@ export async function smartSearch(searchTerm: string) {
   const mergedSongs = [
     ...localMatches,
     ...ytSongs.filter((s: any) => !seenIds.has(s.youtubeVideoId)),
-  ].slice(0, 20);
+  ].slice(0, 20).map(s => ({ ...s, searchQuery: q }));
 
   const result = {
     songs: mergedSongs,

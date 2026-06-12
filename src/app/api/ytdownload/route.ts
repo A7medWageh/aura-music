@@ -5,6 +5,7 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const title = searchParams.get("title") || "";
   const artist = searchParams.get("artist") || "";
+  const qStr = searchParams.get("q") || "";
   const videoId = searchParams.get("videoId");
 
   if (!title) {
@@ -15,6 +16,9 @@ export async function GET(req: NextRequest) {
     // 1. Search Albumaty
     let songPageUrl: string | null = null;
     let queries: string[] = [];
+
+    // Prioritize the user's explicit original search query if available (e.g. Arabic query)
+    if (qStr) queries.push(qStr.trim());
 
     const cleanedTitle = title.replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').trim();
     
