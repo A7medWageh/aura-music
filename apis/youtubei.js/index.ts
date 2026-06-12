@@ -834,8 +834,11 @@ export async function getLyricsYoutube(videoId: string): Promise<string | null> 
     const innertube = await getYTWeb();
     const info = await innertube.music.getInfo(videoId);
     const lyrics = await info.getLyrics();
-    if (lyrics?.text) {
-      return lyrics.text;
+    
+    // lyrics is of type MusicDescriptionShelf which has a description property
+    const lyricsText = (lyrics as any)?.description?.text || (lyrics as any)?.text;
+    if (lyricsText) {
+      return lyricsText;
     }
   } catch (e) {
     console.warn(`[Lyrics] youtubei.js failed to get lyrics for ${videoId}`);

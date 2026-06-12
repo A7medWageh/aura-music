@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
     const $1 = cheerio.load(searchHtml);
     
     // Find the first song link
-    let songPageUrl = null;
+    let songPageUrl: string | null = null;
     $1('a').each((i, el) => {
       const href = $1(el).attr('href');
       if (!songPageUrl && href && href.includes('/song/')) {
