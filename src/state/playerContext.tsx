@@ -342,17 +342,24 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
            return;
         }
 
-        // 2. Online Streaming (Albumaty proxy)
-        // We set the stream URL directly so it plays instantly.
-        const streamUrl = `/api/ytdownload?videoId=${encodeURIComponent(videoIdToPlay)}&title=${encodeURIComponent(song.title)}&artist=${encodeURIComponent(song.artist || "")}&t=${Date.now()}`;
+        // 2. Online Streaming (Albumaty / YouTube Fallback)
+        // We fetch the API to get the direct URL to avoid Service Worker crashes on 307 Redirects
+        const ytdownloadApiUrl = `/api/ytdownload?videoId=${encodeURIComponent(videoIdToPlay)}&title=${encodeURIComponent(song.title)}&artist=${encodeURIComponent(song.artist || "")}&t=${Date.now()}`;
         
-        setState((prev) => ({ ...prev, isBuffering: false, streamUrl }));
-        player.src = streamUrl;
-        player.load();
-        if (isPlayingRef.current) player.play().catch(console.error);
-
-        // 3. Auto-download is intentionally removed.
-        // The song will only download when the user clicks the Download button.
+        try {
+          const proxyRes = await fetch(ytdownloadApiUrl);
+          const proxyData = await proxyRes.json();
+          if (proxyData.url && !cancelled) {
+            setState((prev) => ({ ...prev, isBuffering: false, streamUrl: proxyData.url }));
+            player.src = proxyData.url;
+            player.load();
+            if (isPlayingRef.current) player.play().catch(console.error);
+          } else {
+            throw new Error(proxyData.error || "Failed to fetch stream");
+          }
+        } catch (err) {
+          if (!cancelled) setState((prev) => ({ ...prev, isBuffering: false, error: "حدث خطأ أثناء تحميل الأغنية" }));
+        }
 
       } catch (error) {
         if (!cancelled) {

@@ -50,7 +50,7 @@ export async function GET(req: NextRequest) {
     if (!songPageUrl) {
       if (videoId) {
         console.warn(`[ytdownload] Song not found on Albumaty, falling back to YouTube for videoId: ${videoId}`);
-        return NextResponse.redirect(new URL(`/api/audio/${videoId}`, req.url));
+        return NextResponse.json({ url: `/api/audio/${videoId}` });
       }
       return NextResponse.json({ error: "Song not found on Albumaty" }, { status: 404 });
     }
@@ -66,19 +66,19 @@ export async function GET(req: NextRequest) {
     if (!mp3Link) {
       if (videoId) {
         console.warn(`[ytdownload] MP3 link not found on song page, falling back to YouTube for videoId: ${videoId}`);
-        return NextResponse.redirect(new URL(`/api/audio/${videoId}`, req.url));
+        return NextResponse.json({ url: `/api/audio/${videoId}` });
       }
       return NextResponse.json({ error: "MP3 link not found on song page" }, { status: 404 });
     }
 
-    // Redirect directly to the Albumaty MP3 URL to let the browser handle it
-    return NextResponse.redirect(mp3Link);
+    // Return the direct Albumaty MP3 URL
+    return NextResponse.json({ url: mp3Link });
   } catch (error: any) {
     const { searchParams } = new URL(req.url);
     const videoId = searchParams.get("videoId");
     if (videoId) {
       console.warn(`[ytdownload] Error occurred, falling back to YouTube for videoId: ${videoId} - ${error.message}`);
-      return NextResponse.redirect(new URL(`/api/audio/${videoId}`, req.url));
+      return NextResponse.json({ url: `/api/audio/${videoId}` });
     }
     return NextResponse.json(
       { error: "Failed to fetch from Albumaty", details: error.message },
