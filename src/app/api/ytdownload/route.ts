@@ -18,7 +18,17 @@ export async function GET(req: NextRequest) {
     let queries: string[] = [];
 
     // Prioritize the user's explicit original search query if available (e.g. Arabic query)
-    if (qStr) queries.push(qStr.trim());
+    if (qStr) {
+      const q = qStr.trim();
+      queries.push(q);
+      const parts = q.split(' ');
+      if (parts.length > 2) {
+        // user might have typed "Song Name Artist Name" -> try first 2 words
+        queries.push(parts.slice(0, 2).join(' '));
+        // try first 3 words
+        queries.push(parts.slice(0, 3).join(' '));
+      }
+    }
 
     const cleanedTitle = title.replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').trim();
     
