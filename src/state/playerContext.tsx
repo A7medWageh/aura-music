@@ -351,17 +351,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         player.load();
         if (isPlayingRef.current) player.play().catch(console.error);
 
-        // 3. Auto-download in the background
-        if (!cancelled) {
-          const { downloadSong } = await import("@/services/offline/downloader");
-          // Background download
-          downloadSong(song.songId, videoIdToPlay, {
-             title: song.title,
-             artist: song.artist || "فنان",
-             thumbnailUrl: song.thumbnailUrl,
-             folderName: song.artist || "أخرى"
-          });
-        }
+        // 3. Auto-download is intentionally removed.
+        // The song will only download when the user clicks the Download button.
 
       } catch (error) {
         if (!cancelled) {

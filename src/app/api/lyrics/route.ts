@@ -30,10 +30,13 @@ function cleanGeniusLyrics(raw: string): string {
     .join("\n");
 }
 
+import { getLyricsYoutube } from "@apis/youtubei.js";
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const trackName  = searchParams.get("trackName");
   const artistName = searchParams.get("artistName");
+  const videoId = searchParams.get("videoId");
 
   if (!trackName || !artistName) {
     return NextResponse.json({ error: "Missing trackName or artistName" }, { status: 400 });
@@ -65,7 +68,16 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // ── 2. Genius fallback — plain text only but very wide coverage ────────────
+    // ── 2. youtubei.js (YouTube Music native lyrics) ──────────────────────────
+    if (videoId) {
+      console.log(`[Lyrics] Trying youtubei.js for: ${videoId}`);
+      const ytLyrics = await getLyricsYoutube(videoId);
+      if (ytLyrics) {
+        return NextResponse.json({ plainLyrics: ytLyrics, source: "youtubei" });
+      }
+    }
+
+    // ── 3. Genius fallback — plain text only but very wide coverage ────────────
     console.log(`[Lyrics] Falling back to Genius for: ${trackName} – ${artistName}`);
     const geniusResults = await genius.songs.search(`${trackName} ${artistName}`);
 

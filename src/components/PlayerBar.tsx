@@ -156,7 +156,7 @@ function FullPlayer({
     setIsLyricsLoading(true);
     setSyncedLyrics([]);
     setPlainLyrics("");
-    fetch(`/api/lyrics?trackName=${encodeURIComponent(currentSong.title)}&artistName=${encodeURIComponent(currentSong.artist)}`)
+    fetch(`/api/lyrics?trackName=${encodeURIComponent(currentSong.title)}&artistName=${encodeURIComponent(currentSong.artist)}&videoId=${encodeURIComponent(currentSong.youtubeVideoId)}`)
       .then(res => res.json())
       .then(data => {
         const parsed = [];
@@ -476,7 +476,7 @@ export function PlayerBar() {
   const [premiumFeatureName, setPremiumFeatureName] = useState("");
   const { addToast } = useToastStore();
 
-  const isPremium = true; // Restored premium features for all users on listening
+  const isPremium = typeof window !== "undefined" && localStorage.getItem("aura_user_tier") === "premium";
 
   // Sync local progress
   useEffect(() => {

@@ -827,3 +827,18 @@ export async function getMoodMix(mood: string) {
     return [];
   }
 }
+
+// ── getLyricsYoutube ──────────────────────────────────────────────────────────
+export async function getLyricsYoutube(videoId: string): Promise<string | null> {
+  try {
+    const innertube = await getYTWeb();
+    const info = await innertube.music.getInfo(videoId);
+    const lyrics = await info.getLyrics();
+    if (lyrics?.text) {
+      return lyrics.text;
+    }
+  } catch (e) {
+    console.warn(`[Lyrics] youtubei.js failed to get lyrics for ${videoId}`);
+  }
+  return null;
+}
