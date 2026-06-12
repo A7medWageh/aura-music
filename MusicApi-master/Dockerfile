@@ -16,6 +16,11 @@ WORKDIR /app
 
 COPY --from=build /app/publish .
 
+# Install dependencies and yt-dlp
+RUN apt-get update && apt-get install -y python3 ffmpeg curl && \
+    curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
+    chmod a+rx /usr/local/bin/yt-dlp
+
 # Railway injects PORT env var
 ENV ASPNETCORE_ENVIRONMENT=Production
 
