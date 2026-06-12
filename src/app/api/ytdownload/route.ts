@@ -16,6 +16,33 @@ export async function GET(req: NextRequest) {
   // Generate the target URL in the .NET backend
   const targetUrl = `${backendUrl}/api/ytdownload?videoId=${encodeURIComponent(videoId)}`;
 
-  // Return a 307 Temporary Redirect so the browser fetches directly from the .NET API
-  return NextResponse.redirect(targetUrl, 307);
+  try {
+    const res = await fetch(targetUrl, {
+      // Don't buffer the whole response
+      cache: "no-store"
+    });
+
+    if (!res.ok) {
+      return NextResponse.json(
+        { error: `Backend API returned ${res.status}: ${res.statusText}` },
+        { status: res.status }
+      );
+    }
+
+    // Proxy the stream back to the client
+    const headers = new Headers();
+    res.headers.forEach((value, key) => {
+      headers.set(key, value);
+    });
+
+    return new NextResponse(res.body, {
+      status: res.status,
+      headers
+    });
+  } catch (error: any) {
+    return NextResponse.json(
+      { error: "Failed to connect to backend API", details: error.message },
+      { status: 502 }
+    );
+  }
 }

@@ -49,16 +49,28 @@ namespace MusicApi.Controllers
                 }
 
                 // Read output with a timeout
-                var outputTask = process.StandardOutput.ReadLineAsync();
-                if (await Task.WhenAny(outputTask, Task.Delay(15000)) != outputTask)
+                var cts = new CancellationTokenSource(15000);
+                string directUrl = null;
+
+                try 
+                {
+                    while (!process.StandardOutput.EndOfStream)
+                    {
+                        var line = await process.StandardOutput.ReadLineAsync(cts.Token);
+                        if (!string.IsNullOrWhiteSpace(line) && line.StartsWith("http"))
+                        {
+                            directUrl = line;
+                            break;
+                        }
+                    }
+                }
+                catch (OperationCanceledException)
                 {
                     process.Kill();
                     return StatusCode(504, new { error = "yt-dlp timed out" });
                 }
 
-                var directUrl = await outputTask;
-
-                if (string.IsNullOrWhiteSpace(directUrl) || !directUrl.StartsWith("http"))
+                if (string.IsNullOrWhiteSpace(directUrl))
                 {
                     var errorOutput = await process.StandardError.ReadToEndAsync();
                     _logger.LogError("yt-dlp failed: {Error}", errorOutput);
