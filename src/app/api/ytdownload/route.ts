@@ -14,31 +14,30 @@ export async function GET(req: NextRequest) {
   try {
     // 1. Search Albumaty
     let songPageUrl: string | null = null;
-    
-    // First try: Title + Artist
-    let searchQuery = `${title} ${artist}`.trim();
-    let searchUrl = `https://www.albumaty.com/search.php?q=${encodeURIComponent(searchQuery)}`;
-    let searchRes = await fetch(searchUrl, { cache: "no-store" });
-    let searchHtml = await searchRes.text();
-    let $1 = cheerio.load(searchHtml);
-    
-    $1('a').each((i, el) => {
-      const href = $1(el).attr('href');
-      if (!songPageUrl && href && href.includes('/song/')) {
-        songPageUrl = href;
-      }
-    });
+    let queries: string[] = [];
 
-    // Second try: Title only
-    if (!songPageUrl && title) {
-      searchQuery = title.trim();
-      // Remove any content inside parentheses (e.g. "Song Name (Official Video)")
-      searchQuery = searchQuery.replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').trim();
+    const cleanedTitle = title.replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').trim();
+    
+    if (cleanedTitle && artist) queries.push(`${cleanedTitle} ${artist}`.trim());
+    if (cleanedTitle) queries.push(cleanedTitle);
+    
+    if (cleanedTitle.includes('-')) {
+      const parts = cleanedTitle.split('-').map(p => p.trim());
+      queries.push(...parts);
+    }
+    
+    const words = cleanedTitle.split(' ');
+    if (words.length > 2) {
+      queries.push(words.slice(0, 2).join(' '));
+    }
+
+    for (const q of queries) {
+      if (!q || songPageUrl) continue;
       
-      searchUrl = `https://www.albumaty.com/search.php?q=${encodeURIComponent(searchQuery)}`;
-      searchRes = await fetch(searchUrl, { cache: "no-store" });
-      searchHtml = await searchRes.text();
-      $1 = cheerio.load(searchHtml);
+      const searchUrl = `https://www.albumaty.com/search.php?q=${encodeURIComponent(q)}`;
+      const searchRes = await fetch(searchUrl, { cache: "no-store" });
+      const searchHtml = await searchRes.text();
+      const $1 = cheerio.load(searchHtml);
       
       $1('a').each((i, el) => {
         const href = $1(el).attr('href');
@@ -64,32 +63,8 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "MP3 link not found on song page" }, { status: 404 });
     }
 
-    // 4. Proxy the stream to the client
-    const streamRes = await fetch(mp3Link, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        // Forward range headers for seeking
-        ...(req.headers.get("range") ? { "Range": req.headers.get("range")! } : {})
-      },
-      cache: "no-store",
-    });
-
-    if (!streamRes.ok) {
-      return NextResponse.json(
-        { error: `Albumaty stream returned ${streamRes.status}: ${streamRes.statusText}` },
-        { status: streamRes.status }
-      );
-    }
-
-    const headers = new Headers();
-    streamRes.headers.forEach((value, key) => headers.set(key, value));
-    headers.set("Access-Control-Allow-Origin", "*");
-    headers.set("Access-Control-Expose-Headers", "Content-Length, Accept-Ranges");
-
-    return new NextResponse(streamRes.body, {
-      status: streamRes.status,
-      headers,
-    });
+    // Redirect directly to the Albumaty MP3 URL to let the browser handle it
+    return NextResponse.redirect(mp3Link);
   } catch (error: any) {
     return NextResponse.json(
       { error: "Failed to fetch from Albumaty", details: error.message },
