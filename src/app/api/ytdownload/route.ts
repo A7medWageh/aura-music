@@ -13,15 +13,15 @@ export async function GET(req: NextRequest) {
 
   try {
     // 1. Search Albumaty
-    const searchQuery = `${title} ${artist}`.trim();
-    const searchUrl = `https://www.albumaty.com/search.php?q=${encodeURIComponent(searchQuery)}`;
-    
-    const searchRes = await fetch(searchUrl, { cache: "no-store" });
-    const searchHtml = await searchRes.text();
-    const $1 = cheerio.load(searchHtml);
-    
-    // Find the first song link
     let songPageUrl: string | null = null;
+    
+    // First try: Title + Artist
+    let searchQuery = `${title} ${artist}`.trim();
+    let searchUrl = `https://www.albumaty.com/search.php?q=${encodeURIComponent(searchQuery)}`;
+    let searchRes = await fetch(searchUrl, { cache: "no-store" });
+    let searchHtml = await searchRes.text();
+    let $1 = cheerio.load(searchHtml);
+    
     $1('a').each((i, el) => {
       const href = $1(el).attr('href');
       if (!songPageUrl && href && href.includes('/song/')) {
@@ -29,11 +29,26 @@ export async function GET(req: NextRequest) {
       }
     });
 
+    // Second try: Title only
+    if (!songPageUrl && title) {
+      searchQuery = title.trim();
+      // Remove any content inside parentheses (e.g. "Song Name (Official Video)")
+      searchQuery = searchQuery.replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').trim();
+      
+      searchUrl = `https://www.albumaty.com/search.php?q=${encodeURIComponent(searchQuery)}`;
+      searchRes = await fetch(searchUrl, { cache: "no-store" });
+      searchHtml = await searchRes.text();
+      $1 = cheerio.load(searchHtml);
+      
+      $1('a').each((i, el) => {
+        const href = $1(el).attr('href');
+        if (!songPageUrl && href && href.includes('/song/')) {
+          songPageUrl = href;
+        }
+      });
+    }
+
     if (!songPageUrl) {
-      if (videoId) {
-        console.warn(`[ytdownload] Song not found on Albumaty, falling back to YouTube for videoId: ${videoId}`);
-        return NextResponse.redirect(new URL(`/api/audio/${videoId}`, req.url));
-      }
       return NextResponse.json({ error: "Song not found on Albumaty" }, { status: 404 });
     }
 
@@ -46,10 +61,6 @@ export async function GET(req: NextRequest) {
     const mp3Link = $2('audio source').attr('src') || $2('audio').attr('src');
 
     if (!mp3Link) {
-      if (videoId) {
-        console.warn(`[ytdownload] MP3 link not found on Albumaty page, falling back to YouTube for videoId: ${videoId}`);
-        return NextResponse.redirect(new URL(`/api/audio/${videoId}`, req.url));
-      }
       return NextResponse.json({ error: "MP3 link not found on song page" }, { status: 404 });
     }
 
@@ -64,10 +75,6 @@ export async function GET(req: NextRequest) {
     });
 
     if (!streamRes.ok) {
-      if (videoId) {
-        console.warn(`[ytdownload] Albumaty stream returned ${streamRes.status}, falling back to YouTube for videoId: ${videoId}`);
-        return NextResponse.redirect(new URL(`/api/audio/${videoId}`, req.url));
-      }
       return NextResponse.json(
         { error: `Albumaty stream returned ${streamRes.status}: ${streamRes.statusText}` },
         { status: streamRes.status }
@@ -84,12 +91,6 @@ export async function GET(req: NextRequest) {
       headers,
     });
   } catch (error: any) {
-    const { searchParams } = new URL(req.url);
-    const videoId = searchParams.get("videoId");
-    if (videoId) {
-      console.warn(`[ytdownload] Error occurred, falling back to YouTube for videoId: ${videoId} - ${error.message}`);
-      return NextResponse.redirect(new URL(`/api/audio/${videoId}`, req.url));
-    }
     return NextResponse.json(
       { error: "Failed to fetch from Albumaty", details: error.message },
       { status: 500 }
