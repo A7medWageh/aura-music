@@ -15,8 +15,7 @@ async function downloadAudioBlob(
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
-      const baseUrl = process.env.NEXT_PUBLIC_MUSIC_API_BASE_URL || "";
-      const url = `${baseUrl}/api/ytdownload?videoId=${encodeURIComponent(videoId)}&t=${Date.now()}`;
+      const url = `/api/ytdownload?videoId=${encodeURIComponent(videoId)}&t=${Date.now()}`;
       const res = await fetch(url, { cache: "no-store", signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
