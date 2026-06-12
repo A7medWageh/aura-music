@@ -427,9 +427,40 @@ export async function resolveStream(videoId: string): Promise<string> {
     return url;
   };
 
-  // Only use InnerTube — all other scrapers are dead (Piped/Cobalt/Invidious broken, yt-dlp not on Railway)
-  const url = await withTimeout(resolveWithYoutubei(videoId), 20000, "");
-  if (!url) throw new Error("stream_resolve_failed: InnerTube returned empty URL");
+  // 3. Try Piped API first (usually bypasses 403 blocks)
+  let url = "";
+  let source: string = "youtubei";
+  try {
+    console.log(`[Stream] Trying Piped API for ${videoId}...`);
+    url = await withTimeout(resolveWithPiped(videoId), 8000, "");
+    if (url) source = "piped";
+  } catch (e) {
+    console.warn(`[Stream] Piped API failed for ${videoId}:`, e);
+  }
+
+  // 4. Try ytdl-core
+  if (!url) {
+    try {
+      console.log(`[Stream] Trying ytdl-core for ${videoId}...`);
+      url = await withTimeout(resolveWithYtdlCore(videoId), 10000, "");
+      if (url) source = "ytdl-core";
+    } catch (e) {
+      console.warn(`[Stream] ytdl-core failed for ${videoId}:`, e);
+    }
+  }
+
+  // 5. Fallback to youtubei.js
+  if (!url) {
+    try {
+      console.log(`[Stream] Trying youtubei.js for ${videoId}...`);
+      url = await withTimeout(resolveWithYoutubei(videoId), 15000, "");
+      if (url) source = "youtubei";
+    } catch (e) {
+      console.warn(`[Stream] youtubei.js failed for ${videoId}:`, e);
+    }
+  }
+
+  if (!url) throw new Error("stream_resolve_failed: All resolvers failed");
   return await cacheAndReturn(url);
 }
 

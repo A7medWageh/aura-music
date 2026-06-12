@@ -476,7 +476,7 @@ export function PlayerBar() {
   const [premiumFeatureName, setPremiumFeatureName] = useState("");
   const { addToast } = useToastStore();
 
-  const isPremium = typeof window !== "undefined" && localStorage.getItem("aura_user_tier") === "premium";
+  const isPremium = true; // Restored premium features for all users on listening
 
   // Sync local progress
   useEffect(() => {

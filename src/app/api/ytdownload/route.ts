@@ -1,64 +1,78 @@
 import { NextRequest, NextResponse } from "next/server";
-import { exec } from "child_process";
-import { promisify } from "util";
-
-const execAsync = promisify(exec);
+import * as cheerio from "cheerio";
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
-  const videoId = searchParams.get("videoId");
+  const title = searchParams.get("title") || "";
+  const artist = searchParams.get("artist") || "";
 
-  if (!videoId) {
-    return NextResponse.json({ error: "Missing videoId" }, { status: 400 });
+  if (!title) {
+    return NextResponse.json({ error: "Missing title" }, { status: 400 });
   }
 
   try {
-    const ytDlpPath = process.env.YT_DLP_PATH || "yt-dlp";
-    // -f bestaudio fetches the best audio format. -g gets the direct URL.
-    const { stdout, stderr } = await execAsync(
-      `${ytDlpPath} -f bestaudio -g "https://www.youtube.com/watch?v=${videoId}"`
-    );
+    // 1. Search Albumaty
+    const searchQuery = `${title} ${artist}`.trim();
+    const searchUrl = `https://www.albumaty.com/search.php?q=${encodeURIComponent(searchQuery)}`;
+    
+    const searchRes = await fetch(searchUrl, { cache: "no-store" });
+    const searchHtml = await searchRes.text();
+    const $1 = cheerio.load(searchHtml);
+    
+    // Find the first song link
+    let songPageUrl = null;
+    $1('a').each((i, el) => {
+      const href = $1(el).attr('href');
+      if (!songPageUrl && href && href.includes('/song/')) {
+        songPageUrl = href;
+      }
+    });
 
-    // Parse output lines to find the actual HTTP URL, skipping warnings
-    const lines = stdout.split("\n");
-    const directUrl = lines.find((line) => line.trim().startsWith("http"));
-
-    if (!directUrl) {
-      return NextResponse.json(
-        { error: "Could not find stream URL", details: stderr || stdout },
-        { status: 500 }
-      );
+    if (!songPageUrl) {
+      return NextResponse.json({ error: "Song not found on Albumaty" }, { status: 404 });
     }
 
-    // Proxy the stream back to the client directly
-    const res = await fetch(directUrl.trim(), {
+    // 2. Fetch the song page
+    const songRes = await fetch(songPageUrl, { cache: "no-store" });
+    const songHtml = await songRes.text();
+    const $2 = cheerio.load(songHtml);
+
+    // 3. Extract MP3 link
+    const mp3Link = $2('audio source').attr('src') || $2('audio').attr('src');
+
+    if (!mp3Link) {
+      return NextResponse.json({ error: "MP3 link not found on song page" }, { status: 404 });
+    }
+
+    // 4. Proxy the stream to the client
+    const streamRes = await fetch(mp3Link, {
       headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        // Forward range headers for seeking
+        ...(req.headers.get("range") ? { "Range": req.headers.get("range")! } : {})
       },
       cache: "no-store",
     });
 
-    if (!res.ok) {
+    if (!streamRes.ok) {
       return NextResponse.json(
-        { error: `YouTube stream returned ${res.status}: ${res.statusText}` },
-        { status: res.status }
+        { error: `Albumaty stream returned ${streamRes.status}: ${streamRes.statusText}` },
+        { status: streamRes.status }
       );
     }
 
     const headers = new Headers();
-    res.headers.forEach((value, key) => headers.set(key, value));
-    // Ensure content length and range headers are exposed for the player
+    streamRes.headers.forEach((value, key) => headers.set(key, value));
     headers.set("Access-Control-Allow-Origin", "*");
     headers.set("Access-Control-Expose-Headers", "Content-Length, Accept-Ranges");
 
-    return new NextResponse(res.body, {
-      status: res.status,
+    return new NextResponse(streamRes.body, {
+      status: streamRes.status,
       headers,
     });
   } catch (error: any) {
     return NextResponse.json(
-      { error: "Failed to run yt-dlp", details: error.message },
+      { error: "Failed to fetch from Albumaty", details: error.message },
       { status: 500 }
     );
   }

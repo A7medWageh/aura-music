@@ -7,6 +7,7 @@ async function downloadAudioBlob(
   songId: string, 
   videoId: string, 
   title: string,
+  artist: string,
   onProgress?: (received: number, total: number, delta: number) => void,
   signal?: AbortSignal
 ): Promise<boolean> {
@@ -15,7 +16,7 @@ async function downloadAudioBlob(
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
-      const url = `/api/ytdownload?videoId=${encodeURIComponent(videoId)}&t=${Date.now()}`;
+      const url = `/api/ytdownload?videoId=${encodeURIComponent(videoId)}&title=${encodeURIComponent(title)}&artist=${encodeURIComponent(artist)}&t=${Date.now()}`;
       const res = await fetch(url, { cache: "no-store", signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
@@ -119,7 +120,7 @@ export async function downloadSong(
     const ctrl = new AbortController();
     setJobController(songId, ctrl);
 
-    const ok = await downloadAudioBlob(songId, songId, videoId, title, undefined, ctrl.signal);
+    const ok = await downloadAudioBlob(songId, songId, videoId, title, artist, undefined, ctrl.signal);
     
     // Check if it was cancelled
     if (ctrl.signal.aborted) return false;
@@ -189,6 +190,7 @@ export async function downloadAlbum(
         song.songId, 
         song.youtubeVideoId, 
         title,
+        metadata.artistName || song.artist || "فنان غير معروف",
         (received, total, delta) => {
           totalAccumulatedBytes += delta;
           // Update total bytes in store (cumulative)

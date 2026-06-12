@@ -333,33 +333,34 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         // 1. Check Offline cache
         let cachedBlob = await getAudioBlob(song.songId);
         
-        // 2. Auto-download if not cached
-        if (!cachedBlob && !cancelled) {
-          setState((prev) => ({ ...prev, isBuffering: true, error: "جاري التحميل للاستماع بدون إنترنت..." }));
+        if (cachedBlob) {
+           console.log("[Player] Playing from offline storage.");
+           setState((prev) => ({ ...prev, isBuffering: false, streamUrl: URL.createObjectURL(cachedBlob) }));
+           player.src = URL.createObjectURL(cachedBlob);
+           player.load();
+           if (isPlayingRef.current) player.play().catch(console.error);
+           return;
+        }
+
+        // 2. Online Streaming (Albumaty proxy)
+        // We set the stream URL directly so it plays instantly.
+        const streamUrl = `/api/ytdownload?videoId=${encodeURIComponent(videoIdToPlay)}&title=${encodeURIComponent(song.title)}&artist=${encodeURIComponent(song.artist || "")}&t=${Date.now()}`;
+        
+        setState((prev) => ({ ...prev, isBuffering: false, streamUrl }));
+        player.src = streamUrl;
+        player.load();
+        if (isPlayingRef.current) player.play().catch(console.error);
+
+        // 3. Auto-download in the background
+        if (!cancelled) {
           const { downloadSong } = await import("@/services/offline/downloader");
-          const ok = await downloadSong(song.songId, videoIdToPlay, {
+          // Background download
+          downloadSong(song.songId, videoIdToPlay, {
              title: song.title,
              artist: song.artist || "فنان",
              thumbnailUrl: song.thumbnailUrl,
              folderName: song.artist || "أخرى"
           });
-          if (ok && !cancelled) {
-              cachedBlob = await getAudioBlob(song.songId);
-          } else if (!cancelled) {
-              setState((prev) => ({ ...prev, isBuffering: false, error: "فشل التحميل. يرجى التحقق من اتصالك." }));
-              return;
-          }
-        }
-
-        if (cachedBlob && !cancelled) {
-          const blobUrl = URL.createObjectURL(cachedBlob);
-          setState((prev) => ({ ...prev, streamUrl: blobUrl, isBuffering: false, error: null }));
-          player.src = blobUrl;
-          player.preload = "auto";
-          player.load();
-          if (isPlayingRef.current) player.play().catch(console.error);
-          preloadNext(state.currentSongId!, state.queue);
-          return;
         }
 
       } catch (error) {
