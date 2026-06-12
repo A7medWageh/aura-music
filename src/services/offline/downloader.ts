@@ -52,6 +52,10 @@ async function downloadAudioBlob(
       }
       console.log(`[Download] Finished read loop for ${title}. Read ${chunksRead} chunks, ${receivedBytes} bytes.`);
 
+      if (receivedBytes < 1000) {
+        throw new Error("Download resulted in an empty or invalid file (possible 403 Forbidden).");
+      }
+
       const blob = new Blob(chunks as any, { type: "audio/mpeg" });
       await storeAudioBlob(songId, blob);
       console.log(`[Download] Stored ${title} successfully in DB!`);
