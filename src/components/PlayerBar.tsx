@@ -24,10 +24,10 @@ function fmtTime(s: number) {
 
 // ─── Seek Bar ────────────────────────────────────────────────────────
 function SeekBar({
-  progress, duration, onSeek, height = "h-1", rtl = true
+  progress, duration, onSeek, height = "h-1", rtl = true, isPremium = true, onPremiumClick
 }: {
   progress: number; duration: number; onSeek: (t: number) => void;
-  height?: string; rtl?: boolean;
+  height?: string; rtl?: boolean; isPremium?: boolean; onPremiumClick?: () => void;
 }) {
   const [isDragging, setIsDragging] = useState(false);
   const [dragProgress, setDragProgress] = useState(0);
@@ -48,7 +48,7 @@ function SeekBar({
   };
 
   useEffect(() => {
-    if (!isDragging) return;
+    if (!isDragging || !isPremium) return;
 
     const onMove = (e: MouseEvent) => handleUpdate(e.clientX);
     const onUp = (e: MouseEvent) => {
@@ -66,7 +66,7 @@ function SeekBar({
 
   // Touch support for mobile
   useEffect(() => {
-    if (!isDragging) return;
+    if (!isDragging || !isPremium) return;
     const onTouchMove = (e: TouchEvent) => handleUpdate(e.touches[0].clientX);
     const onTouchEnd = (e: TouchEvent) => {
         onSeek(calculatePos(e.changedTouches[0].clientX) * duration);
@@ -87,10 +87,18 @@ function SeekBar({
     <div
       ref={barRef}
       onMouseDown={(e) => {
+        if (!isPremium && onPremiumClick) {
+          onPremiumClick();
+          return;
+        }
         setIsDragging(true);
         handleUpdate(e.clientX);
       }}
       onTouchStart={(e) => {
+        if (!isPremium && onPremiumClick) {
+          onPremiumClick();
+          return;
+        }
         setIsDragging(true);
         handleUpdate(e.touches[0].clientX);
       }}
@@ -129,7 +137,7 @@ function FullPlayer({
   const { state, currentSong, togglePlay, next, prev, seekTo, setVolume, cycleRepeat, setShuffle, setHighQuality } = usePlayer();
   const art = currentSong?.thumbnailUrl || currentSong?.metadata?.thumbnailUrl;
   const [isAiMix, setIsAiMix] = useState(false);
-  const [activeTab, setActiveTab] = useState("lyrics"); // lyrics, queue, audio
+  const [activeTab, setActiveTab] = useState("audio"); // lyrics, queue, audio
   const [syncedLyrics, setSyncedLyrics] = useState<{time: number, text: string}[]>([]);
   const [plainLyrics, setPlainLyrics] = useState("");
   const [isLyricsLoading, setIsLyricsLoading] = useState(false);
@@ -368,7 +376,18 @@ function FullPlayer({
         <div className="px-4 pb-[env(safe-area-inset-bottom,20px)] pt-2 relative z-20">
           {/* Seek Bar */}
           <div className="mb-4 px-2">
-            <SeekBar progress={state.currentTime} duration={state.duration} onSeek={seekTo} height="h-1" rtl={false} />
+            <SeekBar 
+              progress={state.currentTime} 
+              duration={state.duration} 
+              onSeek={seekTo} 
+              height="h-1" 
+              rtl={false} 
+              isPremium={isPremium}
+              onPremiumClick={() => {
+                setPremiumFeatureName("تقديم وتأخير الأغنية");
+                setIsPremiumModalOpen(true);
+              }}
+            />
             <div className="flex justify-between mt-3 text-[11px] font-bold text-white/50 tabular-nums" dir="ltr">
                <span>{fmtTime(state.currentTime)}</span>
                <span>-{fmtTime(state.duration - state.currentTime)}</span>
@@ -406,7 +425,6 @@ function FullPlayer({
             
             <button onClick={onDownload} className="p-2 relative">
               <DownloadCloud className="text-white/60 hover:text-white w-7 h-7" />
-              {!isPremium && <Crown className="w-3 h-3 text-amber-400 absolute top-1 right-1 drop-shadow-md" />}
             </button>
           </div>
 
@@ -427,10 +445,18 @@ function FullPlayer({
             </button>
             
             <button 
-              onClick={() => setActiveTab("lyrics")}
-              className={`flex items-center gap-2 font-bold text-sm px-4 py-2 rounded-full transition-all ${activeTab === 'lyrics' ? 'bg-white text-black' : 'text-white/50 hover:bg-white/10'}`}
+              onClick={() => {
+                if (!isPremium) {
+                  setPremiumFeatureName("قراءة الكلمات والتمرير الذكي");
+                  setIsPremiumModalOpen(true);
+                  return;
+                }
+                setActiveTab("lyrics");
+              }}
+              className={`relative flex items-center gap-2 font-bold text-sm px-4 py-2 rounded-full transition-all ${activeTab === 'lyrics' ? 'bg-white text-black' : 'text-white/50 hover:bg-white/10'}`}
             >
                <AlignRight className="w-5 h-5" /> كلمات
+               {!isPremium && <Crown className="absolute -top-1 -right-1 w-3 h-3 text-amber-400 drop-shadow-md" />}
             </button>
           </div>
         </div>
@@ -494,11 +520,6 @@ export function PlayerBar() {
 
   const handleDownload = async () => {
     if (!currentSong) return;
-    if (!isPremium) {
-      setPremiumFeatureName("التحميل والاستماع بدون إنترنت");
-      setIsPremiumModalOpen(true);
-      return;
-    }
     addToast(`جاري تحميل "${currentSong.title}"... بسرعة الصاروخ 🚀`);
     const ok = await downloadSong(currentSong.songId, currentSong.youtubeVideoId, {
       title: currentSong.title,
@@ -536,7 +557,18 @@ export function PlayerBar() {
       <footer className="fixed left-0 right-0 z-30 bottom-[calc(env(safe-area-inset-bottom,0px)+64px)] md:bottom-0">
         {/* Progress bar at the top edge of mini player */}
         <div className="absolute top-0 left-0 right-0 h-[2px] bg-white/10" dir="ltr">
-          <SeekBar progress={state.currentTime} duration={state.duration} onSeek={seekTo} height="h-full" rtl={false} />
+          <SeekBar 
+            progress={state.currentTime} 
+            duration={state.duration} 
+            onSeek={seekTo} 
+            height="h-full" 
+            rtl={false}
+            isPremium={isPremium}
+            onPremiumClick={() => {
+              setPremiumFeatureName("تقديم وتأخير الأغنية");
+              setIsPremiumModalOpen(true);
+            }}
+          />
         </div>
 
         <div className="glass-dark border-t border-white/5 px-4 py-3 flex items-center gap-4">
@@ -601,7 +633,6 @@ export function PlayerBar() {
             </button>
             <button onClick={handleDownload} className="text-gray-500 hover:text-[#1db954] transition-colors hidden md:block relative">
               <DownloadCloud className="w-4 h-4" />
-              {!isPremium && <Crown className="w-3 h-3 text-amber-500 absolute -top-2 -right-2 drop-shadow-md" />}
             </button>
             <div className="hidden md:flex items-center gap-1.5 group">
               <Volume2 className="w-3.5 h-3.5 text-gray-500" />

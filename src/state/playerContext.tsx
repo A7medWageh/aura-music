@@ -298,7 +298,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     (async () => {
       try {
         let videoIdToPlay = song.youtubeVideoId;
-        let directMp3UrlToPlay: string | null = null;
         
         // ⚡ Lazy YouTube Resolution if missing
         if (!videoIdToPlay) {
@@ -306,15 +305,19 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
             const res = await fetch(`/api/resolve-youtube?title=${encodeURIComponent(song.title)}&artist=${encodeURIComponent(song.artist || "")}`);
             const data = await res.json();
             if (data.success && !cancelled) {
-              if (data.isDirectMp3 && data.streamUrl) {
-                directMp3UrlToPlay = data.streamUrl;
-              } else if (data.videoId) {
+              if (data.videoId) {
                 videoIdToPlay = data.videoId;
                 // Mutate queue to save the resolved ID
                 setState(prev => ({
                   ...prev,
                   queue: prev.queue.map(s => s.songId === song.songId ? { ...s, youtubeVideoId: videoIdToPlay } : s)
                 }));
+              } else if (data.isDirectMp3 && data.streamUrl) {
+                // Ignore direct mp3 for offline playing, we need a videoId to download via our worker usually,
+                // but if we have directMp3 maybe we can't easily download it with our downloadSong.
+                // However, downloadSong uses /api/download?videoId.
+                // If we don't have videoId, we can't download.
+                throw new Error("لم نتمكن من العثور على الأغنية");
               } else {
                 throw new Error("لم نتمكن من العثور على الأغنية");
               }
@@ -327,11 +330,30 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           }
         }
         
-        // 1. Offline cache first (instant)
-        const cachedBlob = await getAudioBlob(song.songId);
+        // 1. Check Offline cache
+        let cachedBlob = await getAudioBlob(song.songId);
+        
+        // 2. Auto-download if not cached
+        if (!cachedBlob && !cancelled) {
+          setState((prev) => ({ ...prev, isBuffering: true, error: "جاري التحميل للاستماع بدون إنترنت..." }));
+          const { downloadSong } = await import("@/services/offline/downloader");
+          const ok = await downloadSong(song.songId, videoIdToPlay, {
+             title: song.title,
+             artist: song.artist || "فنان",
+             thumbnailUrl: song.thumbnailUrl,
+             folderName: song.artist || "أخرى"
+          });
+          if (ok && !cancelled) {
+              cachedBlob = await getAudioBlob(song.songId);
+          } else if (!cancelled) {
+              setState((prev) => ({ ...prev, isBuffering: false, error: "فشل التحميل. يرجى التحقق من اتصالك." }));
+              return;
+          }
+        }
+
         if (cachedBlob && !cancelled) {
           const blobUrl = URL.createObjectURL(cachedBlob);
-          setState((prev) => ({ ...prev, streamUrl: blobUrl, isBuffering: false }));
+          setState((prev) => ({ ...prev, streamUrl: blobUrl, isBuffering: false, error: null }));
           player.src = blobUrl;
           player.preload = "auto";
           player.load();
@@ -339,32 +361,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           preloadNext(state.currentSongId!, state.queue);
           return;
         }
-
-        // Play direct mp3 immediately if available
-        if (directMp3UrlToPlay && !cancelled) {
-          setState((prev) => ({ ...prev, streamUrl: directMp3UrlToPlay, error: null, isBuffering: false }));
-          player.src = directMp3UrlToPlay;
-          player.preload = "auto";
-          player.load();
-          if (isPlayingRef.current) player.play().catch(console.error);
-          preloadNext(state.currentSongId!, state.queue);
-          return;
-        }
-
-        if (!videoIdToPlay) return;
-        
-        // ⚡ Resolve stream (Fast lane piped API -> proxy fallback)
-        const targetUrl = await resolveStream(videoIdToPlay);
-        if (cancelled) return;
-        
-        setState((prev) => ({ ...prev, streamUrl: targetUrl, error: null, isBuffering: false }));
-        player.src = targetUrl;
-        player.preload = "auto";
-        player.load();
-        if (isPlayingRef.current) player.play().catch(console.error);
-        preloadNext(state.currentSongId!, state.queue);
-        return;
-
 
       } catch (error) {
         if (!cancelled) {

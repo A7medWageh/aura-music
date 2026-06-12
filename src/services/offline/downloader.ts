@@ -96,12 +96,6 @@ export async function downloadSong(
   const title = metadata?.title || "أغنية محفوظة";
   const artist = metadata?.artist || "فنان غير معروف";
 
-  const tier = typeof window !== "undefined" ? localStorage.getItem("aura_user_tier") : "free";
-  if (tier !== "premium") {
-    console.error("[Download] Offline downloads are restricted to Premium members only.");
-    return false;
-  }
-
   try {
     await saveSongMeta({
       songId,
@@ -151,12 +145,6 @@ export async function downloadAlbum(
 ): Promise<boolean> {
   const albumName = metadata.albumName || "ألبوم";
   const total = songs.length;
-  
-  const tier = typeof window !== "undefined" ? localStorage.getItem("aura_user_tier") : "free";
-  if (tier !== "premium") {
-    console.error("[Download] Offline downloads are restricted to Premium members only.");
-    return false;
-  }
 
   const CONCURRENCY = 20; // Increased for "rocket" speed
 
