@@ -47,12 +47,18 @@ export async function GET(req: NextRequest) {
       });
     }
 
+    const noCacheHeaders = {
+      "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+      "Pragma": "no-cache",
+      "Expires": "0",
+    };
+
     if (!songPageUrl) {
       if (videoId) {
         console.warn(`[ytdownload] Song not found on Albumaty, falling back to YouTube for videoId: ${videoId}`);
-        return NextResponse.json({ url: `/api/audio/${videoId}` });
+        return NextResponse.json({ url: `/api/audio/${videoId}` }, { headers: noCacheHeaders });
       }
-      return NextResponse.json({ error: "Song not found on Albumaty" }, { status: 404 });
+      return NextResponse.json({ error: "Song not found on Albumaty" }, { status: 404, headers: noCacheHeaders });
     }
 
     // 2. Fetch the song page
@@ -61,28 +67,32 @@ export async function GET(req: NextRequest) {
     const $2 = cheerio.load(songHtml);
 
     // 3. Extract MP3 link
-    const mp3Link = $2('audio source').attr('src') || $2('audio').attr('src');
+    // First check meta property og:audio, then audio source, then audio src
+    const mp3Link = $2('meta[property="og:audio"]').attr('content') || $2('audio source').attr('src') || $2('audio').attr('src');
 
     if (!mp3Link) {
       if (videoId) {
         console.warn(`[ytdownload] MP3 link not found on song page, falling back to YouTube for videoId: ${videoId}`);
-        return NextResponse.json({ url: `/api/audio/${videoId}` });
+        return NextResponse.json({ url: `/api/audio/${videoId}` }, { headers: noCacheHeaders });
       }
-      return NextResponse.json({ error: "MP3 link not found on song page" }, { status: 404 });
+      return NextResponse.json({ error: "MP3 link not found on song page" }, { status: 404, headers: noCacheHeaders });
     }
 
     // Return the direct Albumaty MP3 URL
-    return NextResponse.json({ url: mp3Link });
+    return NextResponse.json({ url: mp3Link }, { headers: noCacheHeaders });
   } catch (error: any) {
+    const noCacheHeaders = {
+      "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+    };
     const { searchParams } = new URL(req.url);
     const videoId = searchParams.get("videoId");
     if (videoId) {
       console.warn(`[ytdownload] Error occurred, falling back to YouTube for videoId: ${videoId} - ${error.message}`);
-      return NextResponse.json({ url: `/api/audio/${videoId}` });
+      return NextResponse.json({ url: `/api/audio/${videoId}` }, { headers: noCacheHeaders });
     }
     return NextResponse.json(
       { error: "Failed to fetch from Albumaty", details: error.message },
-      { status: 500 }
+      { status: 500, headers: noCacheHeaders }
     );
   }
 }
