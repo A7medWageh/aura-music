@@ -5,6 +5,7 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const title = searchParams.get("title") || "";
   const artist = searchParams.get("artist") || "";
+  const videoId = searchParams.get("videoId");
 
   if (!title) {
     return NextResponse.json({ error: "Missing title" }, { status: 400 });
@@ -29,6 +30,10 @@ export async function GET(req: NextRequest) {
     });
 
     if (!songPageUrl) {
+      if (videoId) {
+        console.warn(`[ytdownload] Song not found on Albumaty, falling back to YouTube for videoId: ${videoId}`);
+        return NextResponse.redirect(new URL(`/api/audio/${videoId}`, req.url));
+      }
       return NextResponse.json({ error: "Song not found on Albumaty" }, { status: 404 });
     }
 
@@ -41,6 +46,10 @@ export async function GET(req: NextRequest) {
     const mp3Link = $2('audio source').attr('src') || $2('audio').attr('src');
 
     if (!mp3Link) {
+      if (videoId) {
+        console.warn(`[ytdownload] MP3 link not found on Albumaty page, falling back to YouTube for videoId: ${videoId}`);
+        return NextResponse.redirect(new URL(`/api/audio/${videoId}`, req.url));
+      }
       return NextResponse.json({ error: "MP3 link not found on song page" }, { status: 404 });
     }
 
@@ -55,6 +64,10 @@ export async function GET(req: NextRequest) {
     });
 
     if (!streamRes.ok) {
+      if (videoId) {
+        console.warn(`[ytdownload] Albumaty stream returned ${streamRes.status}, falling back to YouTube for videoId: ${videoId}`);
+        return NextResponse.redirect(new URL(`/api/audio/${videoId}`, req.url));
+      }
       return NextResponse.json(
         { error: `Albumaty stream returned ${streamRes.status}: ${streamRes.statusText}` },
         { status: streamRes.status }
@@ -71,6 +84,12 @@ export async function GET(req: NextRequest) {
       headers,
     });
   } catch (error: any) {
+    const { searchParams } = new URL(req.url);
+    const videoId = searchParams.get("videoId");
+    if (videoId) {
+      console.warn(`[ytdownload] Error occurred, falling back to YouTube for videoId: ${videoId} - ${error.message}`);
+      return NextResponse.redirect(new URL(`/api/audio/${videoId}`, req.url));
+    }
     return NextResponse.json(
       { error: "Failed to fetch from Albumaty", details: error.message },
       { status: 500 }
