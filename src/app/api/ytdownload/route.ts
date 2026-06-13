@@ -69,10 +69,35 @@ export async function GET(req: NextRequest) {
 
     if (!songPageUrl) {
       if (videoId) {
-        console.warn(`[ytdownload] Song not found on Albumaty, falling back to YouTube for videoId: ${videoId}`);
-        return NextResponse.json({ url: `/api/audio/${videoId}`, debugQueries: queries }, { headers: noCacheHeaders });
+        // Fallback to fetch native YouTube title to retry on Albumaty
+        try {
+          const { getYTWeb } = await import('@apis/youtubei.js/index');
+          const yt = await getYTWeb();
+          const info = await yt.music.getInfo(videoId);
+          const ytTitle = info?.basic_info?.title;
+          if (ytTitle && ytTitle !== title && ytTitle !== q) {
+             const searchUrl = `https://www.albumaty.com/search.php?q=${encodeURIComponent(ytTitle)}`;
+             const searchRes = await fetch(searchUrl, { cache: "no-store" });
+             const searchHtml = await searchRes.text();
+             const $yt = cheerio.load(searchHtml);
+             $yt('a').each((i, el) => {
+               const href = $yt(el).attr('href');
+               if (!songPageUrl && href && href.includes('/song/')) {
+                 songPageUrl = href;
+               }
+             });
+          }
+        } catch (e) {
+          console.warn("[ytdownload] yt fallback failed", e);
+        }
+        
+        if (!songPageUrl) {
+          console.warn(`[ytdownload] Song not found on Albumaty, falling back to YouTube for videoId: ${videoId}`);
+          return NextResponse.json({ url: `/api/audio/${videoId}`, debugQueries: queries }, { headers: noCacheHeaders });
+        }
+      } else {
+        return NextResponse.json({ error: "Song not found on Albumaty", debugQueries: queries }, { status: 404, headers: noCacheHeaders });
       }
-      return NextResponse.json({ error: "Song not found on Albumaty", debugQueries: queries }, { status: 404, headers: noCacheHeaders });
     }
 
     // 2. Fetch the song page

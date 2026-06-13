@@ -1,12 +1,8 @@
 import { resolveStream } from "./apis/youtubei.js/index";
 
 async function test() {
-  try {
-    console.log("Resolving CFvhCfVAY4c...");
-    const url = await resolveStream("CFvhCfVAY4c");
-    console.log("URL:", url);
-  } catch (e: any) {
-    console.error("ERROR:", e.message);
-  }
+  const url = await resolveStream("_u2tvllJgAg");
+  console.log("URL:", url);
 }
+
 test();
