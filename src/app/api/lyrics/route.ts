@@ -42,6 +42,16 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Missing trackName or artistName" }, { status: 400 });
   }
 
+  // Clean track name for better search results
+  const cleanTrackName = trackName
+    .replace(/\|.*$/g, '') // Remove anything after |
+    .replace(/\(.*?\)/g, '') // Remove anything in parentheses
+    .replace(/\[.*?\]/g, '') // Remove anything in brackets
+    .replace(/(official|music|video|audio|lyric|lyrics|remix|hd|4k)/ig, '')
+    .split('-').map(s => s.trim()).pop() || trackName; // Try to get the actual song name if it's "Artist - Song"
+  
+  const finalTrackName = cleanTrackName.trim() || trackName.trim();
+
   try {
     // ── 1. LRCLIB (preferred — has synced timestamps) ──────────────────────────
     const lrclibUrl = `https://lrclib.net/api/get?track_name=${encodeURIComponent(trackName)}&artist_name=${encodeURIComponent(artistName)}`;

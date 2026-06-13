@@ -5,6 +5,18 @@ const withPWA = withPWAInit({
   dest: "public",
   disable: process.env.NODE_ENV === "development",
   register: true,
+  workboxOptions: {
+    runtimeCaching: [
+      {
+        urlPattern: /^https:\/\/.*\.albumaty\.com\/.*/i,
+        handler: 'NetworkOnly',
+      },
+      {
+        urlPattern: /\/api\/(ytdownload|audio|stream)/i,
+        handler: 'NetworkOnly',
+      }
+    ]
+  }
 });
 
 const nextConfig: NextConfig = {

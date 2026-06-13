@@ -833,10 +833,10 @@ export async function getLyricsYoutube(videoId: string): Promise<string | null> 
   try {
     const innertube = await getYTWeb();
     const info = await innertube.music.getInfo(videoId);
-    const lyrics = await info.getLyrics();
+    const lyrics: any = await info.getLyrics();
     
     // lyrics is of type MusicDescriptionShelf which has a description property
-    const lyricsText = (lyrics as any)?.description?.text || (lyrics as any)?.text;
+    const lyricsText = lyrics?.description?.text || lyrics?.text;
     if (lyricsText) {
       return lyricsText;
     }
