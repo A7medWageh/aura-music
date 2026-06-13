@@ -75,7 +75,7 @@ export async function GET(req: NextRequest) {
           const yt = await getYTWeb();
           const info = await yt.music.getInfo(videoId);
           const ytTitle = info?.basic_info?.title;
-          if (ytTitle && ytTitle !== title && ytTitle !== q) {
+          if (ytTitle && ytTitle !== title && ytTitle !== qStr) {
              const searchUrl = `https://www.albumaty.com/search.php?q=${encodeURIComponent(ytTitle)}`;
              const searchRes = await fetch(searchUrl, { cache: "no-store" });
              const searchHtml = await searchRes.text();
