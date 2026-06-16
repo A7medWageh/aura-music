@@ -122,8 +122,6 @@ function SeekBar({
   );
 }
 
-const lyricsCache: Record<string, { synced: {time: number, text: string}[], plain: string }> = {};
-
 // ─── Full Screen Player ───────────────────────────────────────────────
 function FullPlayer({
   onClose, isLiked, onLike, onDownload,
@@ -137,88 +135,8 @@ function FullPlayer({
   const { state, currentSong, togglePlay, next, prev, seekTo, setVolume, cycleRepeat, setShuffle, setHighQuality } = usePlayer();
   const art = currentSong?.thumbnailUrl || currentSong?.metadata?.thumbnailUrl;
   const [isAiMix, setIsAiMix] = useState(false);
-  const [activeTab, setActiveTab] = useState("audio"); // lyrics, queue, audio
-  const [syncedLyrics, setSyncedLyrics] = useState<{time: number, text: string}[]>([]);
-  const [plainLyrics, setPlainLyrics] = useState("");
-  const [isLyricsLoading, setIsLyricsLoading] = useState(false);
-  const lyricsScrollRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!currentSong) return;
-    
-    const cacheKey = currentSong.songId;
-    if (lyricsCache[cacheKey]) {
-      setSyncedLyrics(lyricsCache[cacheKey].synced);
-      setPlainLyrics(lyricsCache[cacheKey].plain);
-      return;
-    }
-
-    setIsLyricsLoading(true);
-    setSyncedLyrics([]);
-    setPlainLyrics("");
-    fetch(`/api/lyrics?trackName=${encodeURIComponent(currentSong.title)}&artistName=${encodeURIComponent(currentSong.artist)}&videoId=${encodeURIComponent(currentSong.youtubeVideoId)}`)
-      .then(res => res.json())
-      .then(data => {
-        const parsed = [];
-        let plain = "";
-        
-        if (data.syncedLyrics) {
-          const lines = data.syncedLyrics.split("\n");
-          const regex = /\[(\d{2}):(\d{2}\.\d{2})\](.*)/;
-          for (const line of lines) {
-            const match = line.match(regex);
-            if (match) {
-              const min = parseInt(match[1]);
-              const sec = parseFloat(match[2]);
-              const text = match[3].trim();
-              if (text) parsed.push({ time: min * 60 + sec, text });
-            }
-          }
-        } else if (data.plainLyrics) {
-          plain = data.plainLyrics;
-        }
-        
-        lyricsCache[cacheKey] = { synced: parsed, plain: plain };
-        setSyncedLyrics(parsed);
-        setPlainLyrics(plain);
-      })
-      .catch(err => console.error("Lyrics error:", err))
-      .finally(() => setIsLyricsLoading(false));
-  }, [currentSong?.songId]);
-
-  const displaySyncedLyrics = useMemo(() => {
-    if (syncedLyrics.length > 0) return syncedLyrics;
-    if (plainLyrics && state.duration > 0) {
-      const lines = plainLyrics.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-      // Ignore first 5 seconds and distribute the rest evenly
-      const duration = Math.max(state.duration - 5, 1);
-      const timePerLine = duration / Math.max(lines.length, 1);
-      return lines.map((text, i) => ({ time: 5 + i * timePerLine, text }));
-    }
-    return [];
-  }, [syncedLyrics, plainLyrics, state.duration]);
-
-  // Auto-scroll lyrics
-  const activeLineIndex = useMemo(() => {
-    if (displaySyncedLyrics.length === 0) return -1;
-    return displaySyncedLyrics.findIndex((l, i) => {
-      const nextTime = displaySyncedLyrics[i + 1]?.time || Infinity;
-      return state.currentTime >= l.time && state.currentTime < nextTime;
-    });
-  }, [state.currentTime, displaySyncedLyrics]);
-
-  useEffect(() => {
-    if (activeTab === "lyrics" && activeLineIndex !== -1 && lyricsScrollRef.current) {
-      const container = lyricsScrollRef.current;
-      const activeEl = container.children[activeLineIndex] as HTMLElement;
-      if (activeEl) {
-        container.scrollTo({
-          top: activeEl.offsetTop - container.clientHeight / 2 + activeEl.clientHeight / 2,
-          behavior: "smooth"
-        });
-      }
-    }
-  }, [activeLineIndex, activeTab]);
+  const [activeTab, setActiveTab] = useState("audio"); // premium, queue, audio
+  const [isBgPlayEnabled, setIsBgPlayEnabled] = useState(isPremium);
 
   return (
     <motion.div
@@ -285,31 +203,42 @@ function FullPlayer({
 
         {/* Center Area (Dynamic Tabs) */}
         <div className="flex-1 flex flex-col justify-center px-8 text-center overflow-hidden relative">
-           {activeTab === "lyrics" && (
-             <div className="absolute inset-0 flex flex-col overflow-y-auto no-scrollbar pt-20 pb-32 px-4 scroll-smooth" ref={lyricsScrollRef} dir="rtl">
-               {isLyricsLoading ? (
-                 <div className="m-auto w-10 h-10 border-4 border-white/20 border-t-white rounded-full animate-spin" />
-               ) : displaySyncedLyrics.length > 0 ? (
-                 displaySyncedLyrics.map((line, i) => {
-                    const isActive = i === activeLineIndex;
-                    return (
-                      <p 
-                        key={i} 
-                        onClick={() => seekTo(line.time)}
-                        className={`transition-opacity duration-500 py-4 px-4 rounded-2xl cursor-pointer text-[24px] leading-relaxed
-                          ${isActive 
-                            ? 'text-white font-black opacity-100' 
-                            : 'text-white font-bold opacity-30'
-                          } hover:opacity-100`}
-                      >
-                        {line.text}
-                      </p>
-                    );
-                  })
-               ) : (
-                 <p className="text-white/40 text-lg font-bold m-auto">الكلمات غير متوفرة حالياً</p>
-               )}
-               <div className="h-40 shrink-0" />
+           {activeTab === "premium" && (
+             <div className="absolute inset-0 flex flex-col justify-center items-center p-8 space-y-8" dir="rtl">
+                <div className="w-20 h-20 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-[0_0_40px_rgba(99,102,241,0.5)] mb-4">
+                  <Crown className="w-10 h-10 text-white" />
+                </div>
+                
+                <div className="space-y-2 text-center">
+                  <h3 className="text-2xl font-black text-white">التشغيل في الخلفية</h3>
+                  <p className="text-white/70 text-sm font-medium px-4 leading-relaxed">
+                    استمتع بالموسيقى بدون توقف. يمكنك الخروج من التطبيق أو غلق الشاشة وستستمر الأغاني في العمل بسلاسة.
+                  </p>
+                </div>
+
+                <button 
+                  onClick={() => {
+                    if (!isPremium) {
+                      setPremiumFeatureName("التشغيل المفتوح في الخلفية");
+                      setIsPremiumModalOpen(true);
+                    } else {
+                      const newVal = !isBgPlayEnabled;
+                      setIsBgPlayEnabled(newVal);
+                      showToast(newVal ? "تم تفعيل التشغيل في الخلفية 🚀" : "تم إيقاف التشغيل في الخلفية");
+                    }
+                  }} 
+                  className={`w-full py-4 rounded-2xl flex items-center justify-center gap-3 font-black text-lg transition-all border ${
+                    isBgPlayEnabled && isPremium 
+                    ? 'bg-white text-indigo-900 border-white shadow-[0_0_20px_rgba(255,255,255,0.4)]' 
+                    : 'bg-white/5 text-white border-white/20 hover:bg-white/10'
+                  }`}
+                >
+                  <div className={`w-4 h-4 rounded-full border-2 border-current flex items-center justify-center`}>
+                    {isBgPlayEnabled && isPremium && <div className="w-2 h-2 bg-current rounded-full" />}
+                  </div>
+                  {isBgPlayEnabled && isPremium ? "مفعل (يعمل بالخلفية)" : "تفعيل الميزة"}
+                  {!isPremium && <Crown className="w-5 h-5 text-amber-400 drop-shadow-md ml-auto mr-[-10px]" />}
+                </button>
              </div>
            )}
 
@@ -363,13 +292,7 @@ function FullPlayer({
              </div>
            )}
 
-           {activeTab === "lyrics" && (
-             <div className="absolute bottom-12 left-6 z-20 pointer-events-none">
-               <button className="w-12 h-12 rounded-full bg-white/10 backdrop-blur-md border border-white/20 flex items-center justify-center text-white shadow-lg pointer-events-auto">
-                 <Mic2 className="w-6 h-6" />
-               </button>
-             </div>
-           )}
+
         </div>
 
         {/* Bottom Controls Area */}
@@ -447,16 +370,16 @@ function FullPlayer({
             <button 
               onClick={() => {
                 if (!isPremium) {
-                  setPremiumFeatureName("قراءة الكلمات والتمرير الذكي");
+                  setPremiumFeatureName("التشغيل في الخلفية والميزات الحصرية");
                   setIsPremiumModalOpen(true);
                   return;
                 }
-                setActiveTab("lyrics");
+                setActiveTab("premium");
               }}
-              className={`relative flex items-center gap-2 font-bold text-sm px-4 py-2 rounded-full transition-all ${activeTab === 'lyrics' ? 'bg-white text-black' : 'text-white/50 hover:bg-white/10'}`}
+              className={`relative flex items-center gap-2 font-bold text-sm px-4 py-2 rounded-full transition-all ${activeTab === 'premium' ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-lg' : 'text-white/50 hover:bg-white/10'}`}
             >
-               <AlignRight className="w-5 h-5" /> كلمات
-               {!isPremium && <Crown className="absolute -top-1 -right-1 w-3 h-3 text-amber-400 drop-shadow-md" />}
+               <Crown className="w-5 h-5" /> حصرية
+               {!isPremium && <div className="absolute -top-1 -right-1 w-3 h-3 bg-amber-400 rounded-full border-2 border-[#4A2C1D]" />}
             </button>
           </div>
         </div>

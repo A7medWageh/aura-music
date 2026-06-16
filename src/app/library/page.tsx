@@ -1,78 +1,206 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getAllOfflineSongs, deleteOfflineSong } from "@/offline/indexedDbCache";
+import { getAllOfflineSongs, deleteOfflineSong, deleteArtist, deleteAlbum, toggleSongHidden } from "@/offline/indexedDbCache";
 import { usePlayer } from "@/state/playerContext";
 import { motion, AnimatePresence } from "framer-motion";
-import { Play, Trash2, Wifi, WifiOff, ChevronRight, Music, DownloadCloud, ArrowRight } from "lucide-react";
+import { Play, Trash2, WifiOff, ArrowRight, DownloadCloud, Lock, Unlock, EyeOff, Eye, HardDrive, Music } from "lucide-react";
 import { getProxyUrl } from "@/utils/media";
 
 type Song = {
   songId: string; title: string; artist: string; thumbnailUrl?: string;
-  youtubeVideoId: string; folderName?: string; audioReady?: boolean; savedAt?: number;
+  youtubeVideoId: string; folderName?: string; albumName?: string; audioReady?: boolean; savedAt?: number;
+  isHidden?: boolean;
+};
+
+type AlbumFolder = {
+  name: string;
+  songs: Song[];
+  cover: string;
 };
 
 type ArtistFolder = {
   name: string;
-  songs: Song[];
-  cover: string;         // use first song's thumbnail as folder cover
-  audioReady: number;    // how many songs have audio downloaded
+  albums: AlbumFolder[];
+  singles: Song[];
+  cover: string;
 };
+
+function ArtistAvatar({ artistName, fallbackCover }: { artistName: string, fallbackCover: string }) {
+  const [imgUrl, setImgUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    const cacheKey = `artist_img_${artistName}`;
+    const cached = localStorage.getItem(cacheKey);
+    if (cached) {
+      if (cached !== "null") setImgUrl(cached);
+    } else {
+      fetch(`/api/artist-image?artist=${encodeURIComponent(artistName)}`)
+        .then(res => res.json())
+        .then(data => {
+           if (data.imageUrl) {
+             localStorage.setItem(cacheKey, data.imageUrl);
+             setImgUrl(data.imageUrl);
+           } else {
+             localStorage.setItem(cacheKey, "null");
+           }
+        }).catch(() => {});
+    }
+  }, [artistName]);
+
+  const finalImage = imgUrl || fallbackCover;
+
+  if (finalImage) {
+    return <img src={getProxyUrl(finalImage)} alt={artistName} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" />;
+  }
+  return <div className="w-full h-full bg-gradient-to-br from-indigo-500/20 to-purple-600/20 flex items-center justify-center text-4xl">🎤</div>;
+}
 
 export default function LibraryPage() {
   const { playNow, enqueueSongs } = usePlayer();
-  const [folders, setFolders] = useState<ArtistFolder[]>([]);
-  const [openFolder, setOpenFolder] = useState<string | null>(null);
+  const [artists, setArtists] = useState<ArtistFolder[]>([]);
+  
+  // Navigation State
+  const [openArtist, setOpenArtist] = useState<string | null>(null);
+  const [openAlbum, setOpenAlbum] = useState<string | null>(null);
+  
+  // Vault State
+  const [vaultUnlocked, setVaultUnlocked] = useState(false);
+  const [vaultPassword, setVaultPassword] = useState("");
+  const [showVaultPrompt, setShowVaultPrompt] = useState(false);
+  const [setupVault, setSetupVault] = useState(false);
+
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<string | null>(null);
+  const [stats, setStats] = useState({ sizeMB: 0, count: 0 });
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 3000); };
 
   const loadLibrary = async () => {
     setLoading(true);
     const songs: Song[] = await getAllOfflineSongs();
+    
+    // Filter hidden songs unless vault is unlocked
+    const visibleSongs = songs.filter(s => vaultUnlocked ? true : !s.isHidden);
+    
+    // Calculate estimated size
+    const estimatedSizeMB = visibleSongs.filter(s => s.audioReady).length * 3.5;
+    setStats({ sizeMB: estimatedSizeMB, count: visibleSongs.length });
 
-    // Group by folder name (artist), sorted by latest saved
-    const map = new Map<string, Song[]>();
-    for (const song of songs.sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0))) {
-      const key = song.folderName || song.artist || "أخرى";
-      map.set(key, [...(map.get(key) || []), song]);
+    // Grouping: Artist -> Album -> Songs
+    const artistMap = new Map<string, { albums: Map<string, Song[]>, singles: Song[] }>();
+
+    for (const song of visibleSongs.sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0))) {
+      const artistName = song.folderName || song.artist || "أخرى";
+      if (!artistMap.has(artistName)) {
+        artistMap.set(artistName, { albums: new Map(), singles: [] });
+      }
+      const artistNode = artistMap.get(artistName)!;
+
+      if (song.albumName) {
+        if (!artistNode.albums.has(song.albumName)) {
+          artistNode.albums.set(song.albumName, []);
+        }
+        artistNode.albums.get(song.albumName)!.push(song);
+      } else {
+        artistNode.singles.push(song);
+      }
     }
 
-    const result: ArtistFolder[] = [...map.entries()].map(([name, songs]) => ({
-      name,
-      songs,
-      cover: songs[0]?.thumbnailUrl || "",
-      audioReady: songs.filter(s => s.audioReady).length,
-    }));
+    const result: ArtistFolder[] = [...artistMap.entries()].map(([name, data]) => {
+      const albums: AlbumFolder[] = [...data.albums.entries()].map(([albumName, albumSongs]) => ({
+        name: albumName,
+        songs: albumSongs,
+        cover: albumSongs[0]?.thumbnailUrl || ""
+      }));
+      
+      const cover = albums[0]?.cover || data.singles[0]?.thumbnailUrl || "";
+      return { name, albums, singles: data.singles, cover };
+    });
 
-    setFolders(result);
+    setArtists(result);
     setLoading(false);
   };
 
-  useEffect(() => { loadLibrary(); }, []);
+  useEffect(() => { loadLibrary(); }, [vaultUnlocked]);
 
-  const handleDelete = async (e: React.MouseEvent, songId: string) => {
+  const handleDeleteArtist = async (e: React.MouseEvent, artistName: string) => {
     e.stopPropagation();
-    await deleteOfflineSong(songId);
-    showToast("تم الحذف");
+    if (!confirm(`هل أنت متأكد من حذف جميع أغاني وألبومات ${artistName}؟`)) return;
+    await deleteArtist(artistName);
+    showToast("تم حذف الفنان بنجاح");
+    setOpenArtist(null);
     loadLibrary();
   };
 
-  const openArtist = folders.find(f => f.name === openFolder);
-
-  const playFolder = (folder: ArtistFolder) => {
-    if (!folder.songs.length) return;
-    playNow(folder.songs[0]);
-    if (folder.songs.length > 1) enqueueSongs(folder.songs.slice(1));
+  const handleDeleteAlbum = async (e: React.MouseEvent, albumName: string, artistName: string) => {
+    e.stopPropagation();
+    if (!confirm(`هل أنت متأكد من حذف ألبوم ${albumName}؟`)) return;
+    await deleteAlbum(albumName, artistName);
+    showToast("تم حذف الألبوم");
+    setOpenAlbum(null);
+    loadLibrary();
   };
 
-  const totalSongs = folders.reduce((s, f) => s + f.songs.length, 0);
-  const totalReady = folders.reduce((s, f) => s + f.audioReady, 0);
+  const handleDeleteSong = async (e: React.MouseEvent, songId: string) => {
+    e.stopPropagation();
+    await deleteOfflineSong(songId);
+    showToast("تم حذف الأغنية");
+    loadLibrary();
+  };
+
+  const handleToggleHide = async (e: React.MouseEvent, song: Song) => {
+    e.stopPropagation();
+    const isHidden = !song.isHidden;
+    await toggleSongHidden(song.songId, isHidden);
+    showToast(isHidden ? "تم الإخفاء في المجلد السري" : "تمت إزالة الإخفاء");
+    loadLibrary();
+  };
+
+  const unlockVault = () => {
+    const saved = localStorage.getItem("aura-vault-pass");
+    if (!saved) {
+      // First time setup
+      setSetupVault(true);
+      setShowVaultPrompt(true);
+      return;
+    }
+    setShowVaultPrompt(true);
+    setSetupVault(false);
+  };
+
+  const submitVaultPassword = () => {
+    if (setupVault) {
+      if (vaultPassword.length < 4) { showToast("كلمة المرور قصيرة جداً"); return; }
+      localStorage.setItem("aura-vault-pass", vaultPassword);
+      setVaultUnlocked(true);
+      setShowVaultPrompt(false);
+      showToast("تم إنشاء المجلد السري بنجاح!");
+    } else {
+      const saved = localStorage.getItem("aura-vault-pass");
+      if (vaultPassword === saved) {
+        setVaultUnlocked(true);
+        setShowVaultPrompt(false);
+        showToast("تم فتح المجلد السري");
+      } else {
+        showToast("كلمة المرور خاطئة");
+      }
+    }
+    setVaultPassword("");
+  };
+
+  const playList = (songs: Song[]) => {
+    const ready = songs.filter(s => s.audioReady);
+    if (!ready.length) return;
+    playNow(ready[0]);
+    if (ready.length > 1) enqueueSongs(ready.slice(1));
+  };
+
+  const currentArtistData = artists.find(a => a.name === openArtist);
+  const currentAlbumData = currentArtistData?.albums.find(a => a.name === openAlbum);
 
   return (
     <div className="space-y-8 pb-24 animate-in fade-in duration-500">
-      {/* Toast */}
       <AnimatePresence>
         {toast && (
           <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 30 }}
@@ -82,24 +210,57 @@ export default function LibraryPage() {
         )}
       </AnimatePresence>
 
+      {/* Vault Prompt Modal */}
+      {showVaultPrompt && (
+        <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-white/10 p-6 rounded-3xl w-full max-w-sm text-center space-y-4 shadow-2xl">
+            <Lock className="w-12 h-12 text-indigo-400 mx-auto" />
+            <h3 className="text-xl font-black">{setupVault ? "إعداد المجلد السري" : "المجلد السري"}</h3>
+            <p className="text-sm text-gray-400">
+              {setupVault ? "أدخل كلمة مرور جديدة لحماية أغانيك المخفية. لا تنساها!" : "أدخل كلمة المرور لفتح الأغاني المخفية"}
+            </p>
+            <input type="password" value={vaultPassword} onChange={(e)=>setVaultPassword(e.target.value)}
+              placeholder="كلمة المرور" className="w-full bg-black/50 border border-white/10 rounded-xl p-3 text-center focus:border-indigo-500 outline-none" />
+            <div className="flex gap-2">
+              <button onClick={() => setShowVaultPrompt(false)} className="flex-1 py-3 rounded-xl bg-white/5 hover:bg-white/10 font-bold">إلغاء</button>
+              <button onClick={submitVaultPassword} className="flex-1 py-3 rounded-xl bg-indigo-500 hover:bg-indigo-600 font-bold">
+                {setupVault ? "حفظ" : "دخول"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between">
-        {openFolder ? (
-          <button onClick={() => setOpenFolder(null)}
-            className="flex items-center gap-2 text-indigo-400 hover:text-indigo-300 transition-colors font-bold">
+        {openAlbum ? (
+          <button onClick={() => setOpenAlbum(null)} className="flex items-center gap-2 text-indigo-400 hover:text-indigo-300 transition-colors font-bold">
+            <ArrowRight className="w-5 h-5" /> رجوع للفنان ({openArtist})
+          </button>
+        ) : openArtist ? (
+          <button onClick={() => setOpenArtist(null)} className="flex items-center gap-2 text-indigo-400 hover:text-indigo-300 transition-colors font-bold">
             <ArrowRight className="w-5 h-5" /> رجوع للمكتبة
           </button>
         ) : (
           <div>
             <h1 className="text-4xl font-black mb-1">مكتبتي 🎧</h1>
-            <p className="text-gray-400 text-sm">
-              {totalSongs} أغنية · {totalReady} جاهزة للتشغيل بدون نت
-            </p>
+            <div className="flex items-center gap-3 text-sm font-bold text-gray-400 mt-2">
+              <span className="flex items-center gap-1.5"><Music className="w-4 h-4"/> {stats.count} أغنية</span>
+              <span className="flex items-center gap-1.5"><HardDrive className="w-4 h-4"/> {stats.sizeMB.toFixed(1)} MB تخزين</span>
+            </div>
           </div>
         )}
-        <div className="flex items-center gap-2">
-          <WifiOff className="w-4 h-4 text-emerald-400" />
-          <span className="text-sm text-emerald-400 font-bold">أوفلاين جاهز</span>
+
+        <div className="flex items-center gap-4">
+          <button onClick={() => vaultUnlocked ? setVaultUnlocked(false) : unlockVault()}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold transition-all ${vaultUnlocked ? 'bg-indigo-500/20 text-indigo-300' : 'bg-white/5 text-gray-400 hover:text-white'}`}>
+            {vaultUnlocked ? <Unlock className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
+            {vaultUnlocked ? "قفل السري" : "المجلد السري"}
+          </button>
+          <div className="flex items-center gap-2">
+            <WifiOff className="w-4 h-4 text-emerald-400" />
+            <span className="text-sm text-emerald-400 font-bold hidden sm:inline">أوفلاين جاهز</span>
+          </div>
         </div>
       </div>
 
@@ -109,12 +270,10 @@ export default function LibraryPage() {
             <div key={i} className="animate-pulse">
               <div className="aspect-square bg-white/5 rounded-2xl mb-3" />
               <div className="h-3 bg-white/5 rounded w-3/4 mb-2" />
-              <div className="h-2 bg-white/5 rounded w-1/2" />
             </div>
           ))}
         </div>
-      ) : folders.length === 0 ? (
-        /* Empty State */
+      ) : artists.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-[60vh] text-center gap-4">
           <div className="w-20 h-20 rounded-full glass flex items-center justify-center">
             <DownloadCloud className="w-10 h-10 text-indigo-400 opacity-60" />
@@ -122,123 +281,140 @@ export default function LibraryPage() {
           <h2 className="text-2xl font-bold">مكتبتك فارغة</h2>
           <p className="text-gray-500 max-w-xs">اضغط على أيقونة التحميل على أي أغنية لحفظها هنا للاستماع بدون إنترنت</p>
         </div>
-      ) : !openFolder ? (
-        /* Folders Grid */
-        <>
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-5">
-            {folders.map((folder) => (
-              <motion.div key={folder.name} whileHover={{ y: -5, scale: 1.02 }}
-                onClick={() => setOpenFolder(folder.name)}
-                className="group cursor-pointer">
-                {/* Folder Cover — stacked look with neon aura */}
-                <div className="relative aspect-square mb-3">
-                  {/* Back cards (depth effect) */}
-                  <div className="absolute inset-0 rounded-3xl overflow-hidden bg-white/5 translate-x-2 translate-y-2 opacity-50 scale-95 group-hover:translate-x-4 group-hover:translate-y-4 group-hover:-rotate-3 transition-all duration-500" />
-                  <div className="absolute inset-0 rounded-3xl overflow-hidden bg-white/5 translate-x-1 translate-y-1 opacity-70 scale-97 group-hover:translate-x-2 group-hover:translate-y-2 group-hover:-rotate-1 transition-all duration-500" />
-                  {/* Main cover */}
-                  <div className="absolute inset-0 rounded-3xl overflow-hidden shadow-xl border border-transparent group-hover:border-cyan-400/50 group-hover:shadow-[0_0_30px_rgba(0,229,255,0.3)] transition-all duration-500">
-                    {folder.cover ? (
-                      <img src={getProxyUrl(folder.cover)} alt={folder.name}
-                        className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" />
-                    ) : (
-                      <div className="w-full h-full bg-gradient-to-br from-indigo-500/20 to-purple-600/20 flex items-center justify-center text-4xl">
-                        🎤
-                      </div>
-                    )}
-                    {/* Hover overlay with Play */}
-                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                      <button
-                        onClick={e => { e.stopPropagation(); playFolder(folder); }}
-                        className="w-12 h-12 rounded-full bg-cyan-500 flex items-center justify-center shadow-[0_0_20px_rgba(0,229,255,0.6)] hover:scale-110 transition-transform">
-                        <Play className="w-5 h-5 text-black fill-current ml-0.5" />
-                      </button>
-                    </div>
-                  </div>
-                  {/* Offline badge */}
-                  <div className="absolute bottom-2 right-2 flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/70 backdrop-blur-sm text-[10px] font-bold">
-                    <WifiOff className="w-2.5 h-2.5 text-emerald-400" />
-                    <span className="text-emerald-400">{folder.audioReady}/{folder.songs.length}</span>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between gap-1">
-                  <div className="min-w-0">
-                    <h3 className="font-bold text-sm truncate group-hover:text-cyan-400 group-hover:text-shadow-[0_0_8px_rgba(0,229,255,0.8)] transition-all">
-                      {folder.name}
-                    </h3>
-                    <p className="text-xs text-gray-500 mt-0.5">{folder.songs.length} أغنية</p>
-                  </div>
-                  <ChevronRight className="w-4 h-4 text-gray-600 group-hover:text-indigo-400 transition-colors shrink-0 rotate-180" />
-                </div>
-              </motion.div>
+      ) : openAlbum && currentAlbumData ? (
+        /* Album View (Level 3) */
+        <div className="space-y-4">
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-4">
+               {currentAlbumData.cover ? (
+                  <img src={getProxyUrl(currentAlbumData.cover)} alt={currentAlbumData.name} className="w-16 h-16 rounded-xl object-cover shadow-lg" />
+               ) : (
+                  <div className="w-16 h-16 rounded-xl bg-white/10 flex items-center justify-center"><Music className="w-6 h-6 text-gray-400" /></div>
+               )}
+               <div>
+                  <h2 className="text-2xl font-black">{currentAlbumData.name}</h2>
+                  <p className="text-gray-400 text-sm">{currentAlbumData.songs.length} أغنية</p>
+               </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button onClick={() => playList(currentAlbumData.songs)} className="px-4 py-2 bg-indigo-500 rounded-xl font-bold flex items-center gap-2 hover:bg-indigo-600 transition-colors">
+                <Play className="w-4 h-4 fill-current" /> تشغيل الألبوم
+              </button>
+              <button onClick={(e) => handleDeleteAlbum(e, currentAlbumData.name, openArtist!)} className="p-2 bg-red-500/10 text-red-400 rounded-xl hover:bg-red-500/20 transition-colors">
+                <Trash2 className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+          <div className="grid gap-2">
+            {currentAlbumData.songs.map((song, i) => (
+              <SongRow key={song.songId} song={song} index={i} play={() => playNow(song)} onDelete={(e) => handleDeleteSong(e, song.songId)} onToggleHide={(e) => handleToggleHide(e, song)} vaultUnlocked={vaultUnlocked} />
             ))}
           </div>
-        </>
-      ) : (
-        /* Songs inside folder */
-        <AnimatePresence mode="wait">
-          {openArtist && (
-            <motion.div key="songs-view" initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
-              {/* Artist folder header */}
-              <div className="flex items-center gap-5 mb-8 p-6 glass rounded-3xl">
-                <div className="w-20 h-20 rounded-2xl overflow-hidden shrink-0 shadow-xl">
-                  {openArtist.cover ? (
-                    <img src={getProxyUrl(openArtist.cover)} alt={openArtist.name} className="w-full h-full object-cover" />
-                  ) : (
-                    <div className="w-full h-full bg-indigo-500/20 flex items-center justify-center text-3xl">🎤</div>
-                  )}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <h2 className="text-2xl font-black">{openArtist.name}</h2>
-                  <p className="text-sm text-gray-400">{openArtist.songs.length} أغنية محفوظة</p>
-                  <div className="flex items-center gap-1 mt-1">
-                    <WifiOff className="w-3 h-3 text-emerald-400" />
-                    <span className="text-xs text-emerald-400">{openArtist.audioReady} جاهزة للأوفلاين</span>
-                  </div>
-                </div>
-                <button onClick={() => playFolder(openArtist)}
-                  className="w-12 h-12 rounded-full bg-indigo-500 flex items-center justify-center shadow-xl hover:scale-105 active:scale-95 transition-transform shrink-0">
-                  <Play className="w-5 h-5 text-white fill-current ml-0.5" />
+        </div>
+      ) : openArtist && currentArtistData ? (
+        /* Artist View (Level 2) */
+        <div className="space-y-8">
+           <div className="flex items-center justify-between">
+              <h2 className="text-3xl font-black">{currentArtistData.name}</h2>
+              <div className="flex gap-2">
+                <button onClick={() => playList([...currentArtistData.albums.flatMap(a=>a.songs), ...currentArtistData.singles])} className="px-4 py-2 bg-indigo-500 rounded-xl font-bold flex items-center gap-2">
+                  <Play className="w-4 h-4 fill-current" /> تشغيل الكل
+                </button>
+                <button onClick={(e) => handleDeleteArtist(e, currentArtistData.name)} className="p-2 bg-red-500/10 text-red-400 rounded-xl">
+                  <Trash2 className="w-5 h-5" />
                 </button>
               </div>
+           </div>
 
-              {/* Songs list */}
-              <div className="space-y-1">
-                {openArtist.songs.map((song, i) => (
-                  <div key={`${song.songId}-${i}`}
-                    className="group flex items-center gap-4 px-4 py-3 rounded-2xl hover:bg-white/5 cursor-pointer transition-all"
-                    onClick={() => { playNow(song); enqueueSongs(openArtist.songs.slice(i + 1)); }}>
-                    <span className="w-6 text-center text-sm text-gray-500 group-hover:hidden">{i + 1}</span>
-                    <Play className="w-4 h-4 fill-current hidden group-hover:block shrink-0" />
-                    <div className="w-12 h-12 rounded-xl overflow-hidden shrink-0 relative">
-                      {song.thumbnailUrl ? (
-                        <img src={getProxyUrl(song.thumbnailUrl)} alt={song.title}
-                          className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
-                      ) : (
-                        <div className="w-full h-full bg-indigo-500/20 flex items-center justify-center">
-                          <Music className="w-5 h-5 text-indigo-400" />
+           {currentArtistData.albums.length > 0 && (
+             <div>
+               <h3 className="text-xl font-bold text-gray-300 mb-4 border-b border-white/5 pb-2">الألبومات</h3>
+               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-5">
+                 {currentArtistData.albums.map((album) => (
+                    <motion.div key={album.name} whileHover={{ y: -5, scale: 1.02 }} onClick={() => setOpenAlbum(album.name)} className="group cursor-pointer">
+                      <div className="relative aspect-square mb-3 rounded-2xl overflow-hidden shadow-lg">
+                        {album.cover ? <img src={getProxyUrl(album.cover)} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" /> : <div className="w-full h-full bg-white/5 flex justify-center items-center"><Music className="w-8 h-8 opacity-50"/></div>}
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                          <button className="w-12 h-12 bg-indigo-500 rounded-full flex items-center justify-center shadow-2xl scale-0 group-hover:scale-100 transition-transform">
+                            <Play className="w-5 h-5 text-white fill-current translate-x-0.5" />
+                          </button>
                         </div>
-                      )}
-                      {/* Offline indicator */}
-                      <div className={`absolute bottom-0 left-0 w-2 h-2 rounded-full border border-black ${song.audioReady ? "bg-emerald-400" : "bg-yellow-400"}`} />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="font-bold text-sm truncate group-hover:text-indigo-400 transition-colors">{song.title}</p>
-                      <p className="text-xs text-gray-500 truncate mt-0.5">
-                        {song.audioReady ? "✅ جاهز أوفلاين" : "⏳ جاري التحميل"}
-                      </p>
-                    </div>
-                    <button onClick={e => handleDelete(e, song.songId)}
-                      className="p-2 rounded-full opacity-0 group-hover:opacity-100 hover:bg-red-500/20 text-gray-400 hover:text-red-500 transition-all">
-                      <Trash2 className="w-4 h-4" />
+                      </div>
+                      <h3 className="font-bold text-[15px] truncate text-white">{album.name}</h3>
+                      <p className="text-xs text-gray-400 font-bold truncate">{album.songs.length} أغاني</p>
+                    </motion.div>
+                 ))}
+               </div>
+             </div>
+           )}
+
+           {currentArtistData.singles.length > 0 && (
+             <div>
+               <h3 className="text-xl font-bold text-gray-300 mb-4 border-b border-white/5 pb-2">أغاني منفردة (Singles)</h3>
+               <div className="grid gap-2">
+                 {currentArtistData.singles.map((song, i) => (
+                   <SongRow key={song.songId} song={song} index={i} play={() => playNow(song)} onDelete={(e) => handleDeleteSong(e, song.songId)} onToggleHide={(e) => handleToggleHide(e, song)} vaultUnlocked={vaultUnlocked} />
+                 ))}
+               </div>
+             </div>
+           )}
+        </div>
+      ) : (
+        /* Artists View (Level 1) */
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-5">
+          {artists.map((artist) => (
+            <motion.div key={artist.name} whileHover={{ y: -5, scale: 1.02 }}
+              onClick={() => setOpenArtist(artist.name)}
+              className="group cursor-pointer">
+              <div className="relative aspect-square mb-3">
+                <div className="absolute inset-0 rounded-full overflow-hidden bg-white/5 translate-x-2 translate-y-2 opacity-50 scale-95 group-hover:translate-x-4 group-hover:translate-y-4 transition-all duration-500" />
+                <div className="absolute inset-0 rounded-full overflow-hidden shadow-xl border-4 border-transparent group-hover:border-indigo-400/50 transition-all duration-500">
+                  <ArtistAvatar artistName={artist.name} fallbackCover={artist.cover} />
+                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                    <button onClick={(e) => { e.stopPropagation(); playList([...artist.albums.flatMap(a=>a.songs), ...artist.singles]) }} 
+                      className="w-14 h-14 bg-indigo-500 rounded-full flex items-center justify-center shadow-2xl scale-0 group-hover:scale-100 transition-transform duration-300 delay-75">
+                      <Play className="w-6 h-6 text-white fill-current translate-x-0.5" />
                     </button>
                   </div>
-                ))}
+                </div>
               </div>
+              <h3 className="font-black text-lg text-center truncate text-white">{artist.name}</h3>
+              <p className="text-xs text-gray-400 font-bold text-center">
+                {artist.albums.length} ألبومات · {artist.singles.length} منفردة
+              </p>
             </motion.div>
-          )}
-        </AnimatePresence>
+          ))}
+        </div>
       )}
+    </div>
+  );
+}
+
+function SongRow({ song, index, play, onDelete, onToggleHide, vaultUnlocked }: any) {
+  return (
+    <div onClick={play} className="group flex items-center gap-4 p-3 rounded-2xl hover:bg-white/5 transition-colors cursor-pointer border border-transparent hover:border-white/5">
+      <div className="w-8 text-center text-gray-500 font-black text-sm">{index + 1}</div>
+      <div className="relative w-12 h-12 rounded-xl overflow-hidden shrink-0">
+        {song.thumbnailUrl ? <img src={getProxyUrl(song.thumbnailUrl)} className="w-full h-full object-cover" /> : <div className="w-full h-full bg-white/10 flex justify-center items-center"><Music className="w-4 h-4 text-gray-400" /></div>}
+        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+          <Play className="w-5 h-5 text-white fill-current" />
+        </div>
+      </div>
+      <div className="flex-1 min-w-0">
+        <h4 className="font-black text-sm text-white truncate flex items-center gap-2">
+          {song.title}
+          {song.isHidden && <Lock className="w-3 h-3 text-indigo-400" />}
+        </h4>
+        <p className="text-xs font-bold text-gray-500 truncate">{song.artist}</p>
+      </div>
+      <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+        <button onClick={onToggleHide} className="p-2 hover:bg-indigo-500/20 text-indigo-400 rounded-xl" title={song.isHidden ? "إظهار الأغنية" : "إخفاء الأغنية في المجلد السري"}>
+          {song.isHidden ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+        </button>
+        <button onClick={onDelete} className="p-2 hover:bg-red-500/20 text-red-400 rounded-xl" title="حذف الأغنية">
+          <Trash2 className="w-4 h-4" />
+        </button>
+      </div>
     </div>
   );
 }

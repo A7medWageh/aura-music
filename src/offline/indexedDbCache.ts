@@ -1,7 +1,8 @@
 const DB_NAME = "music-web-offline";
-const DB_VERSION = 4;
+const DB_VERSION = 6;
 const META_STORE = "saved-songs";  // metadata only — instant save
 const AUDIO_STORE = "audio";       // audio blobs — background download
+const LYRICS_STORE = "lyrics";     // lyrics text
 
 export async function openOfflineDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -13,6 +14,9 @@ export async function openOfflineDb(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(AUDIO_STORE)) {
         db.createObjectStore(AUDIO_STORE, { keyPath: "songId" });
+      }
+      if (!db.objectStoreNames.contains(LYRICS_STORE)) {
+        db.createObjectStore(LYRICS_STORE, { keyPath: "songId" });
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -30,19 +34,45 @@ export async function saveSongMeta(song: {
   albumId?: string;
   albumName?: string;
   folderName?: string;
+  isHidden?: boolean;
 }): Promise<void> {
   const db = await openOfflineDb();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(META_STORE, "readwrite");
-    tx.objectStore(META_STORE).put({
-      ...song,
-      folderName: song.folderName || song.artist || "أخرى",
-      savedAt: Date.now(),
-      audioReady: false,
-    });
+    const req = tx.objectStore(META_STORE).get(song.songId);
+    req.onsuccess = () => {
+      const existing = req.result || {};
+      tx.objectStore(META_STORE).put({
+        ...existing,
+        ...song,
+        folderName: song.folderName || existing.folderName || song.artist || "أخرى",
+        savedAt: existing.savedAt || Date.now(),
+        audioReady: existing.audioReady ?? false,
+        isHidden: existing.isHidden ?? (song.isHidden || false),
+      });
+    };
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
+}
+
+export async function toggleSongHidden(songId: string, isHidden: boolean): Promise<void> {
+  const db = await openOfflineDb();
+  const meta: any = await new Promise((resolve, reject) => {
+    const tx = db.transaction(META_STORE, "readonly");
+    const req = tx.objectStore(META_STORE).get(songId);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+  if (meta) {
+    const db2 = await openOfflineDb();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db2.transaction(META_STORE, "readwrite");
+      tx.objectStore(META_STORE).put({ ...meta, isHidden });
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
 }
 
 /** Mark a song's audio as downloaded */
@@ -89,6 +119,27 @@ export async function getAudioBlob(songId: string): Promise<Blob | null> {
   return record?.blob || null;
 }
 
+export async function storeLyrics(songId: string, lyrics: any[]): Promise<void> {
+  const db = await openOfflineDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(LYRICS_STORE, "readwrite");
+    tx.objectStore(LYRICS_STORE).put({ songId, lyrics, savedAt: Date.now() });
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+export async function getLyrics(songId: string): Promise<any[] | null> {
+  const db = await openOfflineDb();
+  const record: any = await new Promise((resolve, reject) => {
+    const tx = db.transaction(LYRICS_STORE, "readonly");
+    const req = tx.objectStore(LYRICS_STORE).get(songId);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+  return record?.lyrics || null;
+}
+
 /** Get all saved songs from library (metadata only, fast) */
 export async function getAllOfflineSongs(): Promise<any[]> {
   const db = await openOfflineDb();
@@ -103,41 +154,39 @@ export async function getAllOfflineSongs(): Promise<any[]> {
 export async function deleteOfflineSong(songId: string): Promise<void> {
   const db = await openOfflineDb();
   await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction([META_STORE, AUDIO_STORE], "readwrite");
+    const tx = db.transaction([META_STORE, AUDIO_STORE, LYRICS_STORE], "readwrite");
     tx.objectStore(META_STORE).delete(songId);
     tx.objectStore(AUDIO_STORE).delete(songId);
+    try { tx.objectStore(LYRICS_STORE).delete(songId); } catch {}
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
+}
+
+export async function deleteArtist(artistName: string): Promise<void> {
+  const songs = await getAllOfflineSongs();
+  const toDelete = songs.filter(s => s.artist === artistName || s.folderName === artistName);
+  for (const song of toDelete) {
+    await deleteOfflineSong(song.songId);
+  }
+}
+
+export async function deleteAlbum(albumName: string, artistName: string): Promise<void> {
+  const songs = await getAllOfflineSongs();
+  const toDelete = songs.filter(s => s.albumName === albumName && (s.artist === artistName || s.folderName === artistName));
+  for (const song of toDelete) {
+    await deleteOfflineSong(song.songId);
+  }
 }
 
 export async function clearAllOfflineSongs(): Promise<void> {
   const db = await openOfflineDb();
   await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction([META_STORE, AUDIO_STORE], "readwrite");
+    const tx = db.transaction([META_STORE, AUDIO_STORE, LYRICS_STORE], "readwrite");
     tx.objectStore(META_STORE).clear();
     tx.objectStore(AUDIO_STORE).clear();
+    try { tx.objectStore(LYRICS_STORE).clear(); } catch {}
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
-}
-
-/** Legacy compat */
-export async function storeOfflineAudio(
-  songId: string, blob: Blob,
-  metadata?: { title?: string; artist?: string; thumbnailUrl?: string; thumbnailBlob?: Blob; albumId?: string; albumName?: string; folderName?: string; }
-) {
-  if (metadata) {
-    await saveSongMeta({
-      songId,
-      title: metadata.title || "أغنية محفوظة",
-      artist: metadata.artist || "فنان غير معروف",
-      thumbnailUrl: metadata.thumbnailUrl,
-      youtubeVideoId: songId,
-      albumId: metadata.albumId,
-      albumName: metadata.albumName,
-      folderName: metadata.folderName || metadata.artist,
-    });
-  }
-  await storeAudioBlob(songId, blob);
 }

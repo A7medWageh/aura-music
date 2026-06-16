@@ -31,7 +31,7 @@ export default function LoginPage() {
       }
 
       localStorage.setItem("aura_logged_in", "true");
-      router.push("/");
+      window.location.href = "/";
     } catch (err: any) {
       setError(err.message);
     } finally {

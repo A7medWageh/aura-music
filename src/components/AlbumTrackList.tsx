@@ -1,13 +1,23 @@
 "use client";
 
-import { Play, Pause, Music, MoreHorizontal } from "lucide-react";
+import { Play, Pause, Music, MoreHorizontal, DownloadCloud, CheckCircle2 } from "lucide-react";
 import { usePlayer } from "@/state/playerContext";
 import { motion } from "framer-motion";
 import { getProxyUrl } from "@/utils/media";
 import { FavoriteButton } from "@/components/FavoriteButton";
+import { downloadSong } from "@/services/offline/downloader";
+import { getAllOfflineSongs } from "@/offline/indexedDbCache";
+import { useEffect, useState } from "react";
 
 export default function AlbumTrackList({ songs }: { songs: any[] }) {
   const { playNow, prewarm, state } = usePlayer();
+  const [downloadedIds, setDownloadedIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    getAllOfflineSongs().then(offlineSongs => {
+      setDownloadedIds(new Set(offlineSongs.map(s => s.songId)));
+    });
+  }, []);
 
   return (
     <>
@@ -92,10 +102,20 @@ export default function AlbumTrackList({ songs }: { songs: any[] }) {
                   size={16}
                 />
                 <button
-                  className="p-2 text-gray-600 hover:text-white transition-colors"
-                  onClick={(e) => { e.stopPropagation(); /* future: show sheet */ }}
+                  className={`p-2 transition-colors ${downloadedIds.has(song.songId) ? "text-green-400" : "text-gray-600 hover:text-white"}`}
+                  onClick={(e) => { 
+                    e.stopPropagation(); 
+                    if (downloadedIds.has(song.songId)) return;
+                    setDownloadedIds(prev => new Set(prev).add(song.songId));
+                    downloadSong(song.songId, song.youtubeVideoId, {
+                      title: song.title,
+                      artist: song.artist || song.artistName || "",
+                      thumbnailUrl: song.thumbnailUrl
+                    });
+                  }}
+                  title={downloadedIds.has(song.songId) ? "تم التحميل" : "تحميل"}
                 >
-                  <MoreHorizontal className="w-4 h-4" />
+                  {downloadedIds.has(song.songId) ? <CheckCircle2 className="w-5 h-5" /> : <DownloadCloud className="w-5 h-5" />}
                 </button>
               </div>
             </motion.div>
@@ -183,8 +203,21 @@ export default function AlbumTrackList({ songs }: { songs: any[] }) {
                           youtubeVideoId={song.youtubeVideoId}
                           size={18}
                         />
-                        <button className="p-2 text-gray-500 hover:text-white transition-colors">
-                          <MoreHorizontal className="w-5 h-5" />
+                        <button 
+                          className={`p-2 transition-colors ${downloadedIds.has(song.songId) ? "text-green-400" : "text-gray-500 hover:text-white"}`}
+                          onClick={(e) => { 
+                            e.stopPropagation(); 
+                            if (downloadedIds.has(song.songId)) return;
+                            setDownloadedIds(prev => new Set(prev).add(song.songId));
+                            downloadSong(song.songId, song.youtubeVideoId, {
+                              title: song.title,
+                              artist: song.artist || song.artistName || "",
+                              thumbnailUrl: song.thumbnailUrl
+                            });
+                          }}
+                          title={downloadedIds.has(song.songId) ? "تم التحميل" : "تحميل"}
+                        >
+                          {downloadedIds.has(song.songId) ? <CheckCircle2 className="w-5 h-5" /> : <DownloadCloud className="w-5 h-5" />}
                         </button>
                       </div>
                     </div>

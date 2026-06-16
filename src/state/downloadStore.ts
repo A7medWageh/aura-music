@@ -15,7 +15,7 @@ export type DownloadJob = {
   progressBytes?: number;
   totalBytes?: number;
   failed: number;
-  status: "downloading" | "done" | "error" | "cancelled";
+  status: "downloading" | "paused" | "done" | "error" | "cancelled";
 };
 
 // Keep controllers out of state so they aren't serialized
@@ -131,6 +131,26 @@ export function cancelJob(id: string) {
     ctrl.abort();
   }
   finishJob(id, false, true);
+}
+
+export function pauseJob(id: string) {
+  const job = jobs.get(id);
+  if (job && job.status === "downloading") {
+    jobs.set(id, { ...job, status: "paused" });
+    notify();
+  }
+}
+
+export function resumeJob(id: string) {
+  const job = jobs.get(id);
+  if (job && job.status === "paused") {
+    jobs.set(id, { ...job, status: "downloading" });
+    notify();
+  }
+}
+
+export function isJobPaused(id: string): boolean {
+  return jobs.get(id)?.status === "paused";
 }
 
 export function getActiveJobs(): DownloadJob[] {

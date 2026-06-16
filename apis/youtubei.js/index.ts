@@ -220,41 +220,37 @@ export async function searchYouTube(query: string) {
   } catch (e) {
     console.warn(`[Search] YouTube failed for "${query}", trying Piped fallback...`);
     try {
-      const res = await fetch(`https://api.piped.yt/search?q=${encodeURIComponent(query)}&filter=all`, {
-        cache: "no-store",
-        headers: { "Accept": "application/json" }
-      });
-      const data = await res.json();
+      const yts = require("yt-search");
+      const r = await yts(query);
       
-      const items = data.items || [];
-      const songs = items.filter((s: any) => s.type === "stream").map((s: any) => ({
-        songId: s.url.replace("/watch?v=", ""),
-        youtubeVideoId: s.url.replace("/watch?v=", ""),
-        title: sanitizeTitle(s.title),
-        artist: s.uploaderName || "فنان غير معروف",
-        thumbnailUrl: s.thumbnail || ""
-      })).slice(0, 20);
+      const songs = r.videos.slice(0, 20).map((v: any) => ({
+        songId: v.videoId,
+        youtubeVideoId: v.videoId,
+        title: sanitizeTitle(v.title),
+        artist: v.author?.name || "فنان غير معروف",
+        thumbnailUrl: v.thumbnail || ""
+      }));
 
-      const albums = items.filter((s: any) => s.type === "playlist").map((s: any) => ({
+      const albums = (r.playlists || r.lists || []).slice(0, 8).map((p: any) => ({
         type: "album",
-        albumId: s.url.replace("/playlists?list=", ""),
-        title: sanitizeTitle(s.title),
-        artist: s.uploaderName || "فنان غير معروف",
-        thumbnailUrl: s.thumbnail || ""
-      })).slice(0, 8);
+        albumId: p.listId,
+        title: sanitizeTitle(p.title),
+        artist: p.author?.name || "فنان غير معروف",
+        thumbnailUrl: p.thumbnail || ""
+      }));
 
-      const artists = items.filter((s: any) => s.type === "channel").map((s: any) => ({
+      const accounts = (r.accounts || r.channels || []).slice(0, 5).map((s: any) => ({
         type: "artist",
-        artistId: s.url.replace("/channel/", ""),
+        artistId: s.url ? s.url.split("/").pop() : s.name,
         artistName: s.name || "فنان غير معروف",
-        thumbnailUrl: s.thumbnail || ""
-      })).slice(0, 5);
+        thumbnailUrl: s.thumbnail || s.image || ""
+      }));
 
-      const result = { query, songs, albums, artists, source: "piped" };
+      const result = { query, songs, albums, artists: accounts, source: "yt-search" };
       searchCache.set(query.trim().toLowerCase(), { data: result, expiresAt: Date.now() + SEARCH_TTL });
       return result;
     } catch (err) {
-      console.error("[Search] Piped fallback failed:", err);
+      console.error("[Search] yt-search fallback failed:", err);
       return { query, songs: [], albums: [], artists: [], source: "error" };
     }
   }
@@ -768,37 +764,45 @@ export async function getAlbumDetailsYoutube(albumId: string) {
 export async function getAlbumDetails(albumId: string) {
   try {
     return await getAlbumDetailsYoutube(albumId);
-  } catch (e) {
-    console.warn(`[Album] YouTube failed for ${albumId}, trying Piped fallback...`);
-    try {
-      const res = await fetch(`https://api.piped.yt/playlists/${albumId}`, {
-        headers: { "Accept": "application/json" }
-      });
-      const data = await res.json();
+    } catch (e) {
+      console.warn(`[Album] YouTube failed for ${albumId}, trying Piped fallback...`);
+      const instances = ["https://api.piped.yt", "https://pipedapi.kavin.rocks", "https://pipedapi.moomoo.me"];
       
-      const songs = (data.relatedStreams || [])
-        .map((s: any) => ({
-          songId: s.url.replace("/watch?v=", ""),
-          youtubeVideoId: s.url.replace("/watch?v=", ""),
-          title: sanitizeTitle(s.title),
-          artist: data.uploaderName || data.uploader || "فنان غير معروف",
-          thumbnailUrl: s.thumbnail || data.thumbnailUrl || ""
-        }));
+      for (const instance of instances) {
+        try {
+          const res = await fetch(`${instance}/playlists/${albumId}`, {
+            headers: { "Accept": "application/json" },
+            // Add a timeout to not get stuck on a bad instance
+            signal: AbortSignal.timeout(5000)
+          });
+          if (!res.ok) continue;
+          
+          const data = await res.json();
+          const songs = (data.relatedStreams || [])
+            .map((s: any) => ({
+              songId: s.url.replace("/watch?v=", ""),
+              youtubeVideoId: s.url.replace("/watch?v=", ""),
+              title: sanitizeTitle(s.title),
+              artist: data.uploaderName || data.uploader || "فنان غير معروف",
+              thumbnailUrl: s.thumbnail || data.thumbnailUrl || ""
+            }));
 
-      return {
-        albumId,
-        title: data.name || "Unknown Album",
-        artist: data.uploader || "Unknown Artist",
-        coverUrl: data.thumbnailUrl || null,
-        year: "",
-        songs,
-        source: "piped"
-      };
-    } catch (err) {
-      console.error("[Album] Piped fallback failed too:", err);
+          return {
+            albumId,
+            title: data.name || "Unknown Album",
+            artist: data.uploader || "Unknown Artist",
+            coverUrl: data.thumbnailUrl || null,
+            year: "",
+            songs,
+            source: "piped"
+          };
+        } catch (err) {
+          console.error(`[Album] Piped fallback failed on ${instance}`);
+        }
+      }
+      
       return { albumId, title: "Unknown Album", artist: "Unknown", coverUrl: null, year: "", songs: [], source: "error" };
     }
-  }
 }
 
 export async function getMoodMix(mood: string) {

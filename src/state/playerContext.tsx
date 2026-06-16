@@ -4,6 +4,7 @@ import { createContext, ReactNode, useContext, useEffect, useMemo, useRef, useSt
 import { initialPlayerState, PlayerState, QueueSong, RepeatMode } from "@/state/playerState";
 import { getAudioBlob } from "@/offline/indexedDbCache";
 import { downloadSong } from "@/services/offline/downloader";
+import { useToastStore } from "@/state/toastStore";
 
 type PlayerContextValue = {
   state: PlayerState;
@@ -55,12 +56,25 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }));
   };
 
-  const enqueueSongs = (songs: QueueSong[]) => {
+  const enqueueSongs = async (songs: QueueSong[]) => {
     if (!songs.length) return;
+    
+    // Filter out undownloaded songs
+    const validSongs = [];
+    for (const song of songs) {
+      const blob = await getAudioBlob(song.songId);
+      if (blob) validSongs.push(song);
+    }
+    
+    if (validSongs.length === 0) {
+      useToastStore.getState().addToast("يجب تحميل الأغاني أولاً", "error");
+      return;
+    }
+
     setState((prev) => {
       const existingIds = new Set(prev.queue.map((item) => item.songId));
       const merged = [...prev.queue];
-      for (const song of songs) {
+      for (const song of validSongs) {
         if (!existingIds.has(song.songId)) {
           merged.push(song);
           existingIds.add(song.songId);
@@ -69,18 +83,21 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       return {
         ...prev,
         queue: merged,
-        currentSongId: prev.currentSongId ?? songs[0].songId
+        currentSongId: prev.currentSongId ?? validSongs[0].songId
       };
     });
   };
 
-  const playNow = (song: QueueSong) => {
-    // Track in listening history (client-side, fire-and-forget)
+  const playNow = async (song: QueueSong) => {
     if (typeof window !== "undefined") {
       import("@/services/user/listeningHistory").then(({ trackPlay }) => trackPlay(song)).catch(() => {});
     }
     
-    // Feature removed: do not automatically download in background. Let browser buffer naturally via chunks.
+    const blob = await getAudioBlob(song.songId);
+    if (!blob) {
+      useToastStore.getState().addToast("يجب تحميل الأغنية أولاً لتتمكن من تشغيلها", "error");
+      return;
+    }
 
     setState((prev) => {
       const exists = prev.queue.some((item) => item.songId === song.songId);
@@ -97,8 +114,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     });
   };
 
-
-  const playSongById = (songId: string) => {
+  const playSongById = async (songId: string) => {
+    const blob = await getAudioBlob(songId);
+    if (!blob) {
+      useToastStore.getState().addToast("يجب تحميل الأغنية أولاً لتتمكن من تشغيلها", "error");
+      return;
+    }
     setState((prev) => ({ ...prev, currentSongId: songId, isPlaying: true }));
   };
 
@@ -254,27 +275,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     player.playbackRate = state.speed;
   }, [state.speed]);
 
-  // ─── Stream Resolution ──────────────────────────────────────────────────
-  const resolveStream = async (videoId: string): Promise<string> => {
-    // 1. Check Offline Storage First (instant)
-    if (typeof window !== "undefined") {
-       try {
-         const { getAudioBlob } = await import("@/offline/indexedDbCache");
-         const blob = await getAudioBlob(videoId);
-         if (blob) {
-            console.log("[Player] Playing from offline storage.");
-            return URL.createObjectURL(blob);
-         }
-       } catch(e) {
-         console.warn("[Player] Failed to load offline storage:", e);
-       }
-    }
 
-    // 2. Use /api/audio/[videoId] — a direct pipe endpoint.
-    // Railway resolves + fetches the googlevideo URL server-side with the correct
-    // youtubei.js session (matching IP + PO-Token). No IP mismatch, no URL expiry.
-    return `/api/audio/${encodeURIComponent(videoId)}`;
-  };
 
   const preloadNext = (currentId: string, queue: QueueSong[]) => {
     // Preloading disabled to save bandwidth
@@ -330,7 +331,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           }
         }
         
-        // 1. Check Offline cache
+        // Check Offline cache
         let cachedBlob = await getAudioBlob(song.songId);
         
         if (cachedBlob) {
@@ -342,31 +343,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
            return;
         }
 
-        // 2. Online Streaming (Albumaty / YouTube Fallback)
-        // We fetch the API to get the direct URL to avoid Service Worker crashes on 307 Redirects
-        const qParams = new URLSearchParams({
-          videoId: videoIdToPlay,
-          title: song.title,
-          artist: song.artist || "",
-          q: (song as any).searchQuery || "",
-          t: Date.now().toString()
-        });
-        const ytdownloadApiUrl = `/api/ytdownload?${qParams.toString()}`;
-        
-        try {
-          const proxyRes = await fetch(ytdownloadApiUrl);
-          const proxyData = await proxyRes.json();
-          if (proxyData.url && !cancelled) {
-            setState((prev) => ({ ...prev, isBuffering: false, streamUrl: proxyData.url }));
-            player.src = proxyData.url;
-            player.load();
-            if (isPlayingRef.current) player.play().catch(console.error);
-          } else {
-            throw new Error(proxyData.error || "Failed to fetch stream");
-          }
-        } catch (err) {
-          if (!cancelled) setState((prev) => ({ ...prev, isBuffering: false, error: "حدث خطأ أثناء تحميل الأغنية" }));
-        }
+        // Not downloaded - require download first
+        useToastStore.getState().addToast("يجب تحميل الأغنية أولاً للاستماع إليها", "error");
+        throw new Error("يجب تحميل الأغنية أولاً للاستماع إليها");
 
       } catch (error) {
         if (!cancelled) {
@@ -388,9 +367,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (!player || !state.streamUrl) return;
 
     if (state.isPlaying) {
-      player.play().catch(() => {
-        setState((prev) => ({ ...prev, isPlaying: false }));
-      });
+      const playPromise = player.play();
+      if (playPromise !== undefined) {
+        playPromise.catch((err) => {
+          if (err.name !== "AbortError") {
+            setState((prev) => ({ ...prev, isPlaying: false }));
+          }
+        });
+      }
     } else {
       player.pause();
     }

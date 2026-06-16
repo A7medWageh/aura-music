@@ -16,19 +16,19 @@ type ArtistEntry = { name: string; artistId: string; thumbnailUrl: string };
 function ArtistCard({ artist }: { artist: ArtistEntry }) {
   return (
     <Link href={artist.artistId ? `/artist/${artist.artistId}` : "#"} className="flex flex-col items-center gap-2 group cursor-pointer">
-      <div className="w-16 h-16 md:w-24 md:h-24 rounded-full overflow-hidden border-2 border-transparent group-hover:border-cyan-400 transition-all shadow-lg ring-2 ring-white/5 group-hover:ring-cyan-400/50 group-hover:shadow-[0_0_20px_rgba(0,229,255,0.4)] shrink-0 relative">
+      <div className="w-16 h-16 md:w-24 md:h-24 rounded-full overflow-hidden border-2 border-transparent group-hover:border-indigo-500 transition-all shadow-lg ring-2 ring-white/5 group-hover:ring-indigo-500/50 group-hover:shadow-[0_0_30px_rgba(99,102,241,0.5)] shrink-0 relative">
         {artist.thumbnailUrl ? (
           <img
             src={getProxyUrl(artist.thumbnailUrl)}
             alt={artist.name}
-            className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
-            onError={(e) => { (e.target as HTMLImageElement).parentElement!.innerHTML = `<div class="w-full h-full bg-cyan-500/20 flex items-center justify-center text-2xl">🎤</div>`; }}
+            className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"
+            onError={(e) => { (e.target as HTMLImageElement).parentElement!.innerHTML = `<div class="w-full h-full bg-gradient-to-br from-indigo-500/20 to-purple-600/20 flex items-center justify-center text-3xl">🎤</div>`; }}
           />
         ) : (
-          <div className="w-full h-full bg-gradient-to-br from-cyan-500/30 to-blue-600/30 flex items-center justify-center text-2xl">🎤</div>
+          <div className="w-full h-full bg-gradient-to-br from-indigo-500/30 to-purple-600/30 flex items-center justify-center text-3xl">🎤</div>
         )}
       </div>
-      <span className="text-xs font-bold text-center text-gray-400 group-hover:text-white group-hover:text-shadow-[0_0_8px_rgba(0,229,255,0.8)] transition-all leading-tight px-1 line-clamp-2">{artist.name}</span>
+      <span className="text-xs font-bold text-center text-gray-400 group-hover:text-white group-hover:text-shadow-[0_0_10px_rgba(99,102,241,0.8)] transition-all leading-tight px-1 line-clamp-2">{artist.name}</span>
     </Link>
   );
 }
@@ -163,8 +163,8 @@ export default function HomePage() {
       {/* ─── Egyptian Artists ─── */}
       <section>
         <div className="flex items-center gap-3 mb-6">
-          <Star className="text-yellow-400 w-6 h-6" />
-          <h2 className="text-2xl font-bold">أشهر فنانين مصر 🎤</h2>
+          <Star className="text-amber-400 w-6 h-6 drop-shadow-md" />
+          <h2 className="text-2xl font-black">أشهر فنانين مصر 🎤</h2>
         </div>
         <ArtistGrid artists={egyptianArtists} loading={artistsLoading} count={50} />
       </section>
@@ -172,8 +172,8 @@ export default function HomePage() {
       {/* ─── International Artists ─── */}
       <section>
         <div className="flex items-center gap-3 mb-6">
-          <Star className="text-blue-400 w-6 h-6" />
-          <h2 className="text-2xl font-bold">نجوم عالميون 🌍</h2>
+          <Star className="text-indigo-400 w-6 h-6 drop-shadow-md" />
+          <h2 className="text-2xl font-black">نجوم عالميون 🌍</h2>
         </div>
         <ArtistGrid artists={intlArtists} loading={artistsLoading} count={50} />
       </section>
@@ -181,15 +181,15 @@ export default function HomePage() {
       {/* ─── Trending Slider ─── */}
       <section>
         <div className="flex items-center justify-between mb-4 px-2">
-          <h2 className="text-2xl font-black flex items-center gap-2 text-gradient">
-            <TrendingUp className="text-cyan-400 w-6 h-6" /> الأغاني الأكثر استماعاً الآن 🔥
+          <h2 className="text-2xl font-black flex items-center gap-2 bg-gradient-to-l from-indigo-400 to-purple-400 bg-clip-text text-transparent">
+            <TrendingUp className="text-indigo-400 w-6 h-6" /> الأغاني الأكثر استماعاً الآن 🔥
           </h2>
           <div className="flex items-center gap-2">
-            <button onClick={() => manualNav(goPrev)} className="w-9 h-9 rounded-full glass border border-white/10 flex items-center justify-center hover:border-cyan-400 hover:bg-cyan-400/20 transition-all">
+            <button onClick={() => manualNav(goPrev)} className="w-9 h-9 rounded-full glass border border-white/10 flex items-center justify-center hover:border-indigo-400 hover:bg-indigo-400/20 transition-all">
               <ChevronRight className="w-5 h-5" />
             </button>
             <span className="text-xs text-gray-500 font-bold tabular-nums min-w-[40px] text-center">{currentSlide + 1}/{totalSlides}</span>
-            <button onClick={() => manualNav(goNext)} className="w-9 h-9 rounded-full glass border border-white/10 flex items-center justify-center hover:border-cyan-400 hover:bg-cyan-400/20 transition-all">
+            <button onClick={() => manualNav(goNext)} className="w-9 h-9 rounded-full glass border border-white/10 flex items-center justify-center hover:border-indigo-400 hover:bg-indigo-400/20 transition-all">
               <ChevronLeft className="w-5 h-5" />
             </button>
           </div>
@@ -207,15 +207,15 @@ export default function HomePage() {
                     onMouseEnter={() => onSongHover(item.youtubeVideoId)}
                     onClick={() => playNow(item)}
                   >
-                    <div className="relative aspect-video rounded-2xl overflow-hidden glass mb-3 border border-transparent group-hover:border-cyan-400/50 group-hover:shadow-[0_0_25px_rgba(0,229,255,0.3)] transition-all">
+                    <div className="relative aspect-video rounded-2xl overflow-hidden glass mb-3 border border-transparent group-hover:border-indigo-500 group-hover:shadow-[0_0_25px_rgba(99,102,241,0.3)] transition-all">
                       <img src={getProxyUrl(item.thumbnailUrl)} alt={item.title} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" />
                       <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                        <div className="w-12 h-12 rounded-full bg-cyan-500 flex items-center justify-center shadow-[0_0_20px_rgba(0,229,255,0.6)]">
+                        <div className="w-12 h-12 rounded-full bg-indigo-500 flex items-center justify-center shadow-[0_0_20px_rgba(99,102,241,0.6)]">
                           <Play className="w-5 h-5 text-black fill-current ml-0.5" />
                         </div>
                       </div>
                       <div className="absolute top-2 left-2 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button onClick={(e) => handleDownload(e, item)} className="relative p-1.5 bg-black/50 backdrop-blur-sm rounded-full hover:text-cyan-400 text-white transition-colors">
+                        <button onClick={(e) => handleDownload(e, item)} className="relative p-1.5 bg-black/50 backdrop-blur-sm rounded-full hover:text-indigo-400 text-white transition-colors">
                           {!isPremium && <Crown className="absolute -top-1.5 -right-1.5 w-3 h-3 text-amber-500 drop-shadow-md" />}
                           <DownloadCloud className="w-4 h-4" />
                         </button>
@@ -231,7 +231,7 @@ export default function HomePage() {
                       </div>
                     </div>
                     <div className="px-1">
-                      <h3 className="font-bold text-sm truncate group-hover:text-cyan-400 transition-colors">{item.title}</h3>
+                      <h3 className="font-bold text-sm truncate group-hover:text-indigo-400 transition-colors">{item.title}</h3>
                       <p className="text-xs text-gray-400 truncate mt-0.5">{item.artist}</p>
                     </div>
                   </motion.div>

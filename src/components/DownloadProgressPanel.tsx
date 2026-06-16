@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { subscribeDownloads, DownloadJob, cancelJob } from "@/state/downloadStore";
-import { DownloadCloud, CheckCircle2, XCircle, Music, X } from "lucide-react";
+import { subscribeDownloads, DownloadJob, cancelJob, pauseJob, resumeJob } from "@/state/downloadStore";
+import { DownloadCloud, CheckCircle2, XCircle, Music, X, Pause, Play } from "lucide-react";
 
 export function DownloadProgressPanel() {
   const [jobs, setJobs] = useState<DownloadJob[]>([]);
@@ -208,45 +208,79 @@ function JobRow({ job }: { job: DownloadJob }) {
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-2">
-            <p className="text-[13px] font-black text-white truncate leading-tight flex-1">{job.name}</p>
+            <p className="text-[13px] font-black text-white truncate leading-tight flex-1">
+              {job.type === "album" ? `ألبوم: ${job.name}` : job.name}
+            </p>
             <span className={`text-xs font-black tabular-nums ${job.status === "error" ? "text-red-400" : "text-cyan-400"}`}>
                {isPending ? "⏳" : `%${pct}`}
             </span>
           </div>
           
-          <div className="flex items-center justify-between mt-1.5">
-            <div className="flex items-center gap-2">
-              {job.status === "downloading" ? (
-                <div className="flex items-center gap-1.5 text-[10px] font-bold text-gray-400 uppercase tracking-widest">
-                  <div className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
-                  {isPending ? "بانتظار الرابط..." : "جاري التحميل"}
-                  {speedText && !isPending && <span className="text-gray-500 px-1 border-r border-white/10 mx-2">{speedText}</span>}
-                </div>
-              ) : job.status === "done" ? (
-                <p className="text-[10px] text-emerald-400 font-bold flex items-center gap-1 uppercase tracking-widest">
-                  <CheckCircle2 className="w-3 h-3 mr-1" /> تم الحفظ
-                </p>
-              ) : job.status === "cancelled" ? (
-                <p className="text-[10px] text-orange-400 font-bold flex items-center gap-1 uppercase tracking-widest">
-                  <XCircle className="w-3 h-3 mr-1" /> تم الإلغاء
-                </p>
-              ) : (
-                <p className="text-[10px] text-red-400 font-bold flex items-center gap-1 uppercase tracking-widest">
-                  <XCircle className="w-3 h-3 mr-1" /> فشل التحميل
-                </p>
-              )}
-            </div>
-            
-            {/* Cancel Button */}
-            {job.status === "downloading" && (
-              <button 
-                onClick={(e) => { e.stopPropagation(); cancelJob(job.id); }}
-                className="w-6 h-6 rounded-full bg-white/5 hover:bg-red-500/20 text-gray-400 hover:text-red-400 flex items-center justify-center transition-colors"
-                title="إلغاء التحميل"
-              >
-                <X className="w-3 h-3" />
-              </button>
+          <div className="flex flex-col gap-1 mt-1.5">
+            {job.type === "album" && job.currentSong && job.status === "downloading" && (
+              <div className="flex items-center gap-1.5 text-xs text-cyan-300 font-medium">
+                <div className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+                <span className="truncate">جاري تحميل: {job.currentSong}</span>
+              </div>
             )}
+            
+            <div className="flex items-center justify-between mt-1">
+              <div className="flex items-center gap-2">
+                {job.status === "downloading" ? (
+                  <div className="flex items-center gap-1.5 text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+                    {isPending ? "بانتظار الرابط..." : "جاري التحميل"}
+                    {speedText && !isPending && <span className="text-gray-500 px-1 border-r border-white/10 mx-2">{speedText}</span>}
+                  </div>
+                ) : job.status === "paused" ? (
+                  <div className="flex items-center gap-1.5 text-[10px] font-bold text-orange-400 uppercase tracking-widest">
+                    <Pause className="w-3 h-3 mr-1" /> تم الإيقاف مؤقتاً
+                  </div>
+                ) : job.status === "done" ? (
+                  <div className="flex flex-col gap-1">
+                    <p className="text-[10px] text-emerald-400 font-bold flex items-center gap-1 uppercase tracking-widest">
+                      <CheckCircle2 className="w-3 h-3 mr-1" /> تم الحفظ بنجاح
+                    </p>
+                    {job.currentSong && job.type === "album" && (
+                      <span className="text-[10px] text-gray-400">آخر أغنية: {job.currentSong}</span>
+                    )}
+                  </div>
+                ) : job.status === "cancelled" ? (
+                  <p className="text-[10px] text-orange-400 font-bold flex items-center gap-1 uppercase tracking-widest">
+                    <XCircle className="w-3 h-3 mr-1" /> تم الإلغاء
+                  </p>
+                ) : (
+                  <p className="text-[10px] text-red-400 font-bold flex items-center gap-1 uppercase tracking-widest">
+                    <XCircle className="w-3 h-3 mr-1" /> فشل التحميل
+                  </p>
+                )}
+              </div>
+              
+              {/* Actions */}
+              <div className="flex items-center gap-1">
+                {(job.status === "downloading" || job.status === "paused") && (
+                  <button 
+                    onClick={(e) => { 
+                      e.stopPropagation(); 
+                      if (job.status === "paused") resumeJob(job.id);
+                      else pauseJob(job.id);
+                    }}
+                    className="w-6 h-6 rounded-full bg-white/5 hover:bg-orange-500/20 text-gray-400 hover:text-orange-400 flex items-center justify-center transition-colors"
+                    title={job.status === "paused" ? "استئناف" : "إيقاف مؤقت"}
+                  >
+                    {job.status === "paused" ? <Play className="w-3 h-3" /> : <Pause className="w-3 h-3" />}
+                  </button>
+                )}
+                {job.status === "downloading" && (
+                  <button 
+                    onClick={(e) => { e.stopPropagation(); cancelJob(job.id); }}
+                    className="w-6 h-6 rounded-full bg-white/5 hover:bg-red-500/20 text-gray-400 hover:text-red-400 flex items-center justify-center transition-colors"
+                    title="إلغاء التحميل"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       </div>

@@ -43,8 +43,8 @@ export function AuthMenu() {
     if (typeof window !== "undefined") {
       localStorage.removeItem("aura_logged_in");
       localStorage.removeItem("aura_user_tier");
+      window.location.reload();
     }
-    setIsOpen(false);
   };
 
   if (user) {
