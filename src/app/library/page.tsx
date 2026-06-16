@@ -300,14 +300,14 @@ export default function LibraryPage() {
               <button onClick={() => playList(currentAlbumData.songs)} className="px-4 py-2 bg-indigo-500 rounded-xl font-bold flex items-center gap-2 hover:bg-indigo-600 transition-colors">
                 <Play className="w-4 h-4 fill-current" /> تشغيل الألبوم
               </button>
-              <button onClick={(e) => handleDeleteAlbum(e, currentAlbumData.name, openArtist!)} className="p-2 bg-red-500/10 text-red-400 rounded-xl hover:bg-red-500/20 transition-colors">
+              <button onClick={(e: any) => handleDeleteAlbum(e, currentAlbumData.name, openArtist!)} className="p-2 bg-red-500/10 text-red-400 rounded-xl hover:bg-red-500/20 transition-colors">
                 <Trash2 className="w-5 h-5" />
               </button>
             </div>
           </div>
           <div className="grid gap-2">
             {currentAlbumData.songs.map((song, i) => (
-              <SongRow key={song.songId} song={song} index={i} play={() => playNow(song)} onDelete={(e) => handleDeleteSong(e, song.songId)} onToggleHide={(e) => handleToggleHide(e, song)} vaultUnlocked={vaultUnlocked} />
+              <SongRow key={song.songId} song={song} index={i} play={() => playNow(song)} onDelete={(e: any) => handleDeleteSong(e, song.songId)} onToggleHide={(e: any) => handleToggleHide(e, song)} vaultUnlocked={vaultUnlocked} />
             ))}
           </div>
         </div>
@@ -320,7 +320,7 @@ export default function LibraryPage() {
                 <button onClick={() => playList([...currentArtistData.albums.flatMap(a=>a.songs), ...currentArtistData.singles])} className="px-4 py-2 bg-indigo-500 rounded-xl font-bold flex items-center gap-2">
                   <Play className="w-4 h-4 fill-current" /> تشغيل الكل
                 </button>
-                <button onClick={(e) => handleDeleteArtist(e, currentArtistData.name)} className="p-2 bg-red-500/10 text-red-400 rounded-xl">
+                <button onClick={(e: any) => handleDeleteArtist(e, currentArtistData.name)} className="p-2 bg-red-500/10 text-red-400 rounded-xl">
                   <Trash2 className="w-5 h-5" />
                 </button>
               </div>
@@ -353,7 +353,7 @@ export default function LibraryPage() {
                <h3 className="text-xl font-bold text-gray-300 mb-4 border-b border-white/5 pb-2">أغاني منفردة (Singles)</h3>
                <div className="grid gap-2">
                  {currentArtistData.singles.map((song, i) => (
-                   <SongRow key={song.songId} song={song} index={i} play={() => playNow(song)} onDelete={(e) => handleDeleteSong(e, song.songId)} onToggleHide={(e) => handleToggleHide(e, song)} vaultUnlocked={vaultUnlocked} />
+                   <SongRow key={song.songId} song={song} index={i} play={() => playNow(song)} onDelete={(e: any) => handleDeleteSong(e, song.songId)} onToggleHide={(e: any) => handleToggleHide(e, song)} vaultUnlocked={vaultUnlocked} />
                  ))}
                </div>
              </div>
@@ -371,7 +371,7 @@ export default function LibraryPage() {
                 <div className="absolute inset-0 rounded-full overflow-hidden shadow-xl border-4 border-transparent group-hover:border-indigo-400/50 transition-all duration-500">
                   <ArtistAvatar artistName={artist.name} fallbackCover={artist.cover} />
                   <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                    <button onClick={(e) => { e.stopPropagation(); playList([...artist.albums.flatMap(a=>a.songs), ...artist.singles]) }} 
+                    <button onClick={(e: any) => { e.stopPropagation(); playList([...artist.albums.flatMap(a=>a.songs), ...artist.singles]) }} 
                       className="w-14 h-14 bg-indigo-500 rounded-full flex items-center justify-center shadow-2xl scale-0 group-hover:scale-100 transition-transform duration-300 delay-75">
                       <Play className="w-6 h-6 text-white fill-current translate-x-0.5" />
                     </button>
