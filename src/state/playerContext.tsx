@@ -60,7 +60,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (!songs.length) return;
     
     // Filter out undownloaded songs
-    const validSongs = [];
+    const validSongs: QueueSong[] = [];
     for (const song of songs) {
       const blob = await getAudioBlob(song.songId);
       if (blob) validSongs.push(song);
