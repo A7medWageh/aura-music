@@ -9,22 +9,54 @@ const NO_CACHE_HEADERS = {
   "Expires": "0",
 };
 
-// ── Strategy 1: Albumaty (Arabic MP3 scraper — fastest & most reliable on Vercel) ──
-async function resolveWithAlbumaty(title: string, artist: string): Promise<string | null> {
+// ── Strategy 1: @distube/ytdl-core — best URL extraction on any server ────────
+async function resolveWithYtdlCore(videoId: string): Promise<string | null> {
   try {
-    const { scrapeArabicSong } = await import("@/../apis/scraping/arabicScraper");
-    const result = await scrapeArabicSong(title, artist);
-    if (result?.url) {
-      console.log(`[ytdownload] Albumaty resolved: ${result.url.slice(0, 80)}...`);
-      return result.url;
+    const ytdl = await import("@distube/ytdl-core");
+    const info = await ytdl.default.getInfo(
+      `https://www.youtube.com/watch?v=${videoId}`,
+      {
+        requestOptions: {
+          headers: {
+            "User-Agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9",
+            ...(process.env.YOUTUBE_COOKIE
+              ? { Cookie: process.env.YOUTUBE_COOKIE }
+              : {}),
+          },
+        },
+      }
+    );
+
+    // Try audio-only first, fall back to formats with audio
+    let formats = ytdl.default
+      .filterFormats(info.formats, "audioonly")
+      .filter((f: any) => f.url)
+      .sort((a: any, b: any) => (b.audioBitrate ?? 0) - (a.audioBitrate ?? 0));
+
+    // If no audio-only with URL, try all formats that have audio
+    if (formats.length === 0) {
+      formats = info.formats
+        .filter((f: any) => f.url && f.hasAudio)
+        .sort(
+          (a: any, b: any) => (b.audioBitrate ?? 0) - (a.audioBitrate ?? 0)
+        );
+    }
+
+    if (formats.length > 0 && formats[0].url) {
+      console.log(
+        `[ytdownload] ytdl-core resolved (${formats[0].container}, ${formats[0].audioBitrate}kbps)`
+      );
+      return formats[0].url;
     }
   } catch (e: any) {
-    console.warn("[ytdownload] Albumaty failed:", e.message);
+    console.warn("[ytdownload] ytdl-core failed:", e.message?.slice(0, 120));
   }
   return null;
 }
 
-// ── Strategy 2: Invidious public pool (googlevideo proxy — bypasses YouTube IP blocks) ──
+// ── Strategy 2: Invidious public pool ─────────────────────────────────────────
 const INVIDIOUS_INSTANCES = [
   "https://inv.pistasjis.net",
   "https://invidious.flokinet.to",
@@ -32,28 +64,28 @@ const INVIDIOUS_INSTANCES = [
   "https://iv.ggtyler.dev",
   "https://invidious.projectsegfau.lt",
   "https://invidious.nerdvpn.de",
-  "https://yt.artemislena.eu",
   "https://invidious.lunar.icu",
+  "https://vid.puffyan.us",
 ];
 
 async function resolveWithInvidious(videoId: string): Promise<string | null> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 9000);
-
   try {
-    const result = await Promise.any(
+    const url = await Promise.any(
       INVIDIOUS_INSTANCES.map(async (instance) => {
         const res = await fetch(`${instance}/api/v1/videos/${videoId}`, {
-          signal: controller.signal,
+          signal: AbortSignal.timeout(7000),
           headers: { "User-Agent": "Mozilla/5.0" },
           cache: "no-store",
         });
         if (!res.ok) throw new Error(`${instance}: ${res.status}`);
         const data = await res.json();
         const formats: any[] = data.adaptiveFormats ?? [];
-        // Prefer webm/opus, fallback to any audio
         const best =
-          formats.find((f: any) => f.type?.includes("audio/webm") && f.audioQuality === "AUDIO_QUALITY_MEDIUM") ??
+          formats.find(
+            (f: any) =>
+              f.type?.includes("audio/webm") &&
+              f.audioQuality === "AUDIO_QUALITY_MEDIUM"
+          ) ??
           formats.find((f: any) => f.type?.includes("audio/webm")) ??
           formats.find((f: any) => f.type?.includes("audio/mp4")) ??
           formats.find((f: any) => f.type?.includes("audio"));
@@ -64,15 +96,13 @@ async function resolveWithInvidious(videoId: string): Promise<string | null> {
         throw new Error("no audio format");
       })
     );
-    clearTimeout(timeout);
-    return result;
+    return url;
   } catch {
-    clearTimeout(timeout);
     return null;
   }
 }
 
-// ── Strategy 3: Piped API pool ──
+// ── Strategy 3: Piped API pool ────────────────────────────────────────────────
 const PIPED_INSTANCES = [
   "https://pipedapi.kavin.rocks",
   "https://pipedapi.adminforge.de",
@@ -82,14 +112,11 @@ const PIPED_INSTANCES = [
 ];
 
 async function resolveWithPiped(videoId: string): Promise<string | null> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 9000);
-
   try {
-    const result = await Promise.any(
+    const url = await Promise.any(
       PIPED_INSTANCES.map(async (api) => {
         const res = await fetch(`${api}/streams/${videoId}`, {
-          signal: controller.signal,
+          signal: AbortSignal.timeout(7000),
           headers: { "User-Agent": "Mozilla/5.0", Accept: "application/json" },
           cache: "no-store",
         });
@@ -106,15 +133,13 @@ async function resolveWithPiped(videoId: string): Promise<string | null> {
         throw new Error("no audio stream");
       })
     );
-    clearTimeout(timeout);
-    return result;
+    return url;
   } catch {
-    clearTimeout(timeout);
     return null;
   }
 }
 
-// ── Strategy 4: youtubei.js (last resort, may be IP-blocked on Vercel) ──
+// ── Strategy 4: youtubei.js InnerTube ─────────────────────────────────────────
 async function resolveWithYoutubei(videoId: string): Promise<string | null> {
   try {
     const { resolveStream } = await import("@/../apis/youtubei.js/index");
@@ -124,12 +149,12 @@ async function resolveWithYoutubei(videoId: string): Promise<string | null> {
       return url;
     }
   } catch (e: any) {
-    console.warn("[ytdownload] youtubei.js failed:", e.message);
+    console.warn("[ytdownload] youtubei.js failed:", e.message?.slice(0, 100));
   }
   return null;
 }
 
-// ── Proxy the audio stream back to the browser ───────────────────────────────
+// ── Proxy audio stream back to browser ────────────────────────────────────────
 async function proxyAudioUrl(
   audioUrl: string,
   signal: AbortSignal
@@ -139,22 +164,23 @@ async function proxyAudioUrl(
     headers: {
       "User-Agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-      "Range": "bytes=0-",
+      Range: "bytes=0-",
     },
     signal,
   });
 
   if (!upstream.ok) {
-    throw new Error(`Upstream fetch failed: ${upstream.status}`);
+    throw new Error(`Upstream fetch failed: ${upstream.status} for ${audioUrl.slice(0, 60)}`);
   }
 
   const headers = new Headers(NO_CACHE_HEADERS);
 
-  // Forward useful headers
-  ["content-type", "content-length", "content-range", "accept-ranges"].forEach((key) => {
-    const val = upstream.headers.get(key);
-    if (val) headers.set(key, val);
-  });
+  ["content-type", "content-length", "content-range", "accept-ranges"].forEach(
+    (key) => {
+      const val = upstream.headers.get(key);
+      if (val) headers.set(key, val);
+    }
+  );
 
   if (!headers.has("content-type")) headers.set("content-type", "audio/mpeg");
   headers.set("Access-Control-Allow-Origin", "*");
@@ -163,17 +189,14 @@ async function proxyAudioUrl(
     "Content-Length, Content-Range, Accept-Ranges, X-Original-Content-Length"
   );
 
-  const contentLength = headers.get("content-length");
-  headers.set(
-    "X-Original-Content-Length",
-    contentLength ?? String(3.5 * 1024 * 1024)
-  );
-  if (!contentLength) headers.set("Transfer-Encoding", "chunked");
+  const cl = headers.get("content-length");
+  headers.set("X-Original-Content-Length", cl ?? String(3.5 * 1024 * 1024));
+  if (!cl) headers.set("Transfer-Encoding", "chunked");
 
   return new NextResponse(upstream.body, { headers });
 }
 
-// ── Main handler ──────────────────────────────────────────────────────────────
+// ── Main GET handler ──────────────────────────────────────────────────────────
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const videoId = searchParams.get("videoId");
@@ -187,15 +210,13 @@ export async function GET(req: NextRequest) {
   console.log(`[ytdownload] Downloading: "${title}" by "${artist}" (${videoId})`);
 
   try {
-    // 1. Albumaty — direct MP3, no YouTube IP issues
-    if (title) {
-      const albumatyUrl = await resolveWithAlbumaty(title, artist);
-      if (albumatyUrl) {
-        return await proxyAudioUrl(albumatyUrl, req.signal);
-      }
+    // 1. ytdl-core — most reliable, gets URL directly from YouTube API
+    const ytdlUrl = await resolveWithYtdlCore(videoId);
+    if (ytdlUrl) {
+      return await proxyAudioUrl(ytdlUrl, req.signal);
     }
 
-    // 2. Invidious pool — proxied YouTube audio
+    // 2. Invidious pool
     const invidiousUrl = await resolveWithInvidious(videoId);
     if (invidiousUrl) {
       return await proxyAudioUrl(invidiousUrl, req.signal);
