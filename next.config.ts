@@ -21,7 +21,8 @@ const withPWA = withPWAInit({
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
-  output: "standalone",
+  swcMinify: false,
+  // output: "standalone",
   experimental: {
     optimizePackageImports: ["framer-motion"],
   },
