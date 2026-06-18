@@ -9,8 +9,33 @@ const NO_CACHE_HEADERS = {
   "Expires": "0",
 };
 
-// ── Strategy 1: @distube/ytdl-core — best URL extraction on any server ────────
-async function resolveWithYtdlCore(videoId: string): Promise<string | null> {
+// ── Strategy 1: RapidAPI (youtube-mp3-audio-video-downloader) ────────────────
+const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY || "06927991ffmshcbe63a93c7bc4a5p1cc0a0jsn330d37766afa";
+const RAPIDAPI_HOST = "youtube-mp3-audio-video-downloader.p.rapidapi.com";
+
+async function resolveWithRapidAPI(videoId: string): Promise<{ url: string; headers: Record<string, string> } | null> {
+  try {
+    if (!RAPIDAPI_KEY) return null;
+    
+    // We use the download-mp3 endpoint which returns the audio stream directly
+    const url = `https://${RAPIDAPI_HOST}/download-mp3/${videoId}?quality=low`;
+    console.log(`[ytdownload] RapidAPI resolved endpoint for ${videoId}`);
+    
+    return {
+      url,
+      headers: {
+        "x-rapidapi-key": RAPIDAPI_KEY,
+        "x-rapidapi-host": RAPIDAPI_HOST
+      }
+    };
+  } catch (e: any) {
+    console.warn("[ytdownload] RapidAPI failed:", e.message);
+    return null;
+  }
+}
+
+// ── Strategy 2: @distube/ytdl-core — best URL extraction on any server ────────
+async function resolveWithYtdlCore(videoId: string): Promise<{ url: string; headers?: Record<string, string> } | null> {
   try {
     const ytdl = await import("@distube/ytdl-core");
     const info = await ytdl.default.getInfo(
@@ -29,26 +54,20 @@ async function resolveWithYtdlCore(videoId: string): Promise<string | null> {
       }
     );
 
-    // Try audio-only first, fall back to formats with audio
     let formats = ytdl.default
       .filterFormats(info.formats, "audioonly")
       .filter((f: any) => f.url)
       .sort((a: any, b: any) => (b.audioBitrate ?? 0) - (a.audioBitrate ?? 0));
 
-    // If no audio-only with URL, try all formats that have audio
     if (formats.length === 0) {
       formats = info.formats
         .filter((f: any) => f.url && f.hasAudio)
-        .sort(
-          (a: any, b: any) => (b.audioBitrate ?? 0) - (a.audioBitrate ?? 0)
-        );
+        .sort((a: any, b: any) => (b.audioBitrate ?? 0) - (a.audioBitrate ?? 0));
     }
 
     if (formats.length > 0 && formats[0].url) {
-      console.log(
-        `[ytdownload] ytdl-core resolved (${formats[0].container}, ${formats[0].audioBitrate}kbps)`
-      );
-      return formats[0].url;
+      console.log(`[ytdownload] ytdl-core resolved (${formats[0].container}, ${formats[0].audioBitrate}kbps)`);
+      return { url: formats[0].url };
     }
   } catch (e: any) {
     console.warn("[ytdownload] ytdl-core failed:", e.message?.slice(0, 120));
@@ -56,7 +75,7 @@ async function resolveWithYtdlCore(videoId: string): Promise<string | null> {
   return null;
 }
 
-// ── Strategy 2: Invidious public pool ─────────────────────────────────────────
+// ── Strategy 3: Invidious public pool ─────────────────────────────────────────
 const INVIDIOUS_INSTANCES = [
   "https://inv.pistasjis.net",
   "https://invidious.flokinet.to",
@@ -68,7 +87,7 @@ const INVIDIOUS_INSTANCES = [
   "https://vid.puffyan.us",
 ];
 
-async function resolveWithInvidious(videoId: string): Promise<string | null> {
+async function resolveWithInvidious(videoId: string): Promise<{ url: string; headers?: Record<string, string> } | null> {
   try {
     const url = await Promise.any(
       INVIDIOUS_INSTANCES.map(async (instance) => {
@@ -81,11 +100,7 @@ async function resolveWithInvidious(videoId: string): Promise<string | null> {
         const data = await res.json();
         const formats: any[] = data.adaptiveFormats ?? [];
         const best =
-          formats.find(
-            (f: any) =>
-              f.type?.includes("audio/webm") &&
-              f.audioQuality === "AUDIO_QUALITY_MEDIUM"
-          ) ??
+          formats.find((f: any) => f.type?.includes("audio/webm") && f.audioQuality === "AUDIO_QUALITY_MEDIUM") ??
           formats.find((f: any) => f.type?.includes("audio/webm")) ??
           formats.find((f: any) => f.type?.includes("audio/mp4")) ??
           formats.find((f: any) => f.type?.includes("audio"));
@@ -96,13 +111,13 @@ async function resolveWithInvidious(videoId: string): Promise<string | null> {
         throw new Error("no audio format");
       })
     );
-    return url;
+    return { url };
   } catch {
     return null;
   }
 }
 
-// ── Strategy 3: Piped API pool ────────────────────────────────────────────────
+// ── Strategy 4: Piped API pool ────────────────────────────────────────────────
 const PIPED_INSTANCES = [
   "https://pipedapi.kavin.rocks",
   "https://pipedapi.adminforge.de",
@@ -111,7 +126,7 @@ const PIPED_INSTANCES = [
   "https://pipedapi.kescher.at",
 ];
 
-async function resolveWithPiped(videoId: string): Promise<string | null> {
+async function resolveWithPiped(videoId: string): Promise<{ url: string; headers?: Record<string, string> } | null> {
   try {
     const url = await Promise.any(
       PIPED_INSTANCES.map(async (api) => {
@@ -133,31 +148,17 @@ async function resolveWithPiped(videoId: string): Promise<string | null> {
         throw new Error("no audio stream");
       })
     );
-    return url;
+    return { url };
   } catch {
     return null;
   }
 }
 
-// ── Strategy 4: youtubei.js InnerTube ─────────────────────────────────────────
-async function resolveWithYoutubei(videoId: string): Promise<string | null> {
-  try {
-    const { resolveStream } = await import("@/../apis/youtubei.js/index");
-    const url = await resolveStream(videoId);
-    if (url) {
-      console.log(`[ytdownload] youtubei.js resolved`);
-      return url;
-    }
-  } catch (e: any) {
-    console.warn("[ytdownload] youtubei.js failed:", e.message?.slice(0, 100));
-  }
-  return null;
-}
-
 // ── Proxy audio stream back to browser ────────────────────────────────────────
 async function proxyAudioUrl(
   audioUrl: string,
-  signal: AbortSignal
+  signal: AbortSignal,
+  customHeaders?: Record<string, string>
 ): Promise<NextResponse> {
   const upstream = await fetch(audioUrl, {
     cache: "no-store",
@@ -165,6 +166,7 @@ async function proxyAudioUrl(
       "User-Agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
       Range: "bytes=0-",
+      ...(customHeaders || {})
     },
     signal,
   });
@@ -210,28 +212,28 @@ export async function GET(req: NextRequest) {
   console.log(`[ytdownload] Downloading: "${title}" by "${artist}" (${videoId})`);
 
   try {
-    // 1. ytdl-core — most reliable, gets URL directly from YouTube API
-    const ytdlUrl = await resolveWithYtdlCore(videoId);
-    if (ytdlUrl) {
-      return await proxyAudioUrl(ytdlUrl, req.signal);
+    // 1. RapidAPI - Primary strategy to bypass Vercel IP bans
+    const rapidApiData = await resolveWithRapidAPI(videoId);
+    if (rapidApiData) {
+      return await proxyAudioUrl(rapidApiData.url, req.signal, rapidApiData.headers);
     }
 
-    // 2. Invidious pool
-    const invidiousUrl = await resolveWithInvidious(videoId);
-    if (invidiousUrl) {
-      return await proxyAudioUrl(invidiousUrl, req.signal);
+    // 2. ytdl-core — backup if RapidAPI fails or key expires
+    const ytdlData = await resolveWithYtdlCore(videoId);
+    if (ytdlData) {
+      return await proxyAudioUrl(ytdlData.url, req.signal, ytdlData.headers);
     }
 
-    // 3. Piped API pool
-    const pipedUrl = await resolveWithPiped(videoId);
-    if (pipedUrl) {
-      return await proxyAudioUrl(pipedUrl, req.signal);
+    // 3. Invidious pool
+    const invidiousData = await resolveWithInvidious(videoId);
+    if (invidiousData) {
+      return await proxyAudioUrl(invidiousData.url, req.signal, invidiousData.headers);
     }
 
-    // 4. youtubei.js (last resort)
-    const ytjsUrl = await resolveWithYoutubei(videoId);
-    if (ytjsUrl) {
-      return await proxyAudioUrl(ytjsUrl, req.signal);
+    // 4. Piped API pool
+    const pipedData = await resolveWithPiped(videoId);
+    if (pipedData) {
+      return await proxyAudioUrl(pipedData.url, req.signal, pipedData.headers);
     }
 
     throw new Error("All resolvers failed — no audio URL found");
