@@ -57,30 +57,49 @@ export function NotificationBell() {
       <AnimatePresence>
         {open && (
           <motion.div
-            initial={{ opacity: 0, y: 8, scale: 0.95 }}
+            initial={{ opacity: 0, y: 10, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 8, scale: 0.95 }}
+            exit={{ opacity: 0, y: 10, scale: 0.95 }}
             transition={{ duration: 0.18 }}
-            className="absolute top-12 left-0 w-80 bg-[#0a0a0b] border border-white/10 rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] overflow-hidden z-50 backdrop-blur-2xl"
+            className="absolute top-14 left-[-10px] md:left-auto md:right-0 w-[85vw] max-w-[300px] bg-[#0a0a0b] border border-white/10 rounded-2xl shadow-2xl overflow-hidden z-50 backdrop-blur-2xl"
           >
             <div className="px-4 py-3 border-b border-white/5 flex items-center justify-between">
-              <h3 className="font-bold text-sm">الإشعارات</h3>
-              {notifs.length > 0 && (
-                <button
-                  onClick={() => { markAllSeen(); reload(); }}
-                  className="text-xs text-indigo-400 hover:text-indigo-300"
-                >
-                  تم قراءة الكل
-                </button>
-              )}
+              <h3 className="font-bold text-sm text-white">الإشعارات</h3>
+              <div className="flex items-center gap-3">
+                {notifs.length > 0 && (
+                  <button
+                    onClick={() => { localStorage.setItem("aura-notifications", "[]"); reload(); }}
+                    className="text-[11px] text-red-400 hover:text-red-300 font-bold bg-red-400/10 px-2 py-1 rounded"
+                  >
+                    مسح الكل
+                  </button>
+                )}
+                {notifs.some(n => !n.seenAt) && (
+                  <button onClick={() => { markAllSeen(); reload(); }} className="text-[11px] text-indigo-400 hover:text-indigo-300 font-bold">
+                    تم قراءة الكل
+                  </button>
+                )}
+              </div>
             </div>
 
-            <div className="max-h-80 overflow-y-auto">
+            {typeof window !== "undefined" && "Notification" in window && Notification.permission === "default" && (
+              <div className="p-3 bg-indigo-500/10 border-b border-indigo-500/20 flex flex-col items-center text-center gap-2">
+                <p className="text-xs text-indigo-200">قم بتفعيل الإشعارات ليصلك كل جديد فوراً</p>
+                <button
+                  onClick={() => Notification.requestPermission().then(() => setOpen(false))}
+                  className="text-xs font-bold bg-indigo-500 text-white px-3 py-1.5 rounded-full hover:bg-indigo-600"
+                >
+                  تفعيل الإشعارات
+                </button>
+              </div>
+            )}
+
+            <div className="max-h-72 overflow-y-auto custom-scrollbar">
               {notifs.length === 0 ? (
-                <div className="py-10 text-center text-gray-500">
+                <div className="py-8 text-center text-gray-500">
                   <Bell className="w-8 h-8 mx-auto mb-2 opacity-20" />
-                  <p className="text-sm">لا توجد إشعارات</p>
-                  <p className="text-xs mt-1 text-gray-600">تابع فنانك المفضل لتلقي إشعارات بإصداراته</p>
+                  <p className="text-sm font-bold">لا توجد إشعارات</p>
+                  <p className="text-xs mt-1 text-gray-600 px-4">تابع فنانك المفضل لتلقي إشعارات فور إصدار أغانيه الجديدة</p>
                 </div>
               ) : (
                 notifs.map(n => (
@@ -88,11 +107,11 @@ export function NotificationBell() {
                     href={`/album/${n.releaseId}`}
                     key={n.id}
                     onClick={() => setOpen(false)}
-                    className={`flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-colors border-b border-white/5 last:border-0 ${!n.seenAt ? "bg-indigo-500/5" : ""}`}
+                    className={`flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-colors border-b border-white/5 last:border-0 ${!n.seenAt ? "bg-indigo-500/10" : ""}`}
                   >
                     {n.artistImage ? (
                       <img src={getProxyUrl(n.artistImage)} alt={n.artistName}
-                        className="w-10 h-10 rounded-full object-cover shrink-0" />
+                        className="w-10 h-10 rounded-full object-cover shrink-0 shadow-md" />
                     ) : (
                       <div className="w-10 h-10 rounded-full bg-indigo-500/20 flex items-center justify-center text-lg shrink-0">🎤</div>
                     )}

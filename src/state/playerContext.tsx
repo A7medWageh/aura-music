@@ -393,12 +393,15 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         }
 
         // Not downloaded - stream online
-        console.log("[Player] Streaming online (chunked stream)...");
+        console.log("[Player] Streaming online (instant fetch)...");
         
-        const streamSrc = `/api/ytdownload?videoId=${videoIdToPlay}`;
+        // Fetch the fast stream URL
+        const res = await fetch(`/api/stream/${videoIdToPlay}`);
+        const data = await res.json();
+        if (!res.ok || !data.streamUrl) throw new Error("فشل في الحصول على رابط التشغيل الأونلاين");
         
-        setState((prev) => ({ ...prev, isBuffering: false, streamUrl: streamSrc }));
-        player.src = streamSrc;
+        setState((prev) => ({ ...prev, isBuffering: false, streamUrl: data.streamUrl }));
+        player.src = data.streamUrl;
         player.load();
         if (isPlayingRef.current) player.play().catch(console.error);
 
@@ -421,7 +424,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const player = audioRef.current;
     if (!player || !state.streamUrl) return;
 
-    if (state.isPlaying) {
+    const isActuallyPlaying = !player.paused;
+
+    if (state.isPlaying && !isActuallyPlaying) {
       const playPromise = player.play();
       if (playPromise !== undefined) {
         playPromise.catch((err) => {
@@ -430,7 +435,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           }
         });
       }
-    } else {
+    } else if (!state.isPlaying && isActuallyPlaying) {
       player.pause();
     }
   }, [state.isPlaying, state.streamUrl]);
@@ -438,6 +443,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const onTimeUpdate = () => {
     const player = audioRef.current;
     if (player) {
+      // MASSIVE mobile optimization: Don't thrash React state (re-rendering) when the screen is locked
+      // or the app is in the background. The native audio will continue perfectly without JS overhead.
+      if (typeof document !== "undefined" && document.hidden) return;
       setState((prev) => ({ ...prev, currentTime: player.currentTime || 0 }));
     }
   };

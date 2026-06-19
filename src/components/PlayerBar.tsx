@@ -178,10 +178,10 @@ function SeekBar({
 
 // ─── Full Screen Player ───────────────────────────────────────────────
 function FullPlayer({
-  onClose, isLiked, onLike, onDownload,
+  isOpen, onClose, isLiked, onLike, onDownload,
   isPremium, setIsPremiumModalOpen, setPremiumFeatureName, showToast
 }: {
-  onClose: () => void; isLiked: boolean;
+  isOpen: boolean; onClose: () => void; isLiked: boolean;
   onLike: () => void; onDownload: () => void;
   isPremium: boolean; setIsPremiumModalOpen: (v: boolean) => void; setPremiumFeatureName: (v: string) => void;
   showToast: (msg: string, type?: "normal" | "hq") => void;
@@ -214,12 +214,11 @@ function FullPlayer({
 
   return (
     <motion.div
-      initial={{ y: "100%" }}
-      animate={{ y: swipeOffset > 0 ? swipeOffset : 0 }}
-      exit={{ y: "100%" }}
+      initial={false}
+      animate={{ y: !isOpen ? "100%" : (swipeOffset > 0 ? swipeOffset : 0) }}
       transition={{ type: "spring", damping: 28, stiffness: 220 }}
       className="fixed inset-0 z-50 flex flex-col overflow-hidden"
-      style={{ background: `linear-gradient(180deg, ${bg1} 0%, ${bg2} 100%)`, willChange: "transform", transform: "translateZ(0)" }}
+      style={{ pointerEvents: isOpen ? "auto" : "none", background: `linear-gradient(180deg, ${bg1} 0%, ${bg2} 100%)`, willChange: "transform", transform: "translateZ(0)" }}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
@@ -616,20 +615,17 @@ export function PlayerBar() {
   return (
     <>
       {/* Full Player */}
-      <AnimatePresence>
-        {fullOpen && (
-          <FullPlayer
-            onClose={() => setFullOpen(false)}
-            isLiked={isLiked}
-            onLike={toggleLike}
-            onDownload={handleDownload}
-            isPremium={isPremium}
-            setIsPremiumModalOpen={setIsPremiumModalOpen}
-            setPremiumFeatureName={setPremiumFeatureName}
-            showToast={addToast}
-          />
-        )}
-      </AnimatePresence>
+        <FullPlayer
+          isOpen={fullOpen}
+          onClose={() => setFullOpen(false)}
+          isLiked={isLiked}
+          onLike={toggleLike}
+          onDownload={handleDownload}
+          isPremium={isPremium}
+          setIsPremiumModalOpen={setIsPremiumModalOpen}
+          setPremiumFeatureName={setPremiumFeatureName}
+          showToast={addToast}
+        />
 
       {/* Mini Bar — mobile: above tab bar, desktop: bottom-0 */}
       <footer

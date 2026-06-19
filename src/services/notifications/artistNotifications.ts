@@ -85,12 +85,29 @@ export function useArtistNotifications() {
 
         // Browser notification (if permitted)
         if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
-          newNotifications.slice(0, 3).forEach(n => {
-            new Notification(`🎵 إصدار جديد من ${n.artistName}`, {
-              body: n.releaseTitle,
-              icon: n.artistImage || "/icons/icon-192.png",
+          newNotifications.slice(0, 3).forEach(async n => {
+            const title = `نشر ${n.artistName} أغنية جديدة`;
+            const options: NotificationOptions = {
+              body: `اسم الأغنية: ${n.releaseTitle}`,
+              icon: n.artistImage || "/logo-v2.png",
+              badge: "/logo-v2.png",
               tag: n.id,
-            });
+              vibrate: [200, 100, 200, 100, 200],
+              data: { url: `/album/${n.releaseId}` },
+              requireInteraction: true
+            };
+
+            // Try Service Worker for professional native Android Push
+            if ("serviceWorker" in navigator) {
+              const reg = await navigator.serviceWorker.getRegistration();
+              if (reg && reg.showNotification) {
+                reg.showNotification(title, options);
+                return;
+              }
+            }
+
+            // Fallback
+            new Notification(title, options);
           });
         }
       }
