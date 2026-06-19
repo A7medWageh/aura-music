@@ -265,7 +265,7 @@ function FullPlayer({
 
         {/* ═══════════ NOW PLAYING TAB ═══════════ */}
         {activeTab === "now" && (
-          <div className="flex-1 flex flex-col items-center justify-between px-5 pb-2 overflow-hidden">
+          <div className="flex-1 flex flex-col items-center justify-start gap-3 px-5 pb-6 pt-2 overflow-y-auto no-scrollbar">
 
             {/* Large Album Art */}
             <motion.div
@@ -273,10 +273,10 @@ function FullPlayer({
               initial={{ scale: 0.85, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               transition={{ type: "spring", stiffness: 200, damping: 22 }}
-              className="relative mt-2 mb-4"
+              className="relative shrink-0"
             >
               <div
-                className="w-64 h-64 rounded-3xl overflow-hidden shadow-2xl"
+                className="w-64 h-64 md:w-72 md:h-72 rounded-3xl overflow-hidden shadow-2xl"
                 style={{ boxShadow: `0 24px 80px ${accent}55, 0 8px 30px rgba(0,0,0,0.6)` }}
               >
                 <img src={proxyArt} alt={currentSong?.title} className="w-full h-full object-cover" />
@@ -293,7 +293,7 @@ function FullPlayer({
             </motion.div>
 
             {/* Song Info + Like */}
-            <div className="w-full flex items-center justify-between px-1 mb-3">
+            <div className="w-full flex items-center justify-between px-1">
               <button onClick={onLike} className="p-2 active:scale-90 transition-transform">
                 <Heart
                   className={`w-7 h-7 transition-all ${isLiked ? "fill-current text-pink-400 scale-110" : "text-white/40"}`}
@@ -320,12 +320,12 @@ function FullPlayer({
             </div>
 
             {/* Waveform Visualizer */}
-            <div className="w-full mb-3">
+            <div className="w-full">
               <WaveformVisualizer isPlaying={state.isPlaying} accent={accent} />
             </div>
 
             {/* Seek Bar */}
-            <div className="w-full px-1 mb-2">
+            <div className="w-full px-1">
               <SeekBar
                 progress={state.currentTime}
                 duration={state.duration}
@@ -343,7 +343,7 @@ function FullPlayer({
             </div>
 
             {/* Main Controls */}
-            <div className="flex items-center justify-between w-full px-2 mb-4">
+            <div className="flex items-center justify-between w-full px-2 mt-2">
               <button
                 onClick={() => setShuffle(!state.shuffle)}
                 className={`p-2 transition-colors active:scale-90 ${state.shuffle ? "text-white" : "text-white/30"}`}
@@ -358,7 +358,7 @@ function FullPlayer({
 
               <button
                 onClick={togglePlay}
-                className="w-[72px] h-[72px] rounded-full flex items-center justify-center shadow-2xl active:scale-95 transition-transform"
+                className="w-[72px] h-[72px] rounded-full flex items-center justify-center shadow-2xl active:scale-95 transition-transform shrink-0"
                 style={{
                   background: "white",
                   boxShadow: `0 8px 32px ${accent}66, 0 4px 16px rgba(0,0,0,0.4)`
@@ -390,7 +390,7 @@ function FullPlayer({
             </div>
 
             {/* Volume */}
-            <div className="w-full flex items-center gap-3 px-2 mb-2">
+            <div className="w-full flex items-center gap-3 px-2 mt-2">
               <VolumeX className="w-4 h-4 text-white/30 shrink-0" />
               <div className="flex-1">
                 <input
