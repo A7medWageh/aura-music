@@ -4,7 +4,7 @@ import {
   Play, Pause, SkipForward, SkipBack, Shuffle,
   Repeat, Volume2, VolumeX, Heart, DownloadCloud,
   ChevronDown, Maximize2, ListMusic, Share2, Crown,
-  Settings, Music2
+  Settings, Music2, FileText
 } from "lucide-react";
 import { usePlayer } from "@/state/playerContext";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -195,6 +195,25 @@ function FullPlayer({
 
   const [activeTab, setActiveTab] = useState("now"); // now | queue | audio | premium
   const [isBgPlayEnabled, setIsBgPlayEnabled] = useState(isPremium);
+
+  // ── Lyrics State ──
+  const [lyrics, setLyrics] = useState<string | null>(null);
+  const [isLyricsLoading, setIsLyricsLoading] = useState(false);
+
+  useEffect(() => {
+    setLyrics(null);
+  }, [currentSong?.songId]);
+
+  useEffect(() => {
+    if (activeTab === "lyrics" && currentSong && !lyrics && !isLyricsLoading) {
+      setIsLyricsLoading(true);
+      fetch(`/api/lyrics?trackName=${encodeURIComponent(currentSong.title)}&artistName=${encodeURIComponent(currentSong.artist || "")}&videoId=${currentSong.youtubeVideoId}`)
+        .then(r => r.json())
+        .then(d => setLyrics(d.lyrics || "عذراً، لم نتمكن من العثور على كلمات هذه الأغنية."))
+        .catch(() => setLyrics("حدث خطأ أثناء جلب الكلمات."))
+        .finally(() => setIsLyricsLoading(false));
+    }
+  }, [activeTab, currentSong, lyrics, isLyricsLoading]);
 
   // Swipe down to close
   const dragY = useRef(0);
@@ -439,6 +458,25 @@ function FullPlayer({
           </div>
         )}
 
+        {/* ═══════════ LYRICS TAB ═══════════ */}
+        {activeTab === "lyrics" && (
+          <div className="flex-1 overflow-y-auto no-scrollbar px-6 pb-6 text-center" dir="rtl">
+            <h3 className="text-white font-black text-xl mb-6 sticky top-0 bg-gradient-to-b from-black/20 to-transparent pb-4 backdrop-blur-sm z-10 pt-2">كلمات الأغنية</h3>
+            {isLyricsLoading ? (
+              <div className="flex flex-col items-center justify-center mt-20 opacity-50">
+                <div className="w-10 h-10 border-4 border-white/20 border-t-white rounded-full animate-spin mb-4" />
+                <p className="text-sm font-bold text-white">جاري البحث عن الكلمات...</p>
+              </div>
+            ) : lyrics ? (
+              <div className="whitespace-pre-wrap font-bold text-lg md:text-2xl leading-loose text-white/90 pb-20">
+                {lyrics}
+              </div>
+            ) : (
+              <div className="mt-20 text-white/50 font-bold">لا توجد كلمات متاحة.</div>
+            )}
+          </div>
+        )}
+
         {/* ═══════════ AUDIO TAB ═══════════ */}
         {activeTab === "audio" && (
           <div className="flex-1 flex flex-col justify-center items-center p-8 space-y-10">
@@ -522,6 +560,7 @@ function FullPlayer({
         >
           {[
             { id: "now", icon: Music2, label: "يعزف" },
+            { id: "lyrics", icon: FileText, label: "كلمات" },
             { id: "queue", icon: ListMusic, label: "قائمة" },
             { id: "audio", icon: Settings, label: "الصوت" },
           ].map(tab => (

@@ -38,7 +38,7 @@ async function resolveWithRapidAPI(videoId: string): Promise<{ url: string; head
 async function resolveWithYtdlCore(videoId: string): Promise<{ url: string; headers?: Record<string, string> } | null> {
   try {
     const ytdl = await import("@distube/ytdl-core");
-    const info = await ytdl.default.getInfo(
+    const getInfoPromise = ytdl.default.getInfo(
       `https://www.youtube.com/watch?v=${videoId}`,
       {
         requestOptions: {
@@ -53,6 +53,12 @@ async function resolveWithYtdlCore(videoId: string): Promise<{ url: string; head
         },
       }
     );
+
+    const timeoutPromise = new Promise<any>((_, reject) => 
+      setTimeout(() => reject(new Error("ytdl-core timeout")), 4000)
+    );
+
+    const info = await Promise.race([getInfoPromise, timeoutPromise]);
 
     let formats = ytdl.default
       .filterFormats(info.formats, "audioonly")
@@ -162,45 +168,59 @@ async function proxyAudioUrl(
 ): Promise<NextResponse> {
   const clientRange = req.headers.get("range") || "bytes=0-";
 
-  const upstream = await fetch(audioUrl, {
-    cache: "no-store",
-    headers: {
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-      Range: clientRange,
-      ...(customHeaders || {})
-    },
-    signal: req.signal,
-  });
+  // Use AbortSignal.any if available, otherwise just use timeout (Node 20+ supports it)
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(new Error("Proxy Fetch Timeout")), 5000);
+  
+  // Link req.signal to our controller so client disconnect also aborts
+  req.signal.addEventListener("abort", () => controller.abort(), { once: true });
 
-  if (!upstream.ok && upstream.status !== 206) {
-    throw new Error(`Upstream fetch failed: ${upstream.status} for ${audioUrl.slice(0, 60)}`);
-  }
+  try {
+    const upstream = await fetch(audioUrl, {
+      cache: "no-store",
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        Range: clientRange,
+        ...(customHeaders || {})
+      },
+      signal: controller.signal,
+    });
 
-  const headers = new Headers(NO_CACHE_HEADERS);
+    clearTimeout(timeoutId);
 
-  ["content-type", "content-length", "content-range", "accept-ranges"].forEach(
-    (key) => {
-      const val = upstream.headers.get(key);
-      if (val) headers.set(key, val);
+    if (!upstream.ok && upstream.status !== 206) {
+      throw new Error(`Upstream fetch failed: ${upstream.status} for ${audioUrl.slice(0, 60)}`);
     }
-  );
 
-  if (!headers.has("content-type")) headers.set("content-type", "audio/mpeg");
-  headers.set("Access-Control-Allow-Origin", "*");
-  headers.set(
-    "Access-Control-Expose-Headers",
-    "Content-Length, Content-Range, Accept-Ranges, X-Original-Content-Length"
-  );
+    const headers = new Headers(NO_CACHE_HEADERS);
 
-  const cl = headers.get("content-length");
-  headers.set("X-Original-Content-Length", cl ?? String(3.5 * 1024 * 1024));
-  if (!cl) headers.set("Transfer-Encoding", "chunked");
+    ["content-type", "content-length", "content-range", "accept-ranges"].forEach(
+      (key) => {
+        const val = upstream.headers.get(key);
+        if (val) headers.set(key, val);
+      }
+    );
 
-  return new NextResponse(upstream.body, { 
-    status: upstream.status === 206 ? 206 : 200, 
-    headers 
-  });
+    if (!headers.has("content-type")) headers.set("content-type", "audio/mpeg");
+    headers.set("Access-Control-Allow-Origin", "*");
+    headers.set(
+      "Access-Control-Expose-Headers",
+      "Content-Length, Content-Range, Accept-Ranges, X-Original-Content-Length"
+    );
+
+    const cl = headers.get("content-length");
+    headers.set("X-Original-Content-Length", cl ?? String(3.5 * 1024 * 1024));
+    if (!cl) headers.set("Transfer-Encoding", "chunked");
+
+    return new NextResponse(upstream.body, { 
+      status: upstream.status === 206 ? 206 : 200, 
+      headers 
+    });
+  } catch (error) {
+    clearTimeout(timeoutId);
+    throw error;
+  }
 }
 
 // ── Main GET handler ──────────────────────────────────────────────────────────
@@ -217,28 +237,44 @@ export async function GET(req: NextRequest) {
   console.log(`[ytdownload] Downloading: "${title}" by "${artist}" (${videoId})`);
 
   try {
-    // 1. ytdl-core — Primary strategy (Direct YouTube CDN is much faster)
-    const ytdlData = await resolveWithYtdlCore(videoId);
-    if (ytdlData) {
-      return await proxyAudioUrl(ytdlData.url, req, ytdlData.headers);
+    // 1. RapidAPI - Premium ultra-fast resolver (Prioritized to avoid 60s Vercel IP blocks)
+    try {
+      const rapidApiData = await resolveWithRapidAPI(videoId);
+      if (rapidApiData) {
+        return await proxyAudioUrl(rapidApiData.url, req, rapidApiData.headers);
+      }
+    } catch (e) {
+      console.warn("[ytdownload] RapidAPI proxy failed, falling back...");
     }
 
-    // 2. RapidAPI - backup if ytdl-core fails or gets rate limited
-    const rapidApiData = await resolveWithRapidAPI(videoId);
-    if (rapidApiData) {
-      return await proxyAudioUrl(rapidApiData.url, req, rapidApiData.headers);
+    // 2. ytdl-core — Backup strategy (Direct YouTube CDN)
+    try {
+      const ytdlData = await resolveWithYtdlCore(videoId);
+      if (ytdlData) {
+        return await proxyAudioUrl(ytdlData.url, req, ytdlData.headers);
+      }
+    } catch (e) {
+      console.warn("[ytdownload] ytdl-core proxy failed, falling back...");
     }
 
     // 3. Invidious pool
-    const invidiousData = await resolveWithInvidious(videoId);
-    if (invidiousData) {
-      return await proxyAudioUrl(invidiousData.url, req, invidiousData.headers);
+    try {
+      const invidiousData = await resolveWithInvidious(videoId);
+      if (invidiousData) {
+        return await proxyAudioUrl(invidiousData.url, req, invidiousData.headers);
+      }
+    } catch (e) {
+      console.warn("[ytdownload] Invidious proxy failed, falling back...");
     }
 
     // 4. Piped API pool
-    const pipedData = await resolveWithPiped(videoId);
-    if (pipedData) {
-      return await proxyAudioUrl(pipedData.url, req, pipedData.headers);
+    try {
+      const pipedData = await resolveWithPiped(videoId);
+      if (pipedData) {
+        return await proxyAudioUrl(pipedData.url, req, pipedData.headers);
+      }
+    } catch (e) {
+      console.warn("[ytdownload] Piped proxy failed.");
     }
 
     throw new Error("All resolvers failed — no audio URL found");
