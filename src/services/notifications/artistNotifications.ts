@@ -87,7 +87,7 @@ export function useArtistNotifications() {
         if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
           newNotifications.slice(0, 3).forEach(async n => {
             const title = `نشر ${n.artistName} أغنية جديدة`;
-            const options: NotificationOptions = {
+            const options: any = {
               body: `اسم الأغنية: ${n.releaseTitle}`,
               icon: n.artistImage || "/logo-v2.png",
               badge: "/logo-v2.png",
