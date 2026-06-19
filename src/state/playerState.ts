@@ -25,6 +25,7 @@ export type PlayerState = {
   isBuffering: boolean;
   error: string | null;
   isHighQuality: boolean;
+  isAiMix: boolean;
 };
 
 export const initialPlayerState: PlayerState = {
@@ -40,5 +41,6 @@ export const initialPlayerState: PlayerState = {
   duration: 0,
   isBuffering: false,
   error: null,
-  isHighQuality: false
+  isHighQuality: false,
+  isAiMix: false
 };

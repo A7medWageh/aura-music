@@ -23,6 +23,7 @@ type PlayerContextValue = {
   seekTo: (time: number) => void;
   prewarm: (videoId: string) => void;
   setHighQuality: (value: boolean) => void;
+  setIsAiMix: (value: boolean) => void;
 };
 
 const PlayerContext = createContext<PlayerContextValue | null>(null);
@@ -172,6 +173,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   const setHighQuality = (value: boolean) => {
     setState((prev) => ({ ...prev, isHighQuality: value }));
+  };
+
+  const setIsAiMix = (value: boolean) => {
+    setState((prev) => ({ ...prev, isAiMix: value }));
   };
 
   // ─── Web Audio API (High Quality 5-Band Equalizer) ──────────────────
@@ -393,15 +398,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         }
 
         // Not downloaded - stream online
-        console.log("[Player] Streaming online (instant fetch)...");
+        console.log("[Player] Streaming online using robust ytdownload endpoint...");
         
-        // Fetch the fast stream URL
-        const res = await fetch(`/api/stream/${videoIdToPlay}`);
-        const data = await res.json();
-        if (!res.ok || !data.streamUrl) throw new Error("فشل في الحصول على رابط التشغيل الأونلاين");
+        const streamSrc = `/api/ytdownload?videoId=${videoIdToPlay}`;
         
-        setState((prev) => ({ ...prev, isBuffering: false, streamUrl: data.streamUrl }));
-        player.src = data.streamUrl;
+        setState((prev) => ({ ...prev, isBuffering: false, streamUrl: streamSrc }));
+        player.src = streamSrc;
         player.load();
         if (isPlayingRef.current) player.play().catch(console.error);
 
@@ -524,10 +526,55 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     setSpeed,
     seekTo,
     setHighQuality,
+    setIsAiMix,
     prewarm: (videoId: string) => {
       // Prewarming removed for direct download chunking proxy
     }
   };
+
+  // ─── AI Mix (Smart Radio) Logic ─────────────────────────────────────────
+  const isFetchingAiMixRef = useRef(false);
+
+  useEffect(() => {
+    if (!state.isAiMix || !state.currentSongId || state.queue.length === 0) return;
+    
+    // Trigger when we are at the last or second-to-last song
+    const currentIndex = state.queue.findIndex(s => s.songId === state.currentSongId);
+    if (currentIndex >= state.queue.length - 2 && !isFetchingAiMixRef.current) {
+      isFetchingAiMixRef.current = true;
+      
+      const currentSongData = state.queue[currentIndex];
+      const query = currentSongData.artist || "أغاني تريند";
+      
+      console.log("[AI Mix] Fetching related songs for:", query);
+      
+      fetch(`/api/search?q=${encodeURIComponent(query)}`)
+        .then(res => res.json())
+        .then(resData => {
+          if (resData && resData.data && resData.data.songs && resData.data.songs.length > 0) {
+            // Filter out songs already in the queue
+            const existingIds = new Set(state.queue.map(s => s.songId));
+            const newSongs = resData.data.songs
+              .filter((s: QueueSong) => !existingIds.has(s.songId))
+              .slice(0, 10); // add up to 10 new songs
+            
+            if (newSongs.length > 0) {
+              console.log("[AI Mix] Fetched new songs:", newSongs);
+              setState(prev => ({
+                ...prev,
+                queue: [...prev.queue, ...newSongs]
+              }));
+              useToastStore.getState().addToast("AI Mix يضيف ألحاناً مشابهة ✨");
+            }
+          }
+        })
+        .catch(console.error)
+        .finally(() => {
+          // Prevent rapid re-fetching
+          setTimeout(() => { isFetchingAiMixRef.current = false; }, 10000);
+        });
+    }
+  }, [state.isAiMix, state.currentSongId, state.queue.length]);
 
   return (
     <PlayerContext.Provider value={value}>

@@ -57,11 +57,19 @@ export function useArtistNotifications() {
           const data = await res.json();
           if (!data || data.error) continue;
 
+          const currentYear = new Date().getFullYear().toString();
           const allReleases = [...(data.newReleases || []), ...(data.oldAlbums || [])].slice(0, 3);
 
           for (const release of allReleases) {
             if (!release.albumId || knownReleases.includes(release.albumId)) continue;
-            // This release is genuinely NEW (not seen before)
+            
+            // Only notify if it's released THIS YEAR. Otherwise, silently mark as known.
+            if (release.year && release.year !== currentYear) {
+              knownReleases.push(release.albumId);
+              continue;
+            }
+
+            // This release is genuinely NEW (not seen before and released this year)
             newNotifications.push({
               id: `${artistId}-${release.albumId}`,
               artistId,

@@ -186,7 +186,7 @@ function FullPlayer({
   isPremium: boolean; setIsPremiumModalOpen: (v: boolean) => void; setPremiumFeatureName: (v: string) => void;
   showToast: (msg: string, type?: "normal" | "hq") => void;
 }) {
-  const { state, currentSong, togglePlay, next, prev, seekTo, setVolume, cycleRepeat, setShuffle, setHighQuality } = usePlayer();
+  const { state, currentSong, togglePlay, next, prev, seekTo, setVolume, cycleRepeat, setShuffle, setHighQuality, setIsAiMix } = usePlayer();
   const art = currentSong?.thumbnailUrl || currentSong?.metadata?.thumbnailUrl;
   const proxyArt = getProxyUrl(art);
 
@@ -195,7 +195,6 @@ function FullPlayer({
 
   const [activeTab, setActiveTab] = useState("now"); // now | queue | audio | premium
   const [isBgPlayEnabled, setIsBgPlayEnabled] = useState(isPremium);
-  const [isAiMix, setIsAiMix] = useState(false);
 
   // Swipe down to close
   const dragY = useRef(0);
@@ -253,9 +252,9 @@ function FullPlayer({
           <button
             onClick={() => {
               if (!isPremium) { setPremiumFeatureName("ميكس AI (الدي جي الذكي)"); setIsPremiumModalOpen(true); }
-              else { setIsAiMix(v => !v); showToast(!isAiMix ? "تم تفعيل ميكس AI 🤖✨" : "تم إيقاف ميكس AI"); }
+              else { setIsAiMix(!state.isAiMix); showToast(!state.isAiMix ? "تم تفعيل ميكس AI 🤖✨" : "تم إيقاف ميكس AI"); }
             }}
-            className={`px-3 py-1.5 rounded-full text-xs font-black transition-all ${isAiMix ? "bg-white text-black" : "bg-white/10 text-white/70"}`}
+            className={`px-3 py-1.5 rounded-full text-xs font-black transition-all ${state.isAiMix ? "bg-white text-black" : "bg-white/10 text-white/70"}`}
           >
             {!isPremium && <Crown className="w-3 h-3 text-amber-400 inline ml-1" />}
             ميكس AI

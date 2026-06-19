@@ -157,21 +157,23 @@ async function resolveWithPiped(videoId: string): Promise<{ url: string; headers
 // ── Proxy audio stream back to browser ────────────────────────────────────────
 async function proxyAudioUrl(
   audioUrl: string,
-  signal: AbortSignal,
+  req: NextRequest,
   customHeaders?: Record<string, string>
 ): Promise<NextResponse> {
+  const clientRange = req.headers.get("range") || "bytes=0-";
+
   const upstream = await fetch(audioUrl, {
     cache: "no-store",
     headers: {
       "User-Agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-      Range: "bytes=0-",
+      Range: clientRange,
       ...(customHeaders || {})
     },
-    signal,
+    signal: req.signal,
   });
 
-  if (!upstream.ok) {
+  if (!upstream.ok && upstream.status !== 206) {
     throw new Error(`Upstream fetch failed: ${upstream.status} for ${audioUrl.slice(0, 60)}`);
   }
 
@@ -195,7 +197,10 @@ async function proxyAudioUrl(
   headers.set("X-Original-Content-Length", cl ?? String(3.5 * 1024 * 1024));
   if (!cl) headers.set("Transfer-Encoding", "chunked");
 
-  return new NextResponse(upstream.body, { headers });
+  return new NextResponse(upstream.body, { 
+    status: upstream.status === 206 ? 206 : 200, 
+    headers 
+  });
 }
 
 // ── Main GET handler ──────────────────────────────────────────────────────────
@@ -215,25 +220,25 @@ export async function GET(req: NextRequest) {
     // 1. ytdl-core — Primary strategy (Direct YouTube CDN is much faster)
     const ytdlData = await resolveWithYtdlCore(videoId);
     if (ytdlData) {
-      return await proxyAudioUrl(ytdlData.url, req.signal, ytdlData.headers);
+      return await proxyAudioUrl(ytdlData.url, req, ytdlData.headers);
     }
 
     // 2. RapidAPI - backup if ytdl-core fails or gets rate limited
     const rapidApiData = await resolveWithRapidAPI(videoId);
     if (rapidApiData) {
-      return await proxyAudioUrl(rapidApiData.url, req.signal, rapidApiData.headers);
+      return await proxyAudioUrl(rapidApiData.url, req, rapidApiData.headers);
     }
 
     // 3. Invidious pool
     const invidiousData = await resolveWithInvidious(videoId);
     if (invidiousData) {
-      return await proxyAudioUrl(invidiousData.url, req.signal, invidiousData.headers);
+      return await proxyAudioUrl(invidiousData.url, req, invidiousData.headers);
     }
 
     // 4. Piped API pool
     const pipedData = await resolveWithPiped(videoId);
     if (pipedData) {
-      return await proxyAudioUrl(pipedData.url, req.signal, pipedData.headers);
+      return await proxyAudioUrl(pipedData.url, req, pipedData.headers);
     }
 
     throw new Error("All resolvers failed — no audio URL found");
