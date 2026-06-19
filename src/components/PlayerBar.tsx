@@ -239,7 +239,7 @@ function FullPlayer({
 
   // ── Synced Lyrics Auto-scroll ──
   const lyricsContainerRef = useRef<HTMLDivElement>(null);
-  const currentTimeMs = state.progress * 1000;
+  const currentTimeMs = state.currentTime * 1000;
   
   const activeLineIndex = useMemo(() => {
     if (!syncedLyrics) return -1;
