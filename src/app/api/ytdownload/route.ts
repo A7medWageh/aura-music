@@ -212,16 +212,16 @@ export async function GET(req: NextRequest) {
   console.log(`[ytdownload] Downloading: "${title}" by "${artist}" (${videoId})`);
 
   try {
-    // 1. RapidAPI - Primary strategy to bypass Vercel IP bans
-    const rapidApiData = await resolveWithRapidAPI(videoId);
-    if (rapidApiData) {
-      return await proxyAudioUrl(rapidApiData.url, req.signal, rapidApiData.headers);
-    }
-
-    // 2. ytdl-core — backup if RapidAPI fails or key expires
+    // 1. ytdl-core — Primary strategy (Direct YouTube CDN is much faster)
     const ytdlData = await resolveWithYtdlCore(videoId);
     if (ytdlData) {
       return await proxyAudioUrl(ytdlData.url, req.signal, ytdlData.headers);
+    }
+
+    // 2. RapidAPI - backup if ytdl-core fails or gets rate limited
+    const rapidApiData = await resolveWithRapidAPI(videoId);
+    if (rapidApiData) {
+      return await proxyAudioUrl(rapidApiData.url, req.signal, rapidApiData.headers);
     }
 
     // 3. Invidious pool

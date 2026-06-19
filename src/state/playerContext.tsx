@@ -393,12 +393,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         }
 
         // Not downloaded - stream online
-        console.log("[Player] Streaming online (buffering to blob)...");
+        console.log("[Player] Streaming online (chunked stream)...");
         
-        const res = await fetch(`/api/ytdownload?videoId=${videoIdToPlay}`);
-        if (!res.ok) throw new Error("فشل في تشغيل الأغنية");
-        const blob = await res.blob();
-        const streamSrc = URL.createObjectURL(blob);
+        const streamSrc = `/api/ytdownload?videoId=${videoIdToPlay}`;
         
         setState((prev) => ({ ...prev, isBuffering: false, streamUrl: streamSrc }));
         player.src = streamSrc;

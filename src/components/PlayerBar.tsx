@@ -219,18 +219,18 @@ function FullPlayer({
       exit={{ y: "100%" }}
       transition={{ type: "spring", damping: 28, stiffness: 220 }}
       className="fixed inset-0 z-50 flex flex-col overflow-hidden"
-      style={{ background: `linear-gradient(180deg, ${bg1} 0%, ${bg2} 100%)` }}
+      style={{ background: `linear-gradient(180deg, ${bg1} 0%, ${bg2} 100%)`, willChange: "transform", transform: "translateZ(0)" }}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
     >
       {/* ── Blurred album art background ── */}
-      <div className="absolute inset-0 overflow-hidden">
+      <div className="absolute inset-0 overflow-hidden" style={{ willChange: "transform", transform: "translateZ(0)" }}>
         <img
           src={proxyArt}
           alt=""
           className="w-full h-full object-cover scale-125"
-          style={{ filter: "blur(40px) brightness(0.6) saturate(1.5)" }}
+          style={{ filter: "blur(40px) brightness(0.6) saturate(1.5)", willChange: "transform", transform: "translateZ(0)" }}
         />
         <div className="absolute inset-0" style={{ background: `linear-gradient(180deg, ${bg1}aa 0%, ${bg2}dd 60%, ${bg2}fa 100%)` }} />
       </div>
@@ -265,7 +265,7 @@ function FullPlayer({
 
         {/* ═══════════ NOW PLAYING TAB ═══════════ */}
         {activeTab === "now" && (
-          <div className="flex-1 flex flex-col items-center justify-start gap-3 px-5 pb-6 pt-2 overflow-y-auto no-scrollbar">
+          <div className="flex-1 flex flex-col items-center justify-between px-5 pb-2 pt-2 overflow-hidden">
 
             {/* Large Album Art */}
             <motion.div
@@ -273,7 +273,7 @@ function FullPlayer({
               initial={{ scale: 0.85, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               transition={{ type: "spring", stiffness: 200, damping: 22 }}
-              className="relative shrink-0"
+              className="relative mt-2 mb-4 shrink-0"
             >
               <div
                 className="w-64 h-64 md:w-72 md:h-72 rounded-3xl overflow-hidden shadow-2xl"
@@ -293,7 +293,7 @@ function FullPlayer({
             </motion.div>
 
             {/* Song Info + Like */}
-            <div className="w-full flex items-center justify-between px-1">
+            <div className="w-full flex items-center justify-between px-1 mb-3">
               <button onClick={onLike} className="p-2 active:scale-90 transition-transform">
                 <Heart
                   className={`w-7 h-7 transition-all ${isLiked ? "fill-current text-pink-400 scale-110" : "text-white/40"}`}
@@ -320,12 +320,12 @@ function FullPlayer({
             </div>
 
             {/* Waveform Visualizer */}
-            <div className="w-full">
+            <div className="w-full mb-3">
               <WaveformVisualizer isPlaying={state.isPlaying} accent={accent} />
             </div>
 
             {/* Seek Bar */}
-            <div className="w-full px-1">
+            <div className="w-full px-1 mb-2">
               <SeekBar
                 progress={state.currentTime}
                 duration={state.duration}
@@ -343,7 +343,7 @@ function FullPlayer({
             </div>
 
             {/* Main Controls */}
-            <div className="flex items-center justify-between w-full px-2 mt-2">
+            <div className="flex items-center justify-between w-full px-2 mb-4 mt-2">
               <button
                 onClick={() => setShuffle(!state.shuffle)}
                 className={`p-2 transition-colors active:scale-90 ${state.shuffle ? "text-white" : "text-white/30"}`}
@@ -387,21 +387,6 @@ function FullPlayer({
                   <span className="absolute top-0.5 right-0.5 text-[8px] font-black leading-none">1</span>
                 )}
               </button>
-            </div>
-
-            {/* Volume */}
-            <div className="w-full flex items-center gap-3 px-2 mt-2">
-              <VolumeX className="w-4 h-4 text-white/30 shrink-0" />
-              <div className="flex-1">
-                <input
-                  type="range" min="0" max="1" step="0.01"
-                  value={state.volume}
-                  onChange={e => setVolume(parseFloat(e.target.value))}
-                  className="w-full h-1 rounded-full cursor-pointer"
-                  style={{ accentColor: accent }}
-                />
-              </div>
-              <Volume2 className="w-4 h-4 text-white/30 shrink-0" />
             </div>
           </div>
         )}
