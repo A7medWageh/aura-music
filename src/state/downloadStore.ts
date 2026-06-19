@@ -78,6 +78,9 @@ if (typeof window !== "undefined") {
     if (saved) {
       const parsed = JSON.parse(saved);
       parsed.forEach((j: DownloadJob) => {
+        // Skip restoring completed or failed jobs so the panel stays clean
+        if (j.status === "done" || j.status === "cancelled" || j.status === "error") return;
+
         const pct =
           j.type === "song" && j.totalBytes && j.totalBytes > 0
             ? Math.round(((j.progressBytes || 0) / j.totalBytes) * 100)
@@ -117,8 +120,8 @@ export function finishJob(id: string, success: boolean, cancelled = false) {
   jobs.set(id, { ...job, status: cancelled ? "cancelled" : success ? "done" : "error" });
   abortControllers.delete(id);
   notify(true);
-  // Auto-remove after 8 seconds
-  setTimeout(() => { jobs.delete(id); notify(true); }, 8000);
+  // Auto-remove very fast so the panel hides
+  setTimeout(() => { jobs.delete(id); notify(true); }, 2000);
 }
 
 export function setJobController(id: string, ctrl: AbortController) {

@@ -394,7 +394,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
         // Not downloaded - stream online
         console.log("[Player] Streaming online.");
-        const streamSrc = `/api/stream/${videoIdToPlay}`;
+        const res = await fetch(`/api/stream/${videoIdToPlay}`);
+        const data = await res.json();
+        if (!res.ok || !data.streamUrl) throw new Error("فشل في تشغيل الأغنية");
+        const streamSrc = data.streamUrl;
+        
         setState((prev) => ({ ...prev, isBuffering: false, streamUrl: streamSrc }));
         player.src = streamSrc;
         player.load();

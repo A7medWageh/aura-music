@@ -50,7 +50,7 @@ export function MobileTabBar() {
               {isActive && (
                 <motion.div
                   layoutId="tab-indicator"
-                  className="absolute -top-[10px] left-1/2 -translate-x-1/2 w-8 h-1 bg-indigo-500 rounded-b-full"
+                  className="absolute -top-[10px] left-0 right-0 mx-auto w-8 h-1 bg-cyan-400 rounded-b-full"
                   transition={{ type: "spring", bounce: 0.3, duration: 0.5 }}
                 />
               )}
