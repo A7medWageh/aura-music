@@ -8,6 +8,11 @@
     --panel: 15, 18, 21;
     --accent: 0, 229, 255; /* Neon Cyan */
     --accent-glow: 0, 229, 255, 0.4;
+    /* Safe area insets exposed as CSS vars for easier use */
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-left: env(safe-area-inset-left, 0px);
+    --safe-right: env(safe-area-inset-right, 0px);
   }
 
   body {
@@ -17,6 +22,9 @@
     overscroll-behavior: none;
     /* Smooth momentum scrolling on iOS */
     -webkit-overflow-scrolling: touch;
+    /* Make sure body doesn't have extra padding that cuts content */
+    padding: 0 !important;
+    margin: 0;
   }
 
   /* Remove default tap highlight on mobile */
@@ -25,10 +33,14 @@
     -webkit-touch-callout: none;
   }
 
-  /* Safe area for iPhone notch / home indicator */
+  /* No padding on html — we handle safe areas manually per-element */
   html {
-    /* Handle viewport-fit=cover */
-    padding-top: env(safe-area-inset-top, 0px);
+    padding: 0;
+    margin: 0;
+    height: 100%;
+    /* Viewport fill for iPhone notch support */
+    min-height: 100vh;
+    min-height: -webkit-fill-available;
   }
 }
 
@@ -55,6 +67,12 @@
     -webkit-user-select: none;
     user-select: none;
   }
+
+  /* Floating action button base */
+  .fab {
+    @apply fixed z-50 w-12 h-12 rounded-full flex items-center justify-center shadow-2xl;
+    @apply transition-transform duration-200 active:scale-90;
+  }
 }
 
 /* RTL Scrollbar */
@@ -76,12 +94,23 @@
   * {
     scrollbar-width: none;
   }
+  
+  /* Mobile-specific: ensure nothing is cut off at edges */
+  .mobile-safe-x {
+    padding-left: max(1rem, env(safe-area-inset-left));
+    padding-right: max(1rem, env(safe-area-inset-right));
+  }
 }
 
-/* PWA standalone mode: remove extra padding added by html safe-area rule */
+/* PWA standalone mode */
 @media (display-mode: standalone) {
   html {
-    padding-top: 0;
+    padding: 0;
+  }
+  
+  /* On iOS PWA, the status bar area needs extra top padding in header */
+  .pwa-safe-top {
+    padding-top: env(safe-area-inset-top, 44px);
   }
 }
 
@@ -93,4 +122,34 @@
 .no-scrollbar {
   -ms-overflow-style: none;  /* IE and Edge */
   scrollbar-width: none;  /* Firefox */
+}
+
+/* Range input styling for better mobile touch targets */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: pointer;
+  touch-action: none; /* Prevent scroll while dragging */
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: white;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+}
+
+/* Smooth full-screen player animation */
+@keyframes slideUpIn {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
+
+/* Lock screen / notification overlay fade */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }

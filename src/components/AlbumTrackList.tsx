@@ -10,7 +10,7 @@ import { getAllOfflineSongs } from "@/offline/indexedDbCache";
 import { useEffect, useState } from "react";
 
 export default function AlbumTrackList({ songs }: { songs: any[] }) {
-  const { playNow, prewarm, state } = usePlayer();
+  const { playNow, setQueue, prewarm, state } = usePlayer();
   const [downloadedIds, setDownloadedIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -18,6 +18,20 @@ export default function AlbumTrackList({ songs }: { songs: any[] }) {
       setDownloadedIds(new Set(offlineSongs.map(s => s.songId)));
     });
   }, []);
+
+  // ── Play song and load the whole album into the queue in order ──
+  const playAlbumFrom = (index: number) => {
+    const queueSongs = songs.map(song => ({
+      songId: song.songId,
+      title: song.title,
+      artist: song.artist || song.artistName || "",
+      youtubeVideoId: song.youtubeVideoId,
+      thumbnailUrl: song.thumbnailUrl,
+      metadata: { thumbnailUrl: song.thumbnailUrl },
+    }));
+    // Set the full album queue starting from the clicked song
+    setQueue(queueSongs, index);
+  };
 
   return (
     <>
@@ -37,14 +51,7 @@ export default function AlbumTrackList({ songs }: { songs: any[] }) {
                 isCurrentSong ? "bg-indigo-500/5" : ""
               }`}
               onMouseEnter={() => prewarm(song.youtubeVideoId)}
-              onClick={() => playNow({
-                songId: song.songId,
-                title: song.title,
-                artist: song.artist || song.artistName || "",
-                youtubeVideoId: song.youtubeVideoId,
-                thumbnailUrl: song.thumbnailUrl,
-                metadata: { thumbnailUrl: song.thumbnailUrl }
-              })}
+              onClick={() => playAlbumFrom(index)}
             >
               {/* Track number / playing indicator */}
               <div className="w-8 shrink-0 flex items-center justify-center">
@@ -139,14 +146,7 @@ export default function AlbumTrackList({ songs }: { songs: any[] }) {
               return (
                 <tr
                   key={`${song.songId}-${index}`}
-                  onClick={() => playNow({
-                    songId: song.songId,
-                    title: song.title,
-                    artist: song.artist || song.artistName || "",
-                    youtubeVideoId: song.youtubeVideoId,
-                    thumbnailUrl: song.thumbnailUrl,
-                    metadata: { thumbnailUrl: song.thumbnailUrl }
-                  })}
+                  onClick={() => playAlbumFrom(index)}
                   className={`group hover:bg-white/5 transition-colors cursor-pointer border-b border-white/5 last:border-0 ${
                     isCurrentSong ? "bg-indigo-500/5" : ""
                   }`}

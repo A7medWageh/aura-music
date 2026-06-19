@@ -9,7 +9,7 @@ import { useToastStore } from "@/state/toastStore";
 type PlayerContextValue = {
   state: PlayerState;
   currentSong: QueueSong | null;
-  setQueue: (songs: QueueSong[]) => void;
+  setQueue: (songs: QueueSong[], startIndex?: number) => void;
   enqueueSongs: (songs: QueueSong[]) => void;
   playNow: (song: QueueSong) => void;
   playSongById: (songId: string) => void;
@@ -46,12 +46,15 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }
   }, [state.queue]);
 
-  const setQueue = (songs: QueueSong[]) => {
+  const setQueue = (songs: QueueSong[], startIndex = 0) => {
+    const idx = Math.max(0, Math.min(startIndex, songs.length - 1));
     setState((prev) => ({
       ...prev,
       queue: songs,
-      currentSongId: songs[0]?.songId ?? null,
+      currentSongId: songs[idx]?.songId ?? null,
       isPlaying: songs.length > 0,
+      currentTime: 0,
+      duration: 0,
       error: null
     }));
   };
@@ -192,11 +195,47 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     setState((prev) => ({ ...prev, isHighQuality: value }));
   };
 
-  // ─── Web Audio API (High Quality Equalizer) ──────────────────────
+  // ─── Web Audio API (High Quality 5-Band Equalizer) ──────────────────
   const audioCtxRef = useRef<AudioContext | null>(null);
   const mediaSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
-  const bassNodeRef = useRef<BiquadFilterNode | null>(null);
-  const trebleNodeRef = useRef<BiquadFilterNode | null>(null);
+  const eqNodesRef = useRef<BiquadFilterNode[]>([]);
+  const compressorRef = useRef<DynamicsCompressorNode | null>(null);
+
+  const buildEQChain = (ctx: AudioContext, source: MediaElementAudioSourceNode) => {
+    // 5-Band Professional EQ Profile for Music
+    const bands = [
+      { type: "lowshelf" as BiquadFilterType, frequency: 80,   gain: 7  }, // Sub-bass boost
+      { type: "peaking"  as BiquadFilterType, frequency: 250,  gain: 4  }, // Bass body
+      { type: "peaking"  as BiquadFilterType, frequency: 2500, gain: 2  }, // Mid presence
+      { type: "peaking"  as BiquadFilterType, frequency: 6000, gain: 3  }, // Upper presence / air
+      { type: "highshelf" as BiquadFilterType, frequency: 10000,gain: 4 }, // Air / Treble
+    ];
+
+    const nodes = bands.map(b => {
+      const f = ctx.createBiquadFilter();
+      f.type = b.type;
+      f.frequency.value = b.frequency;
+      f.gain.value = b.gain;
+      if (b.type === "peaking") f.Q.value = 0.8;
+      return f;
+    });
+
+    // Dynamic compressor for loudness and punchy sound
+    const comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -18;
+    comp.knee.value = 8;
+    comp.ratio.value = 3;
+    comp.attack.value = 0.003;
+    comp.release.value = 0.18;
+    compressorRef.current = comp;
+
+    // Chain: source → EQ bands → compressor → output
+    source.connect(nodes[0]);
+    nodes.forEach((n, i) => { if (i < nodes.length - 1) n.connect(nodes[i + 1]); });
+    nodes[nodes.length - 1].connect(comp);
+    comp.connect(ctx.destination);
+    eqNodesRef.current = nodes;
+  };
 
   useEffect(() => {
     const player = audioRef.current;
@@ -206,56 +245,38 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (state.isHighQuality && !audioCtxRef.current) {
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
       if (!AudioCtx) return;
-      const ctx = new AudioCtx();
-      audioCtxRef.current = ctx;
-
       try {
+        const ctx = new AudioCtx();
+        audioCtxRef.current = ctx;
         const source = ctx.createMediaElementSource(player);
         mediaSourceRef.current = source;
-
-        // Create EQ nodes
-        const bass = ctx.createBiquadFilter();
-        bass.type = "lowshelf";
-        bass.frequency.value = 150; // Enhance frequencies below 150Hz
-        bass.gain.value = 6; // +6dB
-        bassNodeRef.current = bass;
-
-        const treble = ctx.createBiquadFilter();
-        treble.type = "highshelf";
-        treble.frequency.value = 4000; // Enhance frequencies above 4kHz
-        treble.gain.value = 4; // +4dB
-        trebleNodeRef.current = treble;
-
-        // Connect graph
-        source.connect(bass);
-        bass.connect(treble);
-        treble.connect(ctx.destination);
+        buildEQChain(ctx, source);
       } catch (err) {
-        console.warn("[WebAudio] Failed to create source:", err);
+        console.warn("[WebAudio] Failed to create EQ chain:", err);
+        audioCtxRef.current = null;
       }
     }
 
-    if (!audioCtxRef.current || !mediaSourceRef.current || !bassNodeRef.current || !trebleNodeRef.current) return;
+    const ctx = audioCtxRef.current;
+    const source = mediaSourceRef.current;
+    if (!ctx || !source) return;
 
     if (state.isHighQuality) {
-      if (audioCtxRef.current.state === "suspended") {
-        audioCtxRef.current.resume();
-      }
-      // Re-enable EQ
-      mediaSourceRef.current.disconnect();
-      bassNodeRef.current.disconnect();
-      trebleNodeRef.current.disconnect();
-
-      mediaSourceRef.current.connect(bassNodeRef.current);
-      bassNodeRef.current.connect(trebleNodeRef.current);
-      trebleNodeRef.current.connect(audioCtxRef.current.destination);
+      if (ctx.state === "suspended") ctx.resume();
+      // Already connected via buildEQChain on first enable
+      // Re-connect if previously bypassed
+      try {
+        source.disconnect();
+        buildEQChain(ctx, source);
+      } catch { /* already connected */ }
     } else {
-      // Disable EQ (bypass)
-      mediaSourceRef.current.disconnect();
-      bassNodeRef.current.disconnect();
-      trebleNodeRef.current.disconnect();
-
-      mediaSourceRef.current.connect(audioCtxRef.current.destination);
+      // Bypass EQ: disconnect all, connect source directly to output
+      try {
+        source.disconnect();
+        eqNodesRef.current.forEach(n => { try { n.disconnect(); } catch {} });
+        compressorRef.current?.disconnect();
+        source.connect(ctx.destination);
+      } catch { /* ignore */ }
     }
   }, [state.isHighQuality]);
 
@@ -280,6 +301,55 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const preloadNext = (currentId: string, queue: QueueSong[]) => {
     // Preloading disabled to save bandwidth
   };
+
+  // ─── Media Session API (Lock Screen Controls) ─────────────────────
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
+    const song = currentSong;
+    if (!song) return;
+
+    const art = song.thumbnailUrl || song.metadata?.thumbnailUrl;
+    const artwork: MediaImage[] = art
+      ? [
+          { src: art, sizes: "96x96",   type: "image/jpeg" },
+          { src: art, sizes: "128x128", type: "image/jpeg" },
+          { src: art, sizes: "192x192", type: "image/jpeg" },
+          { src: art, sizes: "256x256", type: "image/jpeg" },
+          { src: art, sizes: "512x512", type: "image/jpeg" },
+        ]
+      : [];
+
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title:  song.title  || "أغنية",
+      artist: song.artist || "فنان",
+      album:  (song.metadata?.album) || "Aura Music",
+      artwork,
+    });
+  }, [currentSong]);
+
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
+    navigator.mediaSession.playbackState = state.isPlaying ? "playing" : "paused";
+  }, [state.isPlaying]);
+
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
+
+    navigator.mediaSession.setActionHandler("play",          () => { if (audioRef.current) audioRef.current.play().catch(() => {}); setState(p => ({ ...p, isPlaying: true })); });
+    navigator.mediaSession.setActionHandler("pause",         () => { audioRef.current?.pause(); setState(p => ({ ...p, isPlaying: false })); });
+    navigator.mediaSession.setActionHandler("nexttrack",     () => next());
+    navigator.mediaSession.setActionHandler("previoustrack", () => prev());
+    navigator.mediaSession.setActionHandler("stop",          () => { audioRef.current?.pause(); setState(p => ({ ...p, isPlaying: false })); });
+    navigator.mediaSession.setActionHandler("seekto", (d) => {
+      if (d.seekTime != null) seekTo(d.seekTime);
+    });
+
+    return () => {
+      (["play","pause","nexttrack","previoustrack","stop","seekto"] as MediaSessionAction[]).forEach(a => {
+        try { navigator.mediaSession.setActionHandler(a, null); } catch {}
+      });
+    };
+  }, []);  // Handlers call state setters — stable refs ok
 
   useEffect(() => {
     const player = audioRef.current;

@@ -21,15 +21,21 @@ export function MobileTabBar() {
   const pathname = usePathname();
 
   return (
-    <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40">
+    <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40" style={{ zIndex: 40 }}>
       {/* Frosted glass bar */}
       <div
-        className="flex items-center justify-around px-2 pt-2 pb-[env(safe-area-inset-bottom,8px)]"
         style={{
-          background: "rgba(0,0,0,0.95)",
-          backdropFilter: "blur(24px)",
-          WebkitBackdropFilter: "blur(24px)",
+          background: "rgba(0,0,0,0.97)",
+          backdropFilter: "blur(28px)",
+          WebkitBackdropFilter: "blur(28px)",
           borderTop: "1px solid rgba(255,255,255,0.08)",
+          paddingBottom: "env(safe-area-inset-bottom, 8px)",
+          paddingTop: "10px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-around",
+          paddingLeft: "env(safe-area-inset-left, 0px)",
+          paddingRight: "env(safe-area-inset-right, 0px)",
         }}
       >
         {navItems.map((item) => {
@@ -38,12 +44,13 @@ export function MobileTabBar() {
             <Link
               key={item.href}
               href={item.href}
-              className="relative flex flex-col items-center gap-1 px-3 py-1 min-w-0 flex-1"
+              className="relative flex flex-col items-center gap-1 px-2 py-1 min-w-0 flex-1"
+              style={{ minWidth: 0 }}
             >
               {isActive && (
                 <motion.div
                   layoutId="tab-indicator"
-                  className="absolute -top-2 left-1/2 -translate-x-1/2 w-8 h-1 bg-indigo-500 rounded-b-full"
+                  className="absolute -top-[10px] left-1/2 -translate-x-1/2 w-8 h-1 bg-indigo-500 rounded-b-full"
                   transition={{ type: "spring", bounce: 0.3, duration: 0.5 }}
                 />
               )}

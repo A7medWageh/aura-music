@@ -23,9 +23,15 @@ export function PwaRegistration() {
   const [showInstallBanner, setShowInstallBanner] = useState(false);
 
   useEffect(() => {
-    // Register service worker
+    // ── Register service worker ──
     if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+      navigator.serviceWorker.register("/sw.js", { scope: "/" })
+        .then((reg) => {
+          console.log("[SW] Registered:", reg.scope);
+          // Immediately claim so the SW controls this page
+          if (reg.waiting) reg.waiting.postMessage({ type: "SKIP_WAITING" });
+        })
+        .catch((err) => console.warn("[SW] Registration failed:", err));
     }
 
     // Don't show if already installed
@@ -50,6 +56,39 @@ export function PwaRegistration() {
     };
     window.addEventListener("beforeinstallprompt", handler);
     return () => window.removeEventListener("beforeinstallprompt", handler);
+  }, []);
+
+  // ── Keep SW alive while audio is playing ──
+  useEffect(() => {
+    let interval: NodeJS.Timeout | null = null;
+
+    const ping = () => {
+      if ("serviceWorker" in navigator && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage({ type: "AUDIO_PLAYING" });
+      }
+    };
+
+    // Listen for audio play/pause events globally to manage pings
+    const onPlay = () => {
+      if (!interval) {
+        interval = setInterval(ping, 20000); // ping every 20 seconds
+      }
+    };
+    const onPause = () => {
+      if (interval) {
+        clearInterval(interval);
+        interval = null;
+      }
+    };
+
+    document.addEventListener("play", onPlay, true);
+    document.addEventListener("pause", onPause, true);
+
+    return () => {
+      document.removeEventListener("play", onPlay, true);
+      document.removeEventListener("pause", onPause, true);
+      if (interval) clearInterval(interval);
+    };
   }, []);
 
   const handleInstall = async () => {
@@ -107,7 +146,7 @@ export function PwaRegistration() {
                   {" "}عشان تفتح مزيكا زي أبليكيشن عادي
                 </p>
                 <div className="flex gap-2 items-center text-xs text-gray-500">
-                  <span>📱 بدون إنترنت</span>
+                  <span>📱 تشغيل في الخلفية</span>
                   <span>•</span>
                   <span>⚡ أسرع</span>
                   <span>•</span>
@@ -135,8 +174,8 @@ export function PwaRegistration() {
           >
             <span className="text-xl">🎵</span>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-black text-white">ثبّت مزيكا على جهازك</p>
-              <p className="text-xs text-indigo-200">تجربة أسرع وأوفلاين</p>
+              <p className="text-sm font-black text-white">ثبّت Aura على جهازك</p>
+              <p className="text-xs text-indigo-200">تشغيل في الخلفية + أوفلاين</p>
             </div>
             <button
               onClick={handleInstall}
