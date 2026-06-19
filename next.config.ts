@@ -16,7 +16,8 @@ const withPWA = withPWAInit({
         handler: 'NetworkOnly',
       }
     ]
-  }
+  },
+  customWorkerSrc: "public/worker.js",
 });
 
 const nextConfig: NextConfig = {

@@ -41,7 +41,7 @@ function FloatingRefreshFAB() {
       transition={{ delay: 1, type: "spring", stiffness: 300 }}
       whileHover={{ scale: 1.12 }}
       whileTap={{ scale: 0.92 }}
-      className="fixed z-50 right-4 bottom-[calc(env(safe-area-inset-bottom,0px)+140px)] md:bottom-[calc(env(safe-area-inset-bottom,0px)+120px)] w-12 h-12 rounded-full flex items-center justify-center shadow-2xl"
+      className="fixed z-50 left-6 bottom-[130px] md:bottom-[100px] w-12 h-12 rounded-full flex items-center justify-center shadow-2xl"
       style={{
         background: "linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)",
         boxShadow: "0 4px 24px rgba(99,102,241,0.45), 0 1.5px 6px rgba(0,0,0,0.3)",

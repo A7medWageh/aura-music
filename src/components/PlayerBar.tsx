@@ -53,10 +53,9 @@ function useDominantColor(imageUrl: string | undefined) {
           r = Math.round(r / count);
           g = Math.round(g / count);
           b = Math.round(b / count);
-          // Darken for background
-          const factor = 0.3;
-          const bg1 = `rgb(${Math.round(r * factor)}, ${Math.round(g * factor)}, ${Math.round(b * factor)})`;
-          const bg2 = `rgb(${Math.round(r * factor * 0.5)}, ${Math.round(g * factor * 0.5)}, ${Math.round(b * factor * 0.5)})`;
+          // Darken slightly for background but keep the hue visible
+          const bg1 = `rgb(${Math.round(r * 0.6)}, ${Math.round(g * 0.6)}, ${Math.round(b * 0.6)})`;
+          const bg2 = `rgb(${Math.round(r * 0.4)}, ${Math.round(g * 0.4)}, ${Math.round(b * 0.4)})`;
           // Accent: brighter version
           const max = Math.max(r, g, b);
           const scale = max > 0 ? 220 / max : 1;
@@ -231,9 +230,9 @@ function FullPlayer({
           src={proxyArt}
           alt=""
           className="w-full h-full object-cover scale-125"
-          style={{ filter: "blur(60px) brightness(0.35) saturate(1.4)" }}
+          style={{ filter: "blur(40px) brightness(0.6) saturate(1.5)" }}
         />
-        <div className="absolute inset-0" style={{ background: `linear-gradient(180deg, ${bg1}cc 0%, ${bg2}ee 60%, ${bg2} 100%)` }} />
+        <div className="absolute inset-0" style={{ background: `linear-gradient(180deg, ${bg1}aa 0%, ${bg2}dd 60%, ${bg2}fa 100%)` }} />
       </div>
 
       {/* ── Content ── */}
@@ -647,10 +646,26 @@ export function PlayerBar() {
         )}
       </AnimatePresence>
 
-      {/* Mini Bar */}
+      {/* Mini Bar — mobile: above tab bar, desktop: bottom-0 */}
       <footer
-        className="fixed left-0 right-0 z-30 md:bottom-0"
-        style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 58px)" }}
+        className="fixed left-0 right-0 z-30"
+        style={{
+          bottom:
+            typeof window !== "undefined" && window.innerWidth >= 768
+              ? "0px"
+              : "calc(env(safe-area-inset-bottom, 0px) + 58px)",
+        }}
+        ref={(el) => {
+          // Keep bottom correct on resize (e.g. orientation change)
+          if (!el) return;
+          const update = () => {
+            el.style.bottom =
+              window.innerWidth >= 768
+                ? "0px"
+                : "calc(env(safe-area-inset-bottom, 0px) + 58px)";
+          };
+          window.addEventListener("resize", update, { passive: true });
+        }}
       >
         {/* Progress bar at top edge */}
         <div className="absolute top-0 left-0 right-0 h-[2px] bg-white/10" dir="ltr">

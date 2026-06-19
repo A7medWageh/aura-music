@@ -62,17 +62,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const enqueueSongs = async (songs: QueueSong[]) => {
     if (!songs.length) return;
     
-    // Filter out undownloaded songs
-    const validSongs: QueueSong[] = [];
-    for (const song of songs) {
-      const blob = await getAudioBlob(song.songId);
-      if (blob) validSongs.push(song);
-    }
-    
-    if (validSongs.length === 0) {
-      useToastStore.getState().addToast("يجب تحميل الأغاني أولاً", "error");
-      return;
-    }
+    const validSongs = songs;
 
     setState((prev) => {
       const existingIds = new Set(prev.queue.map((item) => item.songId));
@@ -96,12 +86,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       import("@/services/user/listeningHistory").then(({ trackPlay }) => trackPlay(song)).catch(() => {});
     }
     
-    const blob = await getAudioBlob(song.songId);
-    if (!blob) {
-      useToastStore.getState().addToast("يجب تحميل الأغنية أولاً لتتمكن من تشغيلها", "error");
-      return;
-    }
-
     setState((prev) => {
       const exists = prev.queue.some((item) => item.songId === song.songId);
       const nextQueue = exists ? prev.queue : [song, ...prev.queue];
@@ -118,11 +102,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   };
 
   const playSongById = async (songId: string) => {
-    const blob = await getAudioBlob(songId);
-    if (!blob) {
-      useToastStore.getState().addToast("يجب تحميل الأغنية أولاً لتتمكن من تشغيلها", "error");
-      return;
-    }
     setState((prev) => ({ ...prev, currentSongId: songId, isPlaying: true }));
   };
 
@@ -413,9 +392,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
            return;
         }
 
-        // Not downloaded - require download first
-        useToastStore.getState().addToast("يجب تحميل الأغنية أولاً للاستماع إليها", "error");
-        throw new Error("يجب تحميل الأغنية أولاً للاستماع إليها");
+        // Not downloaded - stream online
+        console.log("[Player] Streaming online.");
+        const streamSrc = `/api/stream/${videoIdToPlay}`;
+        setState((prev) => ({ ...prev, isBuffering: false, streamUrl: streamSrc }));
+        player.src = streamSrc;
+        player.load();
+        if (isPlayingRef.current) player.play().catch(console.error);
 
       } catch (error) {
         if (!cancelled) {
