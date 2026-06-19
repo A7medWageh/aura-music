@@ -38,10 +38,47 @@ export async function GET(req: NextRequest) {
     .trim();
 
   const searchQuery = `${cleanTrackName} ${artistName}`;
-  console.log(`[Lyrics] Searching using RapidAPI: "${searchQuery}"`);
+  console.log(`[Lyrics] Searching using LRCLIB & RapidAPI: "${searchQuery}"`);
 
   try {
-    // 1. YouTube Music native lyrics
+    // 1. Try LRCLIB for perfectly synced line-by-line lyrics (LRC format)
+    const lrclibUrl = `https://lrclib.net/api/get?track_name=${encodeURIComponent(cleanTrackName)}&artist_name=${encodeURIComponent(artistName)}`;
+    const lrclibRes = await fetch(lrclibUrl, {
+      headers: { "User-Agent": "AuraMusic/1.0.0 (https://github.com/A7medWageh)" },
+    });
+
+    if (lrclibRes.ok) {
+      const data = await lrclibRes.json();
+      if (data.syncedLyrics) {
+        console.log(`[Lyrics] Found synced lyrics via LRCLIB!`);
+        return NextResponse.json({ 
+          lyrics: data.plainLyrics, 
+          syncedLyrics: data.syncedLyrics,
+          source: "lrclib" 
+        });
+      }
+    }
+
+    // 2. Try LRCLIB Search as a fallback
+    const searchUrl = `https://lrclib.net/api/search?q=${encodeURIComponent(searchQuery)}`;
+    const searchRes = await fetch(searchUrl, {
+      headers: { "User-Agent": "AuraMusic/1.0.0 (https://github.com/A7medWageh)" },
+    });
+    
+    if (searchRes.ok) {
+      const results = await searchRes.json();
+      const synced = results?.find?.((r: any) => r.syncedLyrics);
+      if (synced) {
+        console.log(`[Lyrics] Found synced lyrics via LRCLIB Search!`);
+        return NextResponse.json({ 
+          lyrics: synced.plainLyrics, 
+          syncedLyrics: synced.syncedLyrics,
+          source: "lrclib" 
+        });
+      }
+    }
+
+    // 3. YouTube Music native lyrics
     if (videoId) {
       console.log(`[Lyrics] Trying youtubei.js for: ${videoId}`);
       const ytLyrics = await getLyricsYoutube(videoId).catch(() => null);

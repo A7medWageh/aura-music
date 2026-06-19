@@ -237,17 +237,7 @@ export async function GET(req: NextRequest) {
   console.log(`[ytdownload] Downloading: "${title}" by "${artist}" (${videoId})`);
 
   try {
-    // 1. RapidAPI - Premium ultra-fast resolver (Prioritized to avoid 60s Vercel IP blocks)
-    try {
-      const rapidApiData = await resolveWithRapidAPI(videoId);
-      if (rapidApiData) {
-        return await proxyAudioUrl(rapidApiData.url, req, rapidApiData.headers);
-      }
-    } catch (e) {
-      console.warn("[ytdownload] RapidAPI proxy failed, falling back...");
-    }
-
-    // 2. ytdl-core — Backup strategy (Direct YouTube CDN)
+    // 1. ytdl-core — Primary strategy (Direct YouTube CDN supports Range/Chunking perfectly)
     try {
       const ytdlData = await resolveWithYtdlCore(videoId);
       if (ytdlData) {
@@ -255,6 +245,16 @@ export async function GET(req: NextRequest) {
       }
     } catch (e) {
       console.warn("[ytdownload] ytdl-core proxy failed, falling back...");
+    }
+
+    // 2. RapidAPI - Premium fallback (Fast but might not support strict chunking)
+    try {
+      const rapidApiData = await resolveWithRapidAPI(videoId);
+      if (rapidApiData) {
+        return await proxyAudioUrl(rapidApiData.url, req, rapidApiData.headers);
+      }
+    } catch (e) {
+      console.warn("[ytdownload] RapidAPI proxy failed, falling back...");
     }
 
     // 3. Invidious pool

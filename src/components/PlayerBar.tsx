@@ -7,7 +7,7 @@ import {
   Settings, Music2, FileText
 } from "lucide-react";
 import { usePlayer } from "@/state/playerContext";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { getProxyUrl } from "@/utils/media";
 import { PremiumModal } from "./PremiumModal";
@@ -198,22 +198,70 @@ function FullPlayer({
 
   // ── Lyrics State ──
   const [lyrics, setLyrics] = useState<string | null>(null);
+  const [syncedLyrics, setSyncedLyrics] = useState<{ timeMs: number; text: string }[] | null>(null);
   const [isLyricsLoading, setIsLyricsLoading] = useState(false);
 
   useEffect(() => {
     setLyrics(null);
+    setSyncedLyrics(null);
   }, [currentSong?.songId]);
 
   useEffect(() => {
-    if (activeTab === "lyrics" && currentSong && !lyrics && !isLyricsLoading) {
+    if (activeTab === "lyrics" && currentSong && !lyrics && !syncedLyrics && !isLyricsLoading) {
       setIsLyricsLoading(true);
       fetch(`/api/lyrics?trackName=${encodeURIComponent(currentSong.title)}&artistName=${encodeURIComponent(currentSong.artist || "")}&videoId=${currentSong.youtubeVideoId}`)
         .then(r => r.json())
-        .then(d => setLyrics(d.lyrics || "عذراً، لم نتمكن من العثور على كلمات هذه الأغنية."))
+        .then(d => {
+          if (d.syncedLyrics) {
+            const lines = d.syncedLyrics.split("\n");
+            const parsed = [];
+            for (const line of lines) {
+              const match = line.match(/^\[(\d{2}):(\d{2}(?:\.\d{2,3})?)\](.*)/);
+              if (match) {
+                const min = parseInt(match[1]);
+                const sec = parseFloat(match[2]);
+                const timeMs = Math.floor((min * 60 + sec) * 1000);
+                const text = match[3].trim();
+                if (text) parsed.push({ timeMs, text });
+              }
+            }
+            setSyncedLyrics(parsed.length > 0 ? parsed : null);
+            setLyrics(d.lyrics || null);
+          } else {
+            setSyncedLyrics(null);
+            setLyrics(d.lyrics || "عذراً، لم نتمكن من العثور على كلمات هذه الأغنية.");
+          }
+        })
         .catch(() => setLyrics("حدث خطأ أثناء جلب الكلمات."))
         .finally(() => setIsLyricsLoading(false));
     }
-  }, [activeTab, currentSong, lyrics, isLyricsLoading]);
+  }, [activeTab, currentSong, lyrics, syncedLyrics, isLyricsLoading]);
+
+  // ── Synced Lyrics Auto-scroll ──
+  const lyricsContainerRef = useRef<HTMLDivElement>(null);
+  const currentTimeMs = state.progress * 1000;
+  
+  const activeLineIndex = useMemo(() => {
+    if (!syncedLyrics) return -1;
+    return syncedLyrics.findIndex((line, i) => {
+      const nextLine = syncedLyrics[i + 1];
+      return currentTimeMs >= line.timeMs && (!nextLine || currentTimeMs < nextLine.timeMs);
+    });
+  }, [syncedLyrics, currentTimeMs]);
+
+  useEffect(() => {
+    if (activeTab === "lyrics" && activeLineIndex !== -1 && lyricsContainerRef.current) {
+      const container = lyricsContainerRef.current;
+      // Note: we add 1 to skip the header element in the children array
+      const activeElement = container.children[activeLineIndex + 1] as HTMLElement;
+      if (activeElement) {
+        container.scrollTo({
+          top: activeElement.offsetTop - container.clientHeight / 2 + activeElement.clientHeight / 2,
+          behavior: 'smooth'
+        });
+      }
+    }
+  }, [activeLineIndex, activeTab]);
 
   // Swipe down to close
   const dragY = useRef(0);
@@ -460,15 +508,38 @@ function FullPlayer({
 
         {/* ═══════════ LYRICS TAB ═══════════ */}
         {activeTab === "lyrics" && (
-          <div className="flex-1 overflow-y-auto no-scrollbar px-6 pb-6 text-center" dir="rtl">
+          <div className="flex-1 overflow-y-auto no-scrollbar px-6 pb-6 text-center" dir="rtl" ref={lyricsContainerRef}>
             <h3 className="text-white font-black text-xl mb-6 sticky top-0 bg-gradient-to-b from-black/20 to-transparent pb-4 backdrop-blur-sm z-10 pt-2">كلمات الأغنية</h3>
             {isLyricsLoading ? (
               <div className="flex flex-col items-center justify-center mt-20 opacity-50">
                 <div className="w-10 h-10 border-4 border-white/20 border-t-white rounded-full animate-spin mb-4" />
                 <p className="text-sm font-bold text-white">جاري البحث عن الكلمات...</p>
               </div>
+            ) : syncedLyrics ? (
+              <div className="flex flex-col gap-6 pb-[50vh] pt-[10vh]">
+                {syncedLyrics.map((line, i) => {
+                  const isActive = i === activeLineIndex;
+                  const isPassed = i < activeLineIndex;
+                  return (
+                    <div
+                      key={i}
+                      onClick={() => seekTo(line.timeMs / 1000)}
+                      className={`font-black text-2xl md:text-3xl leading-snug transition-all duration-500 cursor-pointer ${
+                        isActive 
+                          ? "text-white scale-105 drop-shadow-lg" 
+                          : isPassed 
+                            ? "text-white/40 scale-100" 
+                            : "text-white/20 scale-95"
+                      }`}
+                      style={{ filter: isActive ? "blur(0px)" : "blur(0.5px)" }}
+                    >
+                      {line.text}
+                    </div>
+                  );
+                })}
+              </div>
             ) : lyrics ? (
-              <div className="whitespace-pre-wrap font-bold text-lg md:text-2xl leading-loose text-white/90 pb-20">
+              <div className="whitespace-pre-wrap font-bold text-lg md:text-2xl leading-loose text-white/90 pb-20 pt-4">
                 {lyrics}
               </div>
             ) : (
