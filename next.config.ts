@@ -17,7 +17,7 @@ const withPWA = withPWAInit({
       }
     ]
   },
-  customWorkerSrc: "public/worker.js",
+  customWorkerSrc: "worker",
 });
 
 const nextConfig: NextConfig = {
