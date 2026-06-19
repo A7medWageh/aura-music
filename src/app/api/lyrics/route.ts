@@ -87,17 +87,17 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // 2. RapidAPI Genius fallback (User requested)
+    // 4. RapidAPI Genius fallback (User requested)
     console.log(`[Lyrics] YouTube failed, using RapidAPI Genius...`);
-    const searchRes = await fetch(`https://${RAPIDAPI_HOST}/search/?q=${encodeURIComponent(searchQuery)}`, {
+    const geniusSearchRes = await fetch(`https://${RAPIDAPI_HOST}/search/?q=${encodeURIComponent(searchQuery)}`, {
       headers: {
         'x-rapidapi-host': RAPIDAPI_HOST,
         'x-rapidapi-key': RAPIDAPI_KEY
       }
     });
     
-    if (searchRes.ok) {
-      const searchData = await searchRes.json();
+    if (geniusSearchRes.ok) {
+      const searchData = await geniusSearchRes.json();
       const hits = searchData?.hits || searchData?.response?.hits || [];
       
       if (hits.length > 0) {
