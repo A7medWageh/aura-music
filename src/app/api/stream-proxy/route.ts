@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getYTWeb } from "../../../../apis/youtubei.js";
 
 export const dynamic = "force-dynamic";
 
@@ -14,26 +13,15 @@ export async function GET(req: NextRequest) {
   try {
     const url = decodeURIComponent(targetUrl);
     
-    let res: Response;
-    if (url.includes("googlevideo.com")) {
-      // Use youtubei.js's native session fetcher to ensure PO-Token cookies/headers match
-      const innertube = await getYTWeb();
-      res = await innertube.session.http.fetch(url, {
-        headers: {
-          "Range": req.headers.get("Range") || "bytes=0-",
-        }
-      });
-    } else {
-      res = await fetch(url, {
-        cache: "no-store",
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-          "Range": req.headers.get("Range") || "bytes=0-",
-          "Referer": "https://www.youtube.com/",
-          "Origin": "https://www.youtube.com",
-        },
-      });
-    }
+    const res = await fetch(url, {
+      cache: "no-store",
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Range": req.headers.get("Range") || "bytes=0-",
+        "Referer": "https://www.youtube.com/",
+        "Origin": "https://www.youtube.com",
+      },
+    });
 
     const headers = new Headers();
     // Copy all safe headers

@@ -393,7 +393,7 @@ async function resolveWithInvidious(videoId: string): Promise<string> {
 
 export async function resolveStream(videoId: string): Promise<string> {
   const start = Date.now();
-  console.log(`[Stream] Resolving ${videoId} via InnerTube...`);
+  console.log(`[Stream] Resolving ${videoId} via youtupe-api...`);
 
   // 1. In-memory process cache (fastest)
   const cached = streamCache.get(videoId);
@@ -423,34 +423,29 @@ export async function resolveStream(videoId: string): Promise<string> {
     return url;
   };
 
-  // 3. Try Piped API first (usually bypasses 403 blocks)
+  const YOUTUBE_API_URL = process.env.YOUTUBE_API_URL || "http://127.0.0.1:3001";
   let url = "";
-  let source: string = "youtubei";
+
   try {
-    console.log(`[Stream] Trying Piped API for ${videoId}...`);
-    url = await withTimeout(resolveWithPiped(videoId), 8000, "");
-    if (url) source = "piped";
-  } catch (e) {
-    console.warn(`[Stream] Piped API failed for ${videoId}:`, e);
-  }
-
-  // 4. Try ytdl-core
-  if (!url) {
-    try {
-      console.log(`[Stream] Trying ytdl-core for ${videoId}...`);
-      url = await withTimeout(resolveWithYtdlCore(videoId), 10000, "");
-      if (url) source = "ytdl-core";
-    } catch (e) {
-      console.warn(`[Stream] ytdl-core failed for ${videoId}:`, e);
+    const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
+    const apiUrl = `${YOUTUBE_API_URL}/api/download/mp3?url=${encodeURIComponent(targetUrl)}`;
+    
+    const res = await fetch(apiUrl);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.success && data.download_url) {
+        url = data.download_url;
+      }
     }
+  } catch (e) {
+    console.warn(`[Stream] youtupe-api failed for ${videoId}:`, e);
   }
 
-  // 5. Fallback to youtubei.js
+  // Fallback to youtubei.js if the new API fails
   if (!url) {
     try {
-      console.log(`[Stream] Trying youtubei.js for ${videoId}...`);
+      console.log(`[Stream] Trying youtubei.js fallback for ${videoId}...`);
       url = await withTimeout(resolveWithYoutubei(videoId), 15000, "");
-      if (url) source = "youtubei";
     } catch (e) {
       console.warn(`[Stream] youtubei.js failed for ${videoId}:`, e);
     }

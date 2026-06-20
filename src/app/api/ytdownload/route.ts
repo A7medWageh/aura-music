@@ -3,8 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 export const dynamic = "force-dynamic";
 export const runtime = "edge";
 
-const RAPIDAPI_KEY = "06927991ffmshcbe63a93c7bc4a5p1cc0a0jsn330d37766afa";
-const RAPIDAPI_HOST = "youtube-mp3-audio-video-downloader.p.rapidapi.com";
+const YOUTUBE_API_URL = process.env.YOUTUBE_API_URL || "http://127.0.0.1:3001";
 
 const NO_CACHE_HEADERS = {
   "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
@@ -15,19 +14,21 @@ const NO_CACHE_HEADERS = {
   "Surrogate-Control": "no-store",
 };
 
-// ── Resolve audio URL from RapidAPI ────────────────────────────────────────────
+// ── Resolve audio URL from new API ─────────────────────────────────────────────
 async function resolveAudioUrl(videoId: string): Promise<string | null> {
-  const rapidApiUrl = `https://${RAPIDAPI_HOST}/get_m4a_download_link/${videoId}`;
-  const res = await fetch(rapidApiUrl, {
-    headers: {
-      "x-rapidapi-host": RAPIDAPI_HOST,
-      "x-rapidapi-key": RAPIDAPI_KEY,
-      "Content-Type": "application/json",
-    },
-  });
-  if (!res.ok) return null;
-  const data = await res.json();
-  return data?.file ?? null;
+  try {
+    const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
+    const apiUrl = `${YOUTUBE_API_URL}/api/download/mp3?url=${encodeURIComponent(targetUrl)}`;
+
+    const res = await fetch(apiUrl);
+    if (!res.ok) return null;
+    
+    const data = await res.json();
+    return data?.success ? data.download_url : null;
+  } catch (err) {
+    console.error("[resolveAudioUrl] Error:", err);
+    return null;
+  }
 }
 
 // ── Proxy audio stream (used by offline downloader) ───────────────────────────
@@ -99,7 +100,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const audioUrl = await resolveAudioUrl(videoId);
-    if (!audioUrl) throw new Error("Failed to extract download URL from RapidAPI.");
+    if (!audioUrl) throw new Error("Failed to extract download URL from youtupe-api.");
 
     // Mode 1: Just resolve and return the CDN URL (for online player)
     if (resolveOnly) {
@@ -134,3 +135,4 @@ export async function GET(req: NextRequest) {
     );
   }
 }
+

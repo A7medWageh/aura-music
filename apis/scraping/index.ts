@@ -1,30 +1,26 @@
 /**
  * AURA MUSIC — Stream Engine (Simplified)
  *
- * Only uses youtubei.js (InnerTube) — all other scrapers are dead:
- * - Piped: returns HTML (no companion), or non-googlevideo CDN is gone
- * - Cobalt: v7 API shut down Nov 2024
- * - Invidious: all instances need "Invidious companion" (broken)
- *
- * Flow: youtubei.js → googlevideo URL → /api/audio/[videoId] proxies it
- * Both resolution AND proxy fetch run on Railway's same IP, so no 403.
+ * Uses the new external youtupe-api for all YouTube resolutions.
+ * Flow: youtupe-api -> returns download_url -> /api/audio/[videoId] proxies it or redirects
  */
 
 import { getRedisClient } from "../redis";
-import { resolveStream as ytjsResolveStream } from "../youtubei.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export interface StreamResult {
   url: string;
   directPlay: boolean;
-  source: "piped" | "cobalt" | "invidious" | "youtubei";
+  source: "youtupe-api" | "piped" | "cobalt" | "invidious" | "youtubei";
   durationSec?: number;
 }
 
 // ─── In-memory cache ──────────────────────────────────────────────────────────
 const memCache = new Map<string, { result: StreamResult; expiresAt: number }>();
-const CACHE_TTL_MS = 25 * 60 * 1000; // 25 min (googlevideo URLs expire in ~30 min)
+const CACHE_TTL_MS = 25 * 60 * 1000; // 25 min (URLs expire in ~30 min)
 const REDIS_TTL_SEC = 1500;           // 25 min
+
+const YOUTUBE_API_URL = process.env.YOUTUBE_API_URL || "http://127.0.0.1:3001";
 
 // ─── Cache helpers ────────────────────────────────────────────────────────────
 async function getFromCache(videoId: string): Promise<StreamResult | null> {
@@ -34,7 +30,7 @@ async function getFromCache(videoId: string): Promise<StreamResult | null> {
   try {
     const redis = getRedisClient();
     const raw = await Promise.race([
-      redis.get(`aura:stream:v5:${videoId}`),
+      redis.get(`aura:stream:v6:${videoId}`),
       new Promise<null>((r) => setTimeout(() => r(null), 1200)),
     ]);
     if (raw) {
@@ -51,7 +47,7 @@ async function saveToCache(videoId: string, result: StreamResult): Promise<void>
   memCache.set(videoId, { result, expiresAt: Date.now() + CACHE_TTL_MS });
   try {
     const redis = getRedisClient();
-    redis.set(`aura:stream:v5:${videoId}`, JSON.stringify(result), "EX", REDIS_TTL_SEC).catch(() => {});
+    redis.set(`aura:stream:v6:${videoId}`, JSON.stringify(result), "EX", REDIS_TTL_SEC).catch(() => {});
   } catch { /* Redis unavailable */ }
 }
 
@@ -66,18 +62,31 @@ export async function resolveStreamUrl(videoId: string): Promise<StreamResult> {
     return cached;
   }
 
-  console.log(`[Stream] Resolving ${videoId} via youtubei.js...`);
+  console.log(`[Stream] Resolving ${videoId} via youtupe-api...`);
 
-  // Only youtubei.js — proven to work, others are all dead
-  const url = await ytjsResolveStream(videoId);
-  if (!url || url.length < 10) throw new Error("youtubei: empty url");
+  const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  const apiUrl = `${YOUTUBE_API_URL}/api/download/mp3?url=${encodeURIComponent(targetUrl)}`;
+
+  const res = await fetch(apiUrl);
+  
+  if (!res.ok) {
+    throw new Error(`youtupe-api returned ${res.status}`);
+  }
+
+  const data = await res.json();
+  if (!data.success || !data.download_url) {
+    throw new Error(`youtupe-api failed to extract url: ${data.error || "Unknown error"}`);
+  }
+
+  const url = data.download_url;
 
   const result: StreamResult = {
     url,
-    // googlevideo URLs are IP-locked — NEVER let the browser fetch directly.
-    // /api/audio/[videoId] proxies it from the same Railway IP that resolved it.
+    // googlevideo URLs from yt-dlp might be IP-locked depending on the server location.
+    // Setting directPlay to false forces our Next.js API to proxy or redirect.
+    // Wait, yt-dlp URLs are usually googlevideo URLs. We'll set directPlay false to ensure we can proxy if needed.
     directPlay: false,
-    source: "youtubei",
+    source: "youtupe-api",
   };
 
   console.log(`[Stream] ✅ Resolved ${videoId} in ${Date.now() - start}ms`);
