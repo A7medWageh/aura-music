@@ -1,4 +1,4 @@
-const ytdl = require('@distube/ytdl-core');
+const youtubedl = require('youtube-dl-exec');
 
 const getAudioUrl = async (req, res) => {
     try {
@@ -9,32 +9,40 @@ const getAudioUrl = async (req, res) => {
             return res.status(400).json({ success: false, error: 'URL is required' });
         }
 
-        console.log('Fetching info from YouTube via ytdl-core...');
-        const info = await ytdl.getInfo(videoUrl);
+        // Fetch video info as JSON without downloading
+        console.log('Fetching info from YouTube via yt-dlp...');
+        const info = await youtubedl(videoUrl, {
+            dumpSingleJson: true,
+            noCheckCertificates: true,
+            noWarnings: true,
+            preferFreeFormats: true,
+            youtubeSkipDashManifest: true
+        });
 
         // Filter for audio-only formats
-        const audioFormats = ytdl.filterFormats(info.formats, 'audioonly');
+        const formats = info.formats || [];
+        const audioFormats = formats.filter(f => f.vcodec === 'none' && f.acodec !== 'none');
         
         if (audioFormats.length === 0) {
             return res.status(404).json({ success: false, error: 'No audio formats found' });
         }
 
-        // Sort audio formats by highest audio bitrate
-        audioFormats.sort((a, b) => (b.audioBitrate || 0) - (a.audioBitrate || 0));
+        // Sort audio formats by abr (average bitrate) highest first
+        audioFormats.sort((a, b) => (b.abr || b.tbr || 0) - (a.abr || a.tbr || 0));
         
         const bestFormat = audioFormats[0];
 
         // Format the response
         const responseData = {
             success: true,
-            id: info.videoDetails.videoId,
-            title: info.videoDetails.title,
-            thumbnail: info.videoDetails.thumbnails[0]?.url,
-            duration: info.videoDetails.lengthSeconds,
+            id: info.id,
+            title: info.title,
+            thumbnail: info.thumbnail,
+            duration: info.duration,
             download_url: bestFormat.url,
-            quality: (bestFormat.audioBitrate || 'Unknown') + 'kbps',
-            ext: bestFormat.container || 'mp3',
-            size_bytes: bestFormat.contentLength || 'Unknown'
+            quality: (bestFormat.abr || bestFormat.format_note || 'Unknown') + 'kbps',
+            ext: bestFormat.ext,
+            size_bytes: bestFormat.filesize || bestFormat.filesize_approx || 'Unknown'
         };
 
         res.json(responseData);
