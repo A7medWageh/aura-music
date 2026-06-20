@@ -16,7 +16,11 @@ app.get('/', (req, res) => {
     res.send('YouTube MP3 API is running. Test endpoint: /api/download/mp3?url=YOUR_YOUTUBE_URL');
 });
 
-// Start the server
-app.listen(PORT, () => {
-    console.log(`Server is running on http://localhost:${PORT}`);
-});
+// Start the server if not running on Vercel
+if (process.env.NODE_ENV !== 'production' || process.env.RENDER) {
+    app.listen(PORT, () => {
+        console.log(`Server is running on http://localhost:${PORT}`);
+    });
+}
+
+module.exports = app;
