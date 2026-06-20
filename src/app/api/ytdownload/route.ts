@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import ytdl from "@distube/ytdl-core";
 
 export const dynamic = "force-dynamic";
-export const runtime = "edge";
-
-const YOUTUBE_API_URL = process.env.YOUTUBE_API_URL || "http://127.0.0.1:3001";
+export const runtime = "nodejs";
 
 const NO_CACHE_HEADERS = {
   "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
@@ -14,17 +13,17 @@ const NO_CACHE_HEADERS = {
   "Surrogate-Control": "no-store",
 };
 
-// ── Resolve audio URL from new API ─────────────────────────────────────────────
+// ── Resolve audio URL using ytdl-core directly ──────────────────────────────
 async function resolveAudioUrl(videoId: string): Promise<string | null> {
   try {
     const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
-    const apiUrl = `${YOUTUBE_API_URL}/api/download/mp3?url=${encodeURIComponent(targetUrl)}`;
-
-    const res = await fetch(apiUrl);
-    if (!res.ok) return null;
+    const info = await ytdl.getInfo(targetUrl);
+    const audioFormats = ytdl.filterFormats(info.formats, "audioonly");
     
-    const data = await res.json();
-    return data?.success ? data.download_url : null;
+    if (!audioFormats || audioFormats.length === 0) return null;
+    
+    audioFormats.sort((a, b) => (b.audioBitrate || 0) - (a.audioBitrate || 0));
+    return audioFormats[0].url;
   } catch (err) {
     console.error("[resolveAudioUrl] Error:", err);
     return null;
@@ -100,7 +99,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const audioUrl = await resolveAudioUrl(videoId);
-    if (!audioUrl) throw new Error("Failed to extract download URL from youtupe-api.");
+    if (!audioUrl) throw new Error("Failed to extract download URL from YouTube.");
 
     // Mode 1: Just resolve and return the CDN URL (for online player)
     if (resolveOnly) {
