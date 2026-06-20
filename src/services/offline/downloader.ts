@@ -41,7 +41,7 @@ async function downloadViaBackgroundFetch(
     const sw = (await navigator.serviceWorker.ready) as any;
     if (!sw.backgroundFetch) throw new Error("No BackgroundFetch on registration");
 
-    const url = `/api/ytdownload?videoId=${encodeURIComponent(videoId)}&title=${encodeURIComponent(title)}&artist=${encodeURIComponent(artist)}&t=${Date.now()}`;
+    const url = `/api/ytdownload?videoId=${encodeURIComponent(videoId)}&title=${encodeURIComponent(title)}&artist=${encodeURIComponent(artist)}&proxy=true&t=${Date.now()}`;
     const fetchId = `song-${songId}-${Date.now()}`;
 
     // Start the background fetch
@@ -123,7 +123,7 @@ async function downloadAudioBlob(
     try {
       if (signal?.aborted) return false;
 
-      const apiUrl = `/api/ytdownload?videoId=${encodeURIComponent(videoId)}&title=${encodeURIComponent(title)}&artist=${encodeURIComponent(artist)}&t=${Date.now()}`;
+      const apiUrl = `/api/ytdownload?videoId=${encodeURIComponent(videoId)}&title=${encodeURIComponent(title)}&artist=${encodeURIComponent(artist)}&proxy=true&t=${Date.now()}`;
       const res = await fetch(apiUrl, { cache: "no-store", signal });
       if (!res.ok) throw new Error(`API HTTP ${res.status}`);
 

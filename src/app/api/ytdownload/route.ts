@@ -19,7 +19,7 @@ const NO_CACHE_HEADERS = {
 async function proxyAudioUrl(
   audioUrl: string,
   req: NextRequest
-): Promise<NextResponse> {
+): Promise<Response> {
   const clientRange = req.headers.get("range") || "bytes=0-";
 
   const controller = new AbortController();
@@ -63,7 +63,7 @@ async function proxyAudioUrl(
     headers.set("X-Original-Content-Length", cl ?? String(3.5 * 1024 * 1024));
     if (!cl) headers.set("Transfer-Encoding", "chunked");
 
-    return new NextResponse(upstream.body, { 
+    return new Response(upstream.body, { 
       status: upstream.status === 206 ? 206 : 200, 
       headers 
     });
@@ -77,12 +77,13 @@ async function proxyAudioUrl(
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const videoId = searchParams.get("videoId");
+  const useProxy = searchParams.get("proxy") === "true";
   
   if (!videoId) {
     return NextResponse.json({ error: "Missing videoId" }, { status: 400 });
   }
 
-  console.log(`[ytdownload] Downloading: (${videoId}) via user-provided RapidAPI`);
+  console.log(`[ytdownload] Downloading: (${videoId}) via RapidAPI. Proxy mode: ${useProxy}`);
 
   try {
     const rapidApiUrl = `https://${RAPIDAPI_HOST}/get_m4a_download_link/${videoId}`;
@@ -97,8 +98,15 @@ export async function GET(req: NextRequest) {
     if (rapidApiRes.ok) {
       const data = await rapidApiRes.json();
       if (data.file) {
-        console.log(`[ytdownload] RapidAPI successfully resolved URL for ${videoId}`);
-        return await proxyAudioUrl(data.file, req);
+        console.log(`[ytdownload] Resolved URL for ${videoId}`);
+        
+        if (useProxy) {
+          // Offline downloader requires CORS proxy
+          return await proxyAudioUrl(data.file, req);
+        } else {
+          // Online player streams natively via browser to get perfect HTTP 206 chunking
+          return NextResponse.redirect(data.file, 307);
+        }
       }
     }
 
