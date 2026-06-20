@@ -397,14 +397,28 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
            return;
         }
 
-        // Not downloaded - stream online
-        console.log("[Player] Streaming online using robust ytdownload endpoint...");
+        // Not downloaded - stream online using direct CDN URL for perfect HTTP 206 chunking
+        console.log("[Player] Resolving CDN URL for streaming...");
         
-        const streamSrc = `/api/ytdownload?videoId=${videoIdToPlay}`;
+        setState((prev) => ({ ...prev, isBuffering: true }));
         
-        setState((prev) => ({ ...prev, isBuffering: false, streamUrl: streamSrc }));
-        player.src = streamSrc;
+        const resolveRes = await fetch(`/api/ytdownload?videoId=${videoIdToPlay}&resolveOnly=true`);
+        if (!resolveRes.ok) throw new Error("فشل في تحليل رابط الأغنية");
+        const { url: cdnUrl, contentLength } = await resolveRes.json();
+        if (!cdnUrl) throw new Error("لم يُعثر على رابط الأغنية");
+        
+        if (cancelled) return;
+        
+        console.log(`[Player] Got CDN URL (${contentLength ? Math.round(contentLength/1024) + 'KB' : 'unknown size'}), streaming...`);
+
+        // Set source with explicit type hint for m4a/mp4 container
+        player.src = cdnUrl;
+        if (contentLength) {
+          // Hint browser about expected size so it can estimate duration before full download
+          player.preload = "auto";
+        }
         player.load();
+        setState((prev) => ({ ...prev, isBuffering: false, streamUrl: cdnUrl }));
         if (isPlayingRef.current) player.play().catch(console.error);
 
       } catch (error) {
