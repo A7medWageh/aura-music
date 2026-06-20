@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60; // Max allowed by Vercel for hobby plans
+export const runtime = "edge";
 
 const RAPIDAPI_KEY = "06927991ffmshcbe63a93c7bc4a5p1cc0a0jsn330d37766afa";
 const RAPIDAPI_HOST = "youtube-mp3-audio-video-downloader.p.rapidapi.com";
