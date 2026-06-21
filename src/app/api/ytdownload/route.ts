@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import ytdl from "@distube/ytdl-core";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+
+const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY || "06927991ffmshcbe63a93c7bc4a5p1cc0a0jsn330d37766afa";
+const RAPIDAPI_HOST = "youtube-to-mp315.p.rapidapi.com";
 
 const NO_CACHE_HEADERS = {
   "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
@@ -13,17 +15,58 @@ const NO_CACHE_HEADERS = {
   "Surrogate-Control": "no-store",
 };
 
-// ── Resolve audio URL using ytdl-core directly ──────────────────────────────
+// ── Resolve audio URL using RapidAPI ──────────────────────────────────────────
 async function resolveAudioUrl(videoId: string): Promise<string | null> {
+  const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  const headers = {
+    "Content-Type": "application/json",
+    "x-rapidapi-host": RAPIDAPI_HOST,
+    "x-rapidapi-key": RAPIDAPI_KEY,
+  };
+
   try {
-    const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
-    const info = await ytdl.getInfo(targetUrl);
-    const audioFormats = ytdl.filterFormats(info.formats, "audioonly");
+    // 1. Initiate download
+    const initUrl = `https://${RAPIDAPI_HOST}/download?url=${encodeURIComponent(targetUrl)}&format=mp3`;
+    console.log("[ytdownload] Initiating RapidAPI download:", initUrl);
     
-    if (!audioFormats || audioFormats.length === 0) return null;
+    const initRes = await fetch(initUrl, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({}),
+    });
     
-    audioFormats.sort((a, b) => (b.audioBitrate || 0) - (a.audioBitrate || 0));
-    return audioFormats[0].url;
+    if (!initRes.ok) {
+      console.error("[ytdownload] Init failed", await initRes.text());
+      return null;
+    }
+    
+    const initData = await initRes.json();
+    const id = initData.id;
+    if (!id) return null;
+
+    // 2. Poll for status
+    console.log("[ytdownload] Polling status for ID:", id);
+    for (let i = 0; i < 20; i++) {
+      const statusRes = await fetch(`https://${RAPIDAPI_HOST}/status/${id}`, { headers });
+      if (!statusRes.ok) continue;
+      
+      const statusData = await statusRes.json();
+      console.log(`[ytdownload] Status check ${i+1}:`, statusData.status);
+      
+      if (statusData.status === "completed" && statusData.downloadUrl) {
+        return statusData.downloadUrl; // Return the direct mp3 URL
+      }
+      if (statusData.status === "failed" || statusData.status === "CONVERSION_ERROR") {
+        console.error("[ytdownload] Conversion failed:", statusData);
+        return null;
+      }
+      
+      // Wait 1.5 seconds before next poll
+      await new Promise(resolve => setTimeout(resolve, 1500));
+    }
+    
+    console.error("[ytdownload] Polling timed out.");
+    return null; 
   } catch (err) {
     console.error("[resolveAudioUrl] Error:", err);
     return null;
@@ -99,7 +142,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const audioUrl = await resolveAudioUrl(videoId);
-    if (!audioUrl) throw new Error("Failed to extract download URL from YouTube.");
+    if (!audioUrl) throw new Error("Failed to extract download URL from RapidAPI.");
 
     // Mode 1: Just resolve and return the CDN URL (for online player)
     if (resolveOnly) {
