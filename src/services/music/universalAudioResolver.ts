@@ -114,29 +114,10 @@ export async function resolveUniversalAudio(params: {
     }
   }
 
-  const cacheKey = `v4_${videoId || ""}_${title}__${artist}`.toLowerCase();
+  const cacheKey = `v5_${videoId || ""}_${title}__${artist}`.toLowerCase();
   const cached = memCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.result;
-  }
-
-  // 1. If videoId is missing, resolve it accurately via YouTube search: "${title} ${artist}"
-  if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
-    const q = `${title} ${artist}`.trim();
-    if (q) {
-      try {
-        const { searchYouTube } = await import("@apis/youtubei.js");
-        const ytRes = await searchYouTube(q);
-        const top = ytRes.songs?.[0];
-        if (top?.youtubeVideoId && /^[a-zA-Z0-9_-]{11}$/.test(top.youtubeVideoId)) {
-          videoId = top.youtubeVideoId;
-          if (!title) title = top.title;
-          if (!artist) artist = top.artist;
-        }
-      } catch (e: any) {
-        console.warn("[AudioResolver] Fallback YouTube search failed:", e.message);
-      }
-    }
   }
 
   console.log(`[AudioResolver] Resolving stream for title="${title}" artist="${artist}" videoId="${videoId || ""}"`);
@@ -215,6 +196,26 @@ export async function resolveUniversalAudio(params: {
       }
     } catch (e: any) {
       console.warn("[AudioResolver] SoundCloud failed:", e.message);
+    }
+  }
+
+  // Fallback YouTube videoId Resolution (Only if direct CDNs were not found)
+  if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+    const q = `${title} ${artist}`.trim();
+    if (q) {
+      try {
+        const { searchYouTube } = await import("@apis/youtubei.js");
+        const ytRes = await Promise.race([
+          searchYouTube(q),
+          new Promise<any>((_, reject) => setTimeout(() => reject(new Error("search timeout")), 2500)),
+        ]);
+        const top = ytRes?.songs?.[0];
+        if (top?.youtubeVideoId && /^[a-zA-Z0-9_-]{11}$/.test(top.youtubeVideoId)) {
+          videoId = top.youtubeVideoId;
+        }
+      } catch (e: any) {
+        console.warn("[AudioResolver] Fallback YouTube search failed:", e.message);
+      }
     }
   }
 
