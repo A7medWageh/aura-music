@@ -119,14 +119,31 @@ async function getAlbumatySingers(): Promise<CachedSinger[]> {
   }
 }
 
+async function extractDirectMp3(songId: string): Promise<string | null> {
+  try {
+    const dlRes = await fetch(`https://www.albumaty.com/download/${songId}`, {
+      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!dlRes.ok) return null;
+    const dlHtml = await dlRes.text();
+    const $dl = cheerio.load(dlHtml);
+    const directMp3 = $dl('a[href*=".mp3"]').attr("href");
+    return directMp3 || null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Albumaty Search & Resolve
  * Highly accurate direct 320kbps MP3 resolver for Arabic music.
+ * Combines full-text search with singer directory scanning.
  */
 export async function resolveAlbumatyStream(title: string, artist: string): Promise<string | null> {
   try {
     const rawTitle = title.trim();
-    const rawArtist = artist.trim();
+    const rawArtist = (artist || "").trim();
 
     if (!rawTitle) return null;
 
@@ -150,95 +167,129 @@ export async function resolveAlbumatyStream(title: string, artist: string): Prom
       .replace(/الأغنية\s*الرسمية/gi, "")
       .trim();
 
-    const singers = await getAlbumatySingers();
-
-    // 2. Find matching singer
-    const normTargetArtist = cleanNorm(resolvedArtist);
-    let matchedSinger = singers.find(
-      s => s.norm === normTargetArtist || s.norm.includes(normTargetArtist) || (normTargetArtist.length >= 4 && normTargetArtist.includes(s.norm))
-    );
-
-    if (!matchedSinger && resolvedArtist) {
-      const words = resolvedArtist.split(/\s+/).map(cleanNorm).filter(w => w.length >= 3);
-      if (words.length > 0) {
-        matchedSinger = singers.find(s => words.every(w => s.norm.includes(w)));
-      }
-    }
-
-    if (!matchedSinger) {
-      console.log(`[Albumaty] Singer not found in directory for "${resolvedArtist}"`);
-      return null;
-    }
-
-    console.log(`[Albumaty] Matched singer: "${matchedSinger.name}" (${matchedSinger.href})`);
-
-    // 3. Fetch singer page to get song list
-    const singerRes = await fetch(matchedSinger.href, {
-      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
-      signal: AbortSignal.timeout(6000),
-    });
-    if (!singerRes.ok) return null;
-
-    const singerHtml = await singerRes.text();
-    const $ = cheerio.load(singerHtml);
-
     const normTargetSong = cleanNorm(resolvedTitle);
-    const songWords = resolvedTitle.split(/[\s\-–—|/]+/).map(cleanNorm).filter(w => w.length >= 2);
+    const normTargetArtist = cleanNorm(resolvedArtist);
 
-    let bestSongHref: string | null = null;
-    let bestScore = 0;
+    // ── Strategy A: Search API (Fastest & matches standalone singles) ─────────
+    const searchTerms: string[] = [resolvedTitle];
+    if (resolvedArtist && resolvedArtist.length >= 3) {
+      searchTerms.unshift(`${resolvedArtist} ${resolvedTitle}`);
+    }
 
-    $('a[href*="/song/"]').each((_, el) => {
-      const sTitle = $(el).text().trim();
-      const href = $(el).attr("href") || "";
-      const normSTitle = cleanNorm(sTitle);
+    for (const term of searchTerms) {
+      try {
+        const res = await fetch(`https://www.albumaty.com/search.php?q=${encodeURIComponent(term)}`, {
+          headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
+          signal: AbortSignal.timeout(4000),
+        });
+        if (!res.ok) continue;
+        const html = await res.text();
+        const $ = cheerio.load(html);
 
-      if (normSTitle === normTargetSong) {
-        bestSongHref = href;
-        bestScore = 100;
-        return false;
+        let bestSongId: string | null = null;
+        let bestScore = 0;
+
+        $('a[href*="/song/"]').each((_, el) => {
+          const text = $(el).text().trim();
+          const href = $(el).attr("href") || "";
+          const m = href.match(/\/song\/(\d+)\.html/);
+          if (!m) return;
+          const sId = m[1];
+          const normText = cleanNorm(text);
+
+          let score = 0;
+          if (normText === normTargetSong) {
+            score = 100;
+          } else if (normText.startsWith(normTargetSong) || normText.includes(normTargetSong)) {
+            score = 80;
+          } else if (normTargetSong.includes(normText) && normText.length >= 4) {
+            score = 70;
+          }
+
+          if (score > 0 && normTargetArtist) {
+            if (normText.includes(normTargetArtist)) score += 20;
+          }
+
+          if (score > bestScore && score >= 70) {
+            bestScore = score;
+            bestSongId = sId;
+          }
+        });
+
+        if (bestSongId) {
+          const mp3 = await extractDirectMp3(bestSongId);
+          if (mp3) {
+            console.log(`[Albumaty] ✅ Search resolved direct MP3 for "${rawTitle}": ${mp3}`);
+            streamCache.set(cacheKey, { url: mp3, expiresAt: Date.now() + STREAM_TTL });
+            return mp3;
+          }
+        }
+      } catch (err: any) {
+        console.warn(`[Albumaty] Search failed for term "${term}":`, err.message);
       }
+    }
 
-      let score = 0;
-      if (normSTitle.includes(normTargetSong) || (normTargetSong.length >= 4 && normTargetSong.includes(normSTitle))) {
-        score = 85;
-      } else {
-        const matchedCount = songWords.filter(w => normSTitle.includes(w)).length;
-        if (matchedCount > 0) {
-          score = (matchedCount / songWords.length) * 70;
+    // ── Strategy B: Singer Directory Fallback ─────────────────────────────────
+    if (resolvedArtist) {
+      const singers = await getAlbumatySingers();
+
+      let matchedSinger = singers.find(
+        s => s.norm === normTargetArtist || s.norm.includes(normTargetArtist) || (normTargetArtist.length >= 4 && normTargetArtist.includes(s.norm))
+      );
+
+      if (!matchedSinger) {
+        const words = resolvedArtist.split(/\s+/).map(cleanNorm).filter(w => w.length >= 3);
+        if (words.length > 0) {
+          matchedSinger = singers.find(s => words.every(w => s.norm.includes(w)));
         }
       }
 
-      if (score > bestScore && score >= 50) {
-        bestScore = score;
-        bestSongHref = href;
+      if (matchedSinger) {
+        console.log(`[Albumaty] Matched singer in directory: "${matchedSinger.name}" (${matchedSinger.href})`);
+        const singerRes = await fetch(matchedSinger.href, {
+          headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
+          signal: AbortSignal.timeout(6000),
+        });
+
+        if (singerRes.ok) {
+          const singerHtml = await singerRes.text();
+          const $ = cheerio.load(singerHtml);
+
+          let bestSongHref: string | null = null;
+          let bestScore = 0;
+
+          $('a[href*="/song/"]').each((_, el) => {
+            const sTitle = $(el).text().trim();
+            const href = $(el).attr("href") || "";
+            const normSTitle = cleanNorm(sTitle);
+
+            if (normSTitle === normTargetSong) {
+              bestSongHref = href;
+              bestScore = 100;
+              return false;
+            }
+
+            if (normSTitle.includes(normTargetSong) || normTargetSong.includes(normSTitle)) {
+              if (85 > bestScore) {
+                bestScore = 85;
+                bestSongHref = href;
+              }
+            }
+          });
+
+          if (bestSongHref) {
+            const match = (bestSongHref as string).match(/\/song\/(\d+)\.html/);
+            if (match) {
+              const mp3 = await extractDirectMp3(match[1]);
+              if (mp3) {
+                console.log(`[Albumaty] ✅ Directory resolved direct MP3 for "${rawTitle}": ${mp3}`);
+                streamCache.set(cacheKey, { url: mp3, expiresAt: Date.now() + STREAM_TTL });
+                return mp3;
+              }
+            }
+          }
+        }
       }
-    });
-
-    if (!bestSongHref) {
-      console.log(`[Albumaty] Song "${resolvedTitle}" not found on singer page`);
-      return null;
-    }
-
-    const match = (bestSongHref as string).match(/\/song\/(\d+)\.html/);
-    if (!match) return null;
-    const songId = match[1];
-
-    // 4. Fetch download page
-    const dlRes = await fetch(`https://www.albumaty.com/download/${songId}`, {
-      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!dlRes.ok) return null;
-
-    const dlHtml = await dlRes.text();
-    const $dl = cheerio.load(dlHtml);
-    const directMp3 = $dl('a[href*=".mp3"]').attr("href");
-
-    if (directMp3) {
-      console.log(`[Albumaty] ✅ Resolved direct MP3 for "${rawTitle}" by "${rawArtist}": ${directMp3}`);
-      streamCache.set(cacheKey, { url: directMp3, expiresAt: Date.now() + STREAM_TTL });
-      return directMp3;
     }
 
     return null;
