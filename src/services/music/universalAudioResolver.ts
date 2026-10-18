@@ -80,15 +80,20 @@ export async function resolveUniversalAudio(params: {
 }): Promise<UniversalAudioResult> {
   let { videoId, title = "", artist = "", forDownload = false } = params;
 
-  title = cleanTitle(title);
-  artist = artist.trim();
+  const originalCleanTitle = cleanTitle(title);
+  const originalCleanArtist = artist.trim();
+  title = originalCleanTitle;
+  artist = originalCleanArtist;
 
   // Enrich query with YouTube oEmbed if videoId is provided and title is missing or lacks Arabic letters
+  let oembedArabicTitle: string | null = null;
   if (videoId && (!title || !/[\u0600-\u06FF]/.test(title))) {
     const oembed = await fetchYouTubeOEmbed(videoId);
     if (oembed) {
-      if (!title || /[\u0600-\u06FF]/.test(oembed.title)) {
+      if (!title) {
         title = cleanTitle(oembed.title);
+      } else if (/[\u0600-\u06FF]/.test(oembed.title)) {
+        oembedArabicTitle = cleanTitle(oembed.title);
       }
       if (!artist && oembed.author) {
         artist = oembed.author.trim();
@@ -102,26 +107,7 @@ export async function resolveUniversalAudio(params: {
     return cached.result;
   }
 
-  // 1. If videoId is provided, this is the exact song the user selected
-  if (videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
-    // For downloads, always use the exact YouTube video to guarantee 100% correct audio
-    if (forDownload) {
-      console.log(`[AudioResolver] Download mode: using exact YouTube videoId=${videoId} for "${title}" by "${artist}"`);
-      const result: UniversalAudioResult = {
-        streamUrl: `https://www.youtube.com/watch?v=${videoId}`,
-        directPlay: false,
-        source: "youtube",
-        title,
-        artist,
-        format: "mp4/aac",
-        videoId,
-      };
-      memCache.set(cacheKey, { result, expiresAt: Date.now() + CACHE_TTL_MS });
-      return result;
-    }
-  }
-
-  // 2. If videoId is missing, resolve it accurately via YouTube search: "${title} ${artist}"
+  // 1. If videoId is missing, resolve it accurately via YouTube search: "${title} ${artist}"
   if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
     const q = `${title} ${artist}`.trim();
     if (q) {
@@ -133,20 +119,6 @@ export async function resolveUniversalAudio(params: {
           videoId = top.youtubeVideoId;
           if (!title) title = top.title;
           if (!artist) artist = top.artist;
-          if (forDownload) {
-            console.log(`[AudioResolver] Resolved exact videoId=${videoId} via query "${q}"`);
-            const result: UniversalAudioResult = {
-              streamUrl: `https://www.youtube.com/watch?v=${videoId}`,
-              directPlay: false,
-              source: "youtube",
-              title,
-              artist,
-              format: "mp4/aac",
-              videoId,
-            };
-            memCache.set(cacheKey, { result, expiresAt: Date.now() + CACHE_TTL_MS });
-            return result;
-          }
         }
       } catch (e: any) {
         console.warn("[AudioResolver] Fallback YouTube search failed:", e.message);
@@ -181,9 +153,15 @@ export async function resolveUniversalAudio(params: {
   }
 
   // ── Strategy 2: Albumaty (Direct Arabic MP3 files - strict title & artist match) ──────
-  if (title) {
+  if (title || oembedArabicTitle) {
     try {
-      const albumatyUrl = await resolveAlbumatyStream(title, artist);
+      let albumatyUrl = await resolveAlbumatyStream(title, artist);
+      if (!albumatyUrl && oembedArabicTitle) {
+        albumatyUrl = await resolveAlbumatyStream(oembedArabicTitle, artist);
+      }
+      if (!albumatyUrl && originalCleanTitle && originalCleanTitle !== title) {
+        albumatyUrl = await resolveAlbumatyStream(originalCleanTitle, artist);
+      }
       if (albumatyUrl) {
         const result: UniversalAudioResult = {
           streamUrl: albumatyUrl,
@@ -224,19 +202,24 @@ export async function resolveUniversalAudio(params: {
     }
   }
 
-  // ── Strategy 4: Exact YouTube Video fallback (for Local yt-dlp or Remote Worker tunnel proxy) ──
+  // ── Strategy 4: Local yt-dlp or Remote Worker tunnel proxy ──
   if (videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
-    const result: UniversalAudioResult = {
-      streamUrl: `https://www.youtube.com/watch?v=${videoId}`,
-      directPlay: false,
-      source: "youtube",
-      title,
-      artist,
-      format: "mp4/aac",
-      videoId,
-    };
-    memCache.set(cacheKey, { result, expiresAt: Date.now() + CACHE_TTL_MS });
-    return result;
+    try {
+      const { isYtDlpAvailable } = await import("@apis/yt-dlp");
+      if (isYtDlpAvailable() || process.env.REMOTE_STREAM_WORKER) {
+        const result: UniversalAudioResult = {
+          streamUrl: `https://www.youtube.com/watch?v=${videoId}`,
+          directPlay: false,
+          source: "youtube",
+          title,
+          artist,
+          format: "mp4/aac",
+          videoId,
+        };
+        memCache.set(cacheKey, { result, expiresAt: Date.now() + CACHE_TTL_MS });
+        return result;
+      }
+    } catch {}
   }
 
   // ── Strategy 5: In-house yt-dlp (Direct extraction inspired by VenomMusic) ──────

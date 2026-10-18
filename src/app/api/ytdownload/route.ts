@@ -235,13 +235,24 @@ export async function GET(req: NextRequest) {
       // If YouTube source reached here without worker or yt-dlp, attempt fast direct resolution
       if (resolved.streamUrl.includes("youtube.com") || resolved.streamUrl.includes("youtu.be")) {
         try {
-          const { resolveSaavnSong } = await import("@/services/music/jiosaavn");
-          const saavn = await resolveSaavnSong(title || "", artist);
-          if (saavn?.streamUrl) {
-            resolved.streamUrl = saavn.streamUrl;
-            resolved.source = "jiosaavn";
+          const { resolveAlbumatyStream } = await import("@/services/scrapers/albumaty");
+          const albumatyUrl = await resolveAlbumatyStream(title || "", artist || "");
+          if (albumatyUrl) {
+            resolved.streamUrl = albumatyUrl;
+            resolved.source = "albumaty";
           }
         } catch {}
+
+        if (resolved.streamUrl.includes("youtube.com") || resolved.streamUrl.includes("youtu.be")) {
+          try {
+            const { resolveSaavnSong } = await import("@/services/music/jiosaavn");
+            const saavn = await resolveSaavnSong(title || "", artist);
+            if (saavn?.streamUrl) {
+              resolved.streamUrl = saavn.streamUrl;
+              resolved.source = "jiosaavn";
+            }
+          } catch {}
+        }
 
         if (resolved.streamUrl.includes("youtube.com") || resolved.streamUrl.includes("youtu.be")) {
           try {

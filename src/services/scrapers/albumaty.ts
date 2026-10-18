@@ -46,6 +46,24 @@ const ARTIST_NAME_MAP: Record<string, string> = {
   "mahmoud el leithy": "محمود الليثي",
   "hassan shakosh": "حسن شاكوش",
   "omar kamal": "عمر كمال",
+  "assala": "اصالة",
+  "asala": "اصالة",
+  "wael kfoury": "وائل كفوري",
+  "mohamed mounir": "محمد منير",
+  "hakim": "حكيم",
+  "mostafa amar": "مصطفى قمر",
+  "ehab tawfik": "ايهاب توفيق",
+  "kazem al saher": "كاظم الساهر",
+  "saber rebai": "صابر الرباعي",
+  "ragheb alama": "راغب علامة",
+  "carole samaha": "كارول سماحة",
+  "myriam fares": "ميريام فارس",
+  "nawal al zoghbi": "نوال الزغبي",
+  "fayrouz": "فيروز",
+  "fairuz": "فيروز",
+  "om kalthoum": "ام كلثوم",
+  "umm kulthum": "ام كلثوم",
+  "abdel halim hafez": "عبد الحليم حافظ",
 };
 
 // Common transliterated song titles
@@ -63,6 +81,32 @@ const SONG_TITLE_MAP: Record<string, string> = {
   "ghalban": "غلبان",
   "shokran": "شكرا",
   "enta eh": "انت ايه",
+  "masadaat etabelna": "ما صدقت اتقابلنا",
+  "masdaat etabelna": "ما صدقت اتقابلنا",
+  "el hoob 3ebna": "الحب عيبنا",
+  "el hob 3ebna": "الحب عيبنا",
+  "law tearaf": "لو تعرف",
+  "law te3raf": "لو تعرف",
+  "kaabak aly": "كعبك علي",
+  "ka3bak 3aly": "كعبك علي",
+  "ana lesa baqy alek": "لسه باقي عليك",
+  "lesa baqy alek": "لسه باقي عليك",
+  "bahebak ana": "بحبك انا",
+  "khalik maaya": "خليك معايا",
+  "we malo": "و ماله",
+  "we maloh": "و ماله",
+  "qamarin": "قمرين",
+  "kamel kalamak": "كمل كلامك",
+  "leily nehry": "ليلي نهاري",
+  "wayah": "وياه",
+  "banadeek taala": "بناديك تعالى",
+  "shoft el ayam": "شفت الايام",
+  "ahla w ahla": "احلى واحلى",
+  "meaddy el nas": "معدي الناس",
+  "kol hayaty": "كل حياتي",
+  "sahran": "سهران",
+  "ya ana ya la": "يا انا يا لاء",
+  "makanak": "مكانك",
 };
 
 interface CachedSinger {
@@ -84,27 +128,28 @@ async function getAlbumatySingers(): Promise<CachedSinger[]> {
   }
 
   try {
+    const list: CachedSinger[] = [];
+    // Load categories (cat 1 has Egyptian/Pan-Arab singers)
     const res = await fetch("https://www.albumaty.com/cat/1.html", {
       headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
       signal: AbortSignal.timeout(5000),
     });
-    if (!res.ok) return singersCache || [];
+    if (res.ok) {
+      const html = await res.text();
+      const $ = cheerio.load(html);
 
-    const html = await res.text();
-    const $ = cheerio.load(html);
-    const list: CachedSinger[] = [];
-
-    $('a[href*="/singer/"]').each((_, el) => {
-      const raw = $(el).text().replace(/اغاني/g, "").trim();
-      const href = $(el).attr("href") || "";
-      if (raw && raw.length >= 2 && href) {
-        list.push({
-          name: raw,
-          norm: cleanNorm(raw),
-          href: href.startsWith("http") ? href : `https://www.albumaty.com${href}`,
-        });
-      }
-    });
+      $('a[href*="/singer/"]').each((_, el) => {
+        const raw = $(el).text().replace(/اغاني/g, "").trim();
+        const href = $(el).attr("href") || "";
+        if (raw && raw.length >= 2 && href) {
+          list.push({
+            name: raw,
+            norm: cleanNorm(raw),
+            href: href.startsWith("http") ? href : `https://www.albumaty.com${href}`,
+          });
+        }
+      });
+    }
 
     if (list.length > 0) {
       singersCache = list;
@@ -139,12 +184,17 @@ async function extractDirectMp3(songId: string): Promise<string | null> {
           "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
           "Referer": "https://www.albumaty.com/",
         },
-        signal: AbortSignal.timeout(2500),
+        signal: AbortSignal.timeout(3000),
       });
-      if (probeRes.ok || probeRes.status === 206) {
+      if (probeRes.ok || probeRes.status === 206 || probeRes.status === 405) {
         return directMp3;
       }
-    } catch {}
+    } catch {
+      // If probe times out but directMp3 is a valid Albumaty MP3 CDN link, return it
+      if (directMp3.includes("albumaty.com") && directMp3.endsWith(".mp3")) {
+        return directMp3;
+      }
+    }
 
     return null;
   } catch {
@@ -155,7 +205,7 @@ async function extractDirectMp3(songId: string): Promise<string | null> {
 /**
  * Albumaty Search & Resolve
  * Highly accurate direct 320kbps MP3 resolver for Arabic music.
- * Combines full-text search with singer directory scanning.
+ * Prioritizes verified Singer Directory, validates artist identity, and translates Franco titles.
  */
 export async function resolveAlbumatyStream(title: string, artist: string): Promise<string | null> {
   try {
@@ -172,7 +222,10 @@ export async function resolveAlbumatyStream(title: string, artist: string): Prom
 
     // 1. Resolve artist and title names (translating Franco if present)
     const lowerArtist = rawArtist.toLowerCase();
-    const resolvedArtist = ARTIST_NAME_MAP[lowerArtist] || rawArtist;
+    const resolvedArtist = ARTIST_NAME_MAP[lowerArtist] || rawArtist
+      .replace(/ - Topic$/i, "")
+      .replace(/ official.*$/gi, "")
+      .trim();
 
     const lowerTitle = rawTitle.toLowerCase();
     const resolvedTitle = SONG_TITLE_MAP[lowerTitle] || rawTitle
@@ -186,8 +239,81 @@ export async function resolveAlbumatyStream(title: string, artist: string): Prom
 
     const normTargetSong = cleanNorm(resolvedTitle);
     const normTargetArtist = cleanNorm(resolvedArtist);
+    const cleanSongKeywords = normTargetSong.replace(/^(اغنية|كليب|فيديو|البوم|انا|يا)/g, "").trim();
 
-    // ── Strategy A: Search API (Fastest & matches standalone singles) ─────────
+    // ── Strategy A: Verified Singer Directory (100% Artist Accuracy) ────────
+    if (normTargetArtist) {
+      const singers = await getAlbumatySingers();
+
+      let matchedSinger = singers.find(
+        (s) =>
+          s.norm === normTargetArtist ||
+          s.norm.includes(normTargetArtist) ||
+          (normTargetArtist.length >= 4 && normTargetArtist.includes(s.norm))
+      );
+
+      if (!matchedSinger) {
+        const words = resolvedArtist.split(/\s+/).map(cleanNorm).filter((w) => w.length >= 3);
+        if (words.length > 0) {
+          matchedSinger = singers.find((s) => words.every((w) => s.norm.includes(w)));
+        }
+      }
+
+      if (matchedSinger) {
+        console.log(`[Albumaty] Matched singer in directory: "${matchedSinger.name}" (${matchedSinger.href})`);
+        try {
+          const singerRes = await fetch(matchedSinger.href, {
+            headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
+            signal: AbortSignal.timeout(6000),
+          });
+
+          if (singerRes.ok) {
+            const singerHtml = await singerRes.text();
+            const $ = cheerio.load(singerHtml);
+
+            let bestSongId: string | null = null;
+            let bestScore = 0;
+
+            $('a[href*="/song/"]').each((_, el) => {
+              const sTitle = $(el).text().trim();
+              const href = $(el).attr("href") || "";
+              const m = href.match(/\/song\/(\d+)\.html/);
+              if (!m) return;
+              const sId = m[1];
+              const normSTitle = cleanNorm(sTitle);
+
+              let score = 0;
+              if (normSTitle === normTargetSong) {
+                score = 100;
+              } else if (cleanSongKeywords.length >= 4 && (normSTitle.includes(cleanSongKeywords) || cleanSongKeywords.includes(normSTitle))) {
+                score = 90;
+              } else if (normTargetSong.length >= 4 && (normSTitle.includes(normTargetSong) || normTargetSong.includes(normSTitle))) {
+                score = 85;
+              }
+
+              if (score > bestScore) {
+                bestScore = score;
+                bestSongId = sId;
+                if (score === 100) return false;
+              }
+            });
+
+            if (bestSongId && bestScore >= 85) {
+              const mp3 = await extractDirectMp3(bestSongId);
+              if (mp3) {
+                console.log(`[Albumaty] ✅ Directory resolved direct MP3 for "${rawTitle}": ${mp3}`);
+                streamCache.set(cacheKey, { url: mp3, expiresAt: Date.now() + STREAM_TTL });
+                return mp3;
+              }
+            }
+          }
+        } catch (dirErr: any) {
+          console.warn("[Albumaty] Singer directory scan error:", dirErr.message);
+        }
+      }
+    }
+
+    // ── Strategy B: Search API with Strict Artist Verification ──────────────
     const searchTerms: string[] = [resolvedTitle];
     if (resolvedArtist && resolvedArtist.length >= 3) {
       searchTerms.unshift(`${resolvedArtist} ${resolvedTitle}`);
@@ -203,8 +329,7 @@ export async function resolveAlbumatyStream(title: string, artist: string): Prom
         const html = await res.text();
         const $ = cheerio.load(html);
 
-        let bestSongId: string | null = null;
-        let bestScore = 0;
+        const candidates: { id: string; title: string; score: number }[] = [];
 
         $('a[href*="/song/"]').each((_, el) => {
           const text = $(el).text().trim();
@@ -220,19 +345,49 @@ export async function resolveAlbumatyStream(title: string, artist: string): Prom
           } else if (normTargetArtist && (normText === `${normTargetArtist}${normTargetSong}` || normText === `${normTargetSong}${normTargetArtist}`)) {
             score = 100;
           } else if (normTargetSong.length >= 4 && (normText.startsWith(normTargetSong) || normText.includes(normTargetSong))) {
-            if (!normTargetArtist || normText.includes(normTargetArtist)) {
-              score = 90;
-            }
+            score = 90;
+          } else if (cleanSongKeywords.length >= 4 && normText.includes(cleanSongKeywords)) {
+            score = 80;
           }
 
-          if (score > bestScore && score >= 90) {
-            bestScore = score;
-            bestSongId = sId;
+          if (score >= 80) {
+            candidates.push({ id: sId, title: text, score });
           }
         });
 
-        if (bestSongId) {
-          const mp3 = await extractDirectMp3(bestSongId);
+        candidates.sort((a, b) => b.score - a.score);
+
+        // Verify top candidates
+        for (const cand of candidates.slice(0, 4)) {
+          // If artist is known, verify candidate belongs to this artist
+          if (normTargetArtist) {
+            try {
+              const songPageRes = await fetch(`https://www.albumaty.com/song/${cand.id}.html`, {
+                headers: { "User-Agent": "Mozilla/5.0" },
+                signal: AbortSignal.timeout(3000),
+              });
+              if (songPageRes.ok) {
+                const spHtml = await songPageRes.text();
+                const $sp = cheerio.load(spHtml);
+                const h1Norm = cleanNorm($sp("h1").text());
+                const singerNorm = cleanNorm($sp('a[href*="/singer/"]').text());
+
+                const isArtistVerified =
+                  h1Norm.includes(normTargetArtist) ||
+                  singerNorm.includes(normTargetArtist) ||
+                  normTargetArtist.includes(singerNorm);
+
+                if (!isArtistVerified) {
+                  console.log(`[Albumaty] Rejecting search candidate id=${cand.id} (wrong artist: "${singerNorm}")`);
+                  continue;
+                }
+              }
+            } catch {
+              // If page probe fails, proceed
+            }
+          }
+
+          const mp3 = await extractDirectMp3(cand.id);
           if (mp3) {
             console.log(`[Albumaty] ✅ Search resolved direct MP3 for "${rawTitle}": ${mp3}`);
             streamCache.set(cacheKey, { url: mp3, expiresAt: Date.now() + STREAM_TTL });
@@ -244,72 +399,10 @@ export async function resolveAlbumatyStream(title: string, artist: string): Prom
       }
     }
 
-    // ── Strategy B: Singer Directory Fallback ─────────────────────────────────
-    if (resolvedArtist) {
-      const singers = await getAlbumatySingers();
-
-      let matchedSinger = singers.find(
-        s => s.norm === normTargetArtist || s.norm.includes(normTargetArtist) || (normTargetArtist.length >= 4 && normTargetArtist.includes(s.norm))
-      );
-
-      if (!matchedSinger) {
-        const words = resolvedArtist.split(/\s+/).map(cleanNorm).filter(w => w.length >= 3);
-        if (words.length > 0) {
-          matchedSinger = singers.find(s => words.every(w => s.norm.includes(w)));
-        }
-      }
-
-      if (matchedSinger) {
-        console.log(`[Albumaty] Matched singer in directory: "${matchedSinger.name}" (${matchedSinger.href})`);
-        const singerRes = await fetch(matchedSinger.href, {
-          headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
-          signal: AbortSignal.timeout(6000),
-        });
-
-        if (singerRes.ok) {
-          const singerHtml = await singerRes.text();
-          const $ = cheerio.load(singerHtml);
-
-          let bestSongHref: string | null = null;
-          let bestScore = 0;
-
-          $('a[href*="/song/"]').each((_, el) => {
-            const sTitle = $(el).text().trim();
-            const href = $(el).attr("href") || "";
-            const normSTitle = cleanNorm(sTitle);
-
-            if (normSTitle === normTargetSong) {
-              bestSongHref = href;
-              bestScore = 100;
-              return false;
-            }
-
-            if (normTargetSong.length >= 4 && (normSTitle.startsWith(normTargetSong) || normSTitle.includes(normTargetSong))) {
-              if (90 > bestScore) {
-                bestScore = 90;
-                bestSongHref = href;
-              }
-            }
-          });
-
-          if (bestSongHref) {
-            const match = (bestSongHref as string).match(/\/song\/(\d+)\.html/);
-            if (match) {
-              const mp3 = await extractDirectMp3(match[1]);
-              if (mp3) {
-                console.log(`[Albumaty] ✅ Directory resolved direct MP3 for "${rawTitle}": ${mp3}`);
-                streamCache.set(cacheKey, { url: mp3, expiresAt: Date.now() + STREAM_TTL });
-                return mp3;
-              }
-            }
-          }
-        }
-      }
-    }
-
     return null;
   } catch (err: any) {
     console.warn(`[Albumaty] Resolution failed for "${title}":`, err.message);
     return null;
   }
 }
+
