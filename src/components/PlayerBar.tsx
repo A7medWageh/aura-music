@@ -856,9 +856,11 @@ export function PlayerBar() {
 
   const handleDownload = async () => {
     if (!currentSong) return;
+    const rawArtist = currentSong.artist || (currentSong as any).metadata?.artist || "";
+    const cleanArtist = (!rawArtist || rawArtist === "فنان" || rawArtist === "فنان غير معروف") ? "" : rawArtist;
     addToast(`جاري حفظ "${currentSong.title}" في مكتبة الموقع... 🚀`);
     const ok = await downloadSong(currentSong.songId, currentSong.youtubeVideoId, {
-      title: currentSong.title, artist: currentSong.artist || "فنان", thumbnailUrl: currentSong.thumbnailUrl, folderName: currentSong.artist || "أخرى"
+      title: currentSong.title, artist: cleanArtist, thumbnailUrl: currentSong.thumbnailUrl, folderName: cleanArtist || "أخرى"
     });
     addToast(ok ? "تم حفظ الأغنية في مكتبتك (الأوفلاين) ✅" : "فشل التحميل ❌", ok ? "success" : "error");
   };

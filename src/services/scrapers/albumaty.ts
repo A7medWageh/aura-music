@@ -291,10 +291,11 @@ export async function resolveAlbumatyStream(title: string, artist: string): Prom
               let score = 0;
               if (normSTitle === normTargetSong) {
                 score = 100;
-              } else if (cleanSongKeywords.length >= 4 && (normSTitle.includes(cleanSongKeywords) || cleanSongKeywords.includes(normSTitle))) {
-                score = 90;
-              } else if (normTargetSong.length >= 4 && (normSTitle.includes(normTargetSong) || normTargetSong.includes(normSTitle))) {
-                score = 85;
+              } else if (normSTitle.replace(/[0-9]/g, "").trim() === normTargetSong.replace(/[0-9]/g, "").trim()) {
+                score = 98;
+              } else if (normTargetSong.length >= 4 && (normSTitle.startsWith(normTargetSong) || normTargetSong.startsWith(normSTitle))) {
+                const diff = Math.abs(normSTitle.length - normTargetSong.length);
+                if (diff <= 3) score = 95;
               }
 
               if (score > bestScore) {
@@ -304,7 +305,7 @@ export async function resolveAlbumatyStream(title: string, artist: string): Prom
               }
             });
 
-            if (bestSongId && bestScore >= 85) {
+            if (bestSongId && bestScore >= 95) {
               const mp3 = await extractDirectMp3(bestSongId);
               if (mp3) {
                 console.log(`[Albumaty] ✅ Directory resolved direct MP3 for "${rawTitle}": ${mp3}`);
@@ -320,10 +321,11 @@ export async function resolveAlbumatyStream(title: string, artist: string): Prom
     }
 
     // ── Strategy B: Search API with Strict Artist Verification ──────────────
-    const searchTerms: string[] = [resolvedTitle];
+    const searchTerms: string[] = [];
     if (resolvedArtist && resolvedArtist.length >= 3) {
-      searchTerms.unshift(`${resolvedArtist} ${resolvedTitle}`);
+      searchTerms.push(`${resolvedArtist} ${resolvedTitle}`);
     }
+    searchTerms.push(resolvedTitle);
 
     for (const term of searchTerms) {
       try {
@@ -350,13 +352,12 @@ export async function resolveAlbumatyStream(title: string, artist: string): Prom
             score = 100;
           } else if (normTargetArtist && (normText === `${normTargetArtist}${normTargetSong}` || normText === `${normTargetSong}${normTargetArtist}`)) {
             score = 100;
-          } else if (normTargetSong.length >= 4 && (normText.startsWith(normTargetSong) || normText.includes(normTargetSong))) {
-            score = 90;
-          } else if (cleanSongKeywords.length >= 4 && normText.includes(cleanSongKeywords)) {
-            score = 80;
+          } else if (normTargetSong.length >= 4 && (normText.startsWith(normTargetSong) || normTargetSong.startsWith(normText))) {
+            const diff = Math.abs(normText.length - normTargetSong.length);
+            if (diff <= 3) score = 95;
           }
 
-          if (score >= 80) {
+          if (score >= 95) {
             candidates.push({ id: sId, title: text, score });
           }
         });
@@ -365,8 +366,8 @@ export async function resolveAlbumatyStream(title: string, artist: string): Prom
 
         // Verify top candidates
         for (const cand of candidates.slice(0, 4)) {
-          // If artist is known and in Arabic, verify candidate belongs to this artist
-          if (normTargetArtist && /[\u0600-\u06FF]/.test(normTargetArtist)) {
+          // If artist is known, verify candidate belongs to this artist
+          if (normTargetArtist) {
             try {
               const songPageRes = await fetch(`https://www.albumaty.com/song/${cand.id}.html`, {
                 headers: { "User-Agent": "Mozilla/5.0" },
@@ -378,13 +379,17 @@ export async function resolveAlbumatyStream(title: string, artist: string): Prom
                 const h1Norm = cleanNorm($sp("h1").text());
                 const singerNorm = cleanNorm($sp('a[href*="/singer/"]').text());
 
+                const artistWords = resolvedArtist.split(/\s+/).map(cleanNorm).filter((w) => w.length >= 3);
+                const matchesWords = artistWords.length > 0 && artistWords.every((w) => h1Norm.includes(w) || singerNorm.includes(w));
+
                 const isArtistVerified =
                   h1Norm.includes(normTargetArtist) ||
                   singerNorm.includes(normTargetArtist) ||
-                  normTargetArtist.includes(singerNorm);
+                  normTargetArtist.includes(singerNorm) ||
+                  matchesWords;
 
-                if (!isArtistVerified && cand.score < 100) {
-                  console.log(`[Albumaty] Rejecting search candidate id=${cand.id} (wrong artist: "${singerNorm}")`);
+                if (!isArtistVerified) {
+                  console.log(`[Albumaty] Rejecting search candidate id=${cand.id} (wrong artist: "${singerNorm}" vs target "${normTargetArtist}")`);
                   continue;
                 }
               }

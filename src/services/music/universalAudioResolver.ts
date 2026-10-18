@@ -98,9 +98,10 @@ export async function resolveUniversalAudio(params: {
   title = originalCleanTitle;
   artist = originalCleanArtist;
 
-  // Enrich query with YouTube oEmbed if videoId is provided and title is missing or lacks Arabic letters
+  // Enrich query with YouTube oEmbed if videoId is provided and (title is missing, artist is missing/generic, or title lacks Arabic letters)
   let oembedArabicTitle: string | null = null;
-  if (videoId && (!title || !/[\u0600-\u06FF]/.test(title))) {
+  const isGeneric = !artist || artist === "فنان" || artist === "فنان غير معروف" || artist.toLowerCase().includes("unknown");
+  if (videoId && (!title || isGeneric || !/[\u0600-\u06FF]/.test(title))) {
     const oembed = await fetchYouTubeOEmbed(videoId);
     if (oembed) {
       if (!title) {
@@ -108,13 +109,22 @@ export async function resolveUniversalAudio(params: {
       } else if (/[\u0600-\u06FF]/.test(oembed.title)) {
         oembedArabicTitle = cleanTitle(oembed.title);
       }
-      if (!artist && oembed.author) {
+      if (isGeneric && oembed.author) {
         artist = cleanArtist(oembed.author);
       }
     }
   }
 
-  const cacheKey = `v5_${videoId || ""}_${title}__${artist}`.toLowerCase();
+  // If title has "Artist - Song", extract both if artist is missing
+  if (title.includes("-") && (!artist || artist === "فنان" || artist === "فنان غير معروف")) {
+    const parts = title.split("-");
+    if (parts[0].trim().length > 1 && parts[1].trim().length > 1) {
+      artist = cleanArtist(parts[0].trim());
+      title = cleanTitle(parts[1].trim());
+    }
+  }
+
+  const cacheKey = `v6_${videoId || ""}_${title}__${artist}`.toLowerCase();
   const cached = memCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.result;
@@ -155,9 +165,6 @@ export async function resolveUniversalAudio(params: {
       }
       if (!albumatyUrl && originalCleanTitle && originalCleanTitle !== title) {
         albumatyUrl = await resolveAlbumatyStream(originalCleanTitle, artist);
-      }
-      if (!albumatyUrl && title && title.length >= 4 && artist) {
-        albumatyUrl = await resolveAlbumatyStream(title, "");
       }
       if (albumatyUrl) {
         const result: UniversalAudioResult = {

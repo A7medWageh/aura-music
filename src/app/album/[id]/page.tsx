@@ -34,7 +34,7 @@ export default async function AlbumPage({ params }: { params: Promise<{ id: stri
 
       {/* ── Tracklist ── */}
       <div className="px-0 md:px-0">
-        <AlbumTrackList songs={songs} />
+        <AlbumTrackList songs={songs} albumArtist={artist} />
       </div>
     </div>
   );

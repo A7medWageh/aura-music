@@ -301,7 +301,7 @@ export default function ArtistClientPage({ id }: { id: string }) {
                     }
                     showToast(`جاري تحميل "${song.title}"...`);
                     downloadSong(song.songId, song.youtubeVideoId, {
-                      title: song.title, artist: song.artist, thumbnailUrl: song.thumbnailUrl
+                      title: song.title, artist: song.artist || artist.name, thumbnailUrl: song.thumbnailUrl
                     }).then(ok => showToast(ok ? "تم الحفظ ✅" : "فشل التحميل ❌"));
                   }}
                 />

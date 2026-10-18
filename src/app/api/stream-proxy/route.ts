@@ -9,6 +9,7 @@ export async function GET(req: NextRequest) {
   const targetUrl = searchParams.get("url");
   const isDownload = searchParams.get("download") === "true";
   const title = searchParams.get("title") || "song";
+  const artist = searchParams.get("artist") || undefined;
   const videoId = searchParams.get("videoId") || undefined;
 
   if (!targetUrl && !videoId) {
@@ -28,6 +29,7 @@ export async function GET(req: NextRequest) {
       ytdownloadUrl.pathname = "/api/ytdownload";
       ytdownloadUrl.searchParams.set("videoId", targetVid);
       ytdownloadUrl.searchParams.set("title", title);
+      if (artist) ytdownloadUrl.searchParams.set("artist", artist);
       if (isDownload) {
         ytdownloadUrl.searchParams.set("download", "true");
         ytdownloadUrl.searchParams.set("attachment", "true");

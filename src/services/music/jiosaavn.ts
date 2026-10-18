@@ -100,7 +100,10 @@ export async function resolveSaavnSong(query: string, artistFilter?: string): Pr
 
       // 2. Title must match query strictly
       if (cNorm === qNorm) return true;
-      if (qNorm.length >= 4 && (cNorm.startsWith(qNorm) || qNorm.startsWith(cNorm))) return true;
+      if (qNorm.length >= 4 && (cNorm.startsWith(qNorm) || qNorm.startsWith(cNorm))) {
+        const diff = Math.abs(cNorm.length - qNorm.length);
+        if (diff <= 3) return true;
+      }
 
       // Word match only if all words match and artist also matched
       const qWords = cleanQ.toLowerCase().split(/\s+/).filter(w => w.length > 2);

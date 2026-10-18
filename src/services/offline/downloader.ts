@@ -32,6 +32,37 @@ function getSmartFolderName(rawArtist: string, allSongs: any[], title?: string):
   return parts[0];
 }
 
+export function cleanArtistAndTitle(rawTitle?: string, rawArtist?: string): { title: string; artist: string } {
+  let title = (rawTitle || "").trim();
+  let artist = (rawArtist || "").trim();
+
+  const isGeneric =
+    !artist ||
+    artist === "فنان" ||
+    artist === "فنان غير معروف" ||
+    artist === "غير معروف" ||
+    artist.toLowerCase().includes("unknown");
+
+  if (isGeneric && title.includes("-")) {
+    const parts = title.split("-");
+    if (parts[0].trim().length > 1 && parts[1].trim().length > 1) {
+      artist = parts[0].trim();
+      title = parts[1].trim();
+    }
+  }
+
+  if (
+    artist === "فنان" ||
+    artist === "فنان غير معروف" ||
+    artist === "غير معروف" ||
+    artist.toLowerCase().includes("unknown")
+  ) {
+    artist = "";
+  }
+
+  return { title: title || "أغنية محفوظة", artist };
+}
+
 // ─── Check Background Fetch API support ───────────────────────────────────────
 function isBgFetchSupported(): boolean {
   if (typeof window === "undefined") return false;
@@ -52,7 +83,7 @@ async function downloadViaBackgroundFetch(
 
     const params = new URLSearchParams();
     if (videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId)) params.set("videoId", videoId);
-    if (title) params.set("title", title);
+    if (title && title !== "أغنية محفوظة") params.set("title", title);
     if (artist) params.set("artist", artist);
     params.set("proxy", "true");
     params.set("download", "true");
@@ -142,7 +173,7 @@ async function downloadAudioBlob(
 
       const params = new URLSearchParams();
       if (videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId)) params.set("videoId", videoId);
-      if (title) params.set("title", title);
+      if (title && title !== "أغنية محفوظة") params.set("title", title);
       if (artist) params.set("artist", artist);
       params.set("proxy", "true");
       params.set("download", "true");
@@ -226,18 +257,18 @@ export async function downloadSong(
   videoId: string,
   metadata?: SongMeta
 ): Promise<boolean> {
-  const title = metadata?.title || "أغنية محفوظة";
-  const artist = metadata?.artist || "فنان غير معروف";
+  const { title, artist } = cleanArtistAndTitle(metadata?.title, metadata?.artist);
+  const displayArtist = artist || "فنان غير معروف";
 
   try {
     const allSongs = await getAllOfflineSongs();
-    const smartFolder = getSmartFolderName(metadata?.folderName || artist, allSongs, title);
+    const smartFolder = getSmartFolderName(metadata?.folderName || displayArtist, allSongs, title);
 
     await saveSongMeta({
       songId,
       youtubeVideoId: videoId,
       title,
-      artist,
+      artist: displayArtist,
       thumbnailUrl: metadata?.thumbnailUrl,
       albumId: metadata?.albumId,
       albumName: metadata?.albumName,

@@ -98,8 +98,8 @@ export default function HomePage() {
       setShowPremiumModal(true);
       return;
     }
-    showToast(`جاري تحميل "${song.title}"...`);
-    const ok = await downloadSong(song.songId, song.youtubeVideoId, { title: song.title, artist: song.artist, thumbnailUrl: song.thumbnailUrl });
+    const cleanArt = (!song.artist || song.artist === "فنان" || song.artist === "فنان غير معروف") ? "" : song.artist;
+    const ok = await downloadSong(song.songId, song.youtubeVideoId, { title: song.title, artist: cleanArt, thumbnailUrl: song.thumbnailUrl });
     showToast(ok ? `تم حفظ "${song.title}" ✅` : `فشل التحميل ❌`);
   };
 

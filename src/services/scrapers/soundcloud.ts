@@ -80,12 +80,18 @@ export async function resolveSoundCloudStream(title: string, artist: string): Pr
         .filter(w => w.length >= 3 && !["مع", "في", "من", "على"].includes(w));
 
       // Rank candidate tracks by matching title and artist
+      const requiresArtist = artistWords.length > 0;
       const ranked = res.data.collection
         .map((t: any) => {
           const normTitle = norm(t.title || "");
           const normUser = norm(t.user?.username || "");
-          let score = 0;
 
+          if (requiresArtist) {
+            const hasArtist = artistWords.some(w => normTitle.includes(w) || normUser.includes(w));
+            if (!hasArtist) return { track: t, score: 0, hasProg: false };
+          }
+
+          let score = 0;
           if (coreTarget && normTitle.includes(coreTarget)) {
             score += 50;
             if (normTitle.startsWith(coreTarget) || normTitle === coreTarget) score += 40;
@@ -103,7 +109,7 @@ export async function resolveSoundCloudStream(title: string, artist: string): Pr
 
           return { track: t, score, hasProg };
         })
-        .filter((item: any) => item.score >= 50)
+        .filter((item: any) => item.score >= 80)
         .sort((a: any, b: any) => b.score - a.score);
 
       for (const item of ranked) {

@@ -9,7 +9,7 @@ import { downloadSong } from "@/services/offline/downloader";
 import { getAllOfflineSongs } from "@/offline/indexedDbCache";
 import { useEffect, useState } from "react";
 
-export default function AlbumTrackList({ songs }: { songs: any[] }) {
+export default function AlbumTrackList({ songs, albumArtist }: { songs: any[]; albumArtist?: string }) {
   const { playNow, setQueue, prewarm, state } = usePlayer();
   const [downloadedIds, setDownloadedIds] = useState<Set<string>>(new Set());
 
@@ -24,7 +24,7 @@ export default function AlbumTrackList({ songs }: { songs: any[] }) {
     const queueSongs = songs.map(song => ({
       songId: song.songId,
       title: song.title,
-      artist: song.artist || song.artistName || "",
+      artist: song.artist || song.artistName || albumArtist || "",
       youtubeVideoId: song.youtubeVideoId,
       thumbnailUrl: song.thumbnailUrl,
       metadata: { thumbnailUrl: song.thumbnailUrl },
@@ -103,7 +103,7 @@ export default function AlbumTrackList({ songs }: { songs: any[] }) {
                 <FavoriteButton 
                   songId={song.songId}
                   title={song.title}
-                  artist={song.artist || song.artistName || ""}
+                  artist={song.artist || song.artistName || albumArtist || ""}
                   thumbnailUrl={song.thumbnailUrl}
                   youtubeVideoId={song.youtubeVideoId}
                   size={16}
@@ -116,7 +116,7 @@ export default function AlbumTrackList({ songs }: { songs: any[] }) {
                     setDownloadedIds(prev => new Set(prev).add(song.songId));
                     downloadSong(song.songId, song.youtubeVideoId, {
                       title: song.title,
-                      artist: song.artist || song.artistName || "",
+                      artist: song.artist || song.artistName || albumArtist || "",
                       thumbnailUrl: song.thumbnailUrl
                     });
                   }}
@@ -198,7 +198,7 @@ export default function AlbumTrackList({ songs }: { songs: any[] }) {
                         <FavoriteButton 
                           songId={song.songId}
                           title={song.title}
-                          artist={song.artist || song.artistName || ""}
+                          artist={song.artist || song.artistName || albumArtist || ""}
                           thumbnailUrl={song.thumbnailUrl}
                           youtubeVideoId={song.youtubeVideoId}
                           size={18}
@@ -211,7 +211,7 @@ export default function AlbumTrackList({ songs }: { songs: any[] }) {
                             setDownloadedIds(prev => new Set(prev).add(song.songId));
                             downloadSong(song.songId, song.youtubeVideoId, {
                               title: song.title,
-                              artist: song.artist || song.artistName || "",
+                              artist: song.artist || song.artistName || albumArtist || "",
                               thumbnailUrl: song.thumbnailUrl
                             });
                           }}

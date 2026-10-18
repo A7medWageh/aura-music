@@ -118,11 +118,31 @@ async function getFallbackVideoId(videoId?: string, title?: string, artist?: str
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const videoId = searchParams.get("videoId") || searchParams.get("id") || undefined;
-  const title = searchParams.get("title") || undefined;
-  const artist = searchParams.get("artist") || undefined;
+  let title = searchParams.get("title") || undefined;
+  let artist = searchParams.get("artist") || undefined;
   const useProxy = searchParams.get("proxy") === "true";
   const resolveOnly = searchParams.get("resolveOnly") === "true";
   const isDownload = searchParams.get("download") === "true";
+
+  // Clean generic placeholders
+  if (title === "أغنية محفوظة" || title === "song") title = undefined;
+  if (
+    artist === "فنان" ||
+    artist === "فنان غير معروف" ||
+    artist === "غير معروف" ||
+    artist?.toLowerCase().includes("unknown")
+  ) {
+    artist = undefined;
+  }
+
+  // If title has "Artist - Song", extract both
+  if (title && title.includes("-")) {
+    const parts = title.split("-");
+    if (parts[0].trim().length > 1 && parts[1].trim().length > 1) {
+      if (!artist) artist = parts[0].trim();
+      title = parts[1].trim();
+    }
+  }
 
   if (!videoId && !title) {
     return NextResponse.json({ error: "Missing videoId or title" }, { status: 400 });
