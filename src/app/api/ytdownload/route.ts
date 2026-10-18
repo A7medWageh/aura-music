@@ -7,28 +7,84 @@ export const dynamic = "force-dynamic";
 let lastKnownWorkerUrl = process.env.REMOTE_STREAM_WORKER || "";
 let lastWorkerCheck = 0;
 
-async function getRemoteWorkerUrl(): Promise<string | null> {
-  if (lastKnownWorkerUrl) return lastKnownWorkerUrl;
-  if (Date.now() - lastWorkerCheck < 60000) return null;
-  lastWorkerCheck = Date.now();
+async function checkWorkerHealth(url: string): Promise<boolean> {
   try {
-    const res = await fetch("https://ntfy.sh/aura_music_link_8472/json?poll=1", { signal: AbortSignal.timeout(2000) });
+    const res = await fetch(`${url}/api/health`, {
+      signal: AbortSignal.timeout(3500),
+      headers: { "User-Agent": "AuraMusic/1.0" },
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function getRemoteWorkerUrl(): Promise<string | null> {
+  if (lastKnownWorkerUrl && Date.now() - lastWorkerCheck < 60000) {
+    return lastKnownWorkerUrl;
+  }
+
+  // 1. Check environment variable
+  if (process.env.REMOTE_STREAM_WORKER) {
+    const isOk = await checkWorkerHealth(process.env.REMOTE_STREAM_WORKER);
+    if (isOk) {
+      lastKnownWorkerUrl = process.env.REMOTE_STREAM_WORKER;
+      lastWorkerCheck = Date.now();
+      return lastKnownWorkerUrl;
+    }
+  }
+
+  // 2. Check Neon Database system_config table (where auto-start.js records active tunnel)
+  try {
+    const { query } = await import("@apis/neon");
+    const dbRes = await query<{ value: string }>(
+      "SELECT value FROM system_config WHERE key = 'tunnel_url' LIMIT 1"
+    );
+    const dbUrl = dbRes.rows[0]?.value?.trim();
+    if (dbUrl && (dbUrl.startsWith("https://") || dbUrl.startsWith("http://"))) {
+      const isOk = await checkWorkerHealth(dbUrl);
+      if (isOk) {
+        lastKnownWorkerUrl = dbUrl;
+        lastWorkerCheck = Date.now();
+        console.log(`[ytdownload] Active remote worker verified from DB: ${lastKnownWorkerUrl}`);
+        return lastKnownWorkerUrl;
+      }
+    }
+  } catch (err: any) {
+    console.warn("[ytdownload] DB tunnel check failed:", err.message);
+  }
+
+  // 3. Fallback to ntfy.sh topic (supports both trycloudflare and ngrok)
+  try {
+    const res = await fetch("https://ntfy.sh/aura_music_link_8472/json?poll=1", {
+      signal: AbortSignal.timeout(2500),
+    });
     if (res.ok) {
       const text = await res.text();
       const lines = text.trim().split("\n").filter(Boolean);
       for (let i = lines.length - 1; i >= 0; i--) {
         try {
           const item = JSON.parse(lines[i]);
-          const urlMatch = (item.message || "").match(/https:\/\/[a-zA-Z0-9\-]+\.ngrok[^\s]+/);
+          const urlMatch = (item.message || "").match(
+            /https:\/\/[a-zA-Z0-9\-]+(?:\.trycloudflare\.com|\.ngrok[^\s]+)/
+          );
           if (urlMatch) {
-            lastKnownWorkerUrl = urlMatch[0].trim();
-            console.log(`[ytdownload] Discovered remote worker URL: ${lastKnownWorkerUrl}`);
-            return lastKnownWorkerUrl;
+            const candUrl = urlMatch[0].trim();
+            const isOk = await checkWorkerHealth(candUrl);
+            if (isOk) {
+              lastKnownWorkerUrl = candUrl;
+              lastWorkerCheck = Date.now();
+              console.log(`[ytdownload] Active remote worker verified from ntfy: ${lastKnownWorkerUrl}`);
+              return lastKnownWorkerUrl;
+            }
           }
         } catch {}
       }
     }
   } catch {}
+
+  lastKnownWorkerUrl = "";
+  lastWorkerCheck = Date.now();
   return null;
 }
 
@@ -121,7 +177,14 @@ export async function GET(req: NextRequest) {
         const workerUrl = await getRemoteWorkerUrl();
         if (workerUrl) {
           console.log(`[ytdownload] Proxying audio from active remote worker: ${workerUrl}`);
-          const workerRes = await fetch(`${workerUrl}/api/ytdownload?videoId=${targetVideoId}&download=true&proxy=true`, {
+          const workerParams = new URLSearchParams();
+          workerParams.set("videoId", targetVideoId);
+          if (title) workerParams.set("title", title);
+          if (artist) workerParams.set("artist", artist);
+          workerParams.set("download", "true");
+          workerParams.set("proxy", "true");
+
+          const workerRes = await fetch(`${workerUrl}/api/ytdownload?${workerParams.toString()}`, {
             headers: { "User-Agent": "AuraMusic/1.0" },
             signal: req.signal,
           });
@@ -129,11 +192,48 @@ export async function GET(req: NextRequest) {
             const workerHeaders = new Headers(NO_CACHE_HEADERS);
             workerHeaders.set("Content-Type", workerRes.headers.get("content-type") || "audio/mp4");
             workerHeaders.set("Access-Control-Allow-Origin", "*");
-            workerHeaders.set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges, Content-Disposition");
+            workerHeaders.set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges, Content-Disposition, X-Original-Content-Length");
             workerHeaders.set("Accept-Ranges", "bytes");
             workerHeaders.set("Content-Disposition", isAttachment ? `attachment; filename="${safeFilename}"; filename*=UTF-8''${safeFilename}` : "inline");
+
+            const cl = workerRes.headers.get("content-length") || workerRes.headers.get("x-original-content-length");
+            if (cl) {
+              workerHeaders.set("Content-Length", cl);
+              workerHeaders.set("X-Original-Content-Length", cl);
+            }
+
             return new NextResponse(workerRes.body as any, { status: 200, headers: workerHeaders });
           }
+        }
+      }
+
+      // If YouTube source reached here without worker or yt-dlp, attempt fast direct resolution
+      if (resolved.streamUrl.includes("youtube.com") || resolved.streamUrl.includes("youtu.be")) {
+        try {
+          const { resolveSaavnSong } = await import("@/services/music/jiosaavn");
+          const saavn = await resolveSaavnSong(title || "", artist);
+          if (saavn?.streamUrl) {
+            resolved.streamUrl = saavn.streamUrl;
+            resolved.source = "jiosaavn";
+          }
+        } catch {}
+
+        if (resolved.streamUrl.includes("youtube.com") || resolved.streamUrl.includes("youtu.be")) {
+          try {
+            const { resolveSoundCloudStream } = await import("@/services/scrapers/soundcloud");
+            const sc = await resolveSoundCloudStream(title || "", artist || "");
+            if (sc) {
+              resolved.streamUrl = sc;
+              resolved.source = "soundcloud";
+            }
+          } catch {}
+        }
+
+        if (resolved.streamUrl.includes("youtube.com") || resolved.streamUrl.includes("youtu.be")) {
+          return NextResponse.json(
+            { error: "سيرفر الاستخراج غير متصل، يرجى تشغيل برنامج خادم الصوت Aura Music Link أو تجربة أغنية أخرى" },
+            { status: 503 }
+          );
         }
       }
     }
@@ -158,19 +258,51 @@ export async function GET(req: NextRequest) {
       signal: req.signal,
     });
 
-    // If upstream returns 403 or fails, fallback to yt-dlp ONLY if available
-    if ((!upstreamRes.ok || upstreamRes.status === 403) && isYtDlpAvailable()) {
-      console.warn(`[ytdownload] Upstream returned HTTP ${upstreamRes.status} for ${resolved.streamUrl}, falling back to yt-dlp...`);
+    // If upstream returns 403 or fails, fallback to yt-dlp or remote worker
+    if (!upstreamRes.ok || upstreamRes.status === 403) {
       const targetVideoId = await getFallbackVideoId(videoId || resolved.videoId, title, artist);
       if (targetVideoId) {
-        const { stream, mimeType } = streamAudioFromYouTube(targetVideoId);
-        const fallbackHeaders = new Headers(NO_CACHE_HEADERS);
-        fallbackHeaders.set("Content-Type", mimeType || "audio/mp4");
-        fallbackHeaders.set("Access-Control-Allow-Origin", "*");
-        fallbackHeaders.set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges, Content-Disposition, X-Original-Content-Length");
-        fallbackHeaders.set("Accept-Ranges", "bytes");
-        fallbackHeaders.set("Content-Disposition", isAttachment ? `attachment; filename="${safeFilename}"; filename*=UTF-8''${safeFilename}` : "inline");
-        return new NextResponse(stream as any, { status: 200, headers: fallbackHeaders });
+        if (isYtDlpAvailable()) {
+          console.warn(`[ytdownload] Upstream failed (${upstreamRes.status}), falling back to local yt-dlp...`);
+          const { stream, mimeType } = streamAudioFromYouTube(targetVideoId);
+          const fallbackHeaders = new Headers(NO_CACHE_HEADERS);
+          fallbackHeaders.set("Content-Type", mimeType || "audio/mp4");
+          fallbackHeaders.set("Access-Control-Allow-Origin", "*");
+          fallbackHeaders.set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges, Content-Disposition, X-Original-Content-Length");
+          fallbackHeaders.set("Accept-Ranges", "bytes");
+          fallbackHeaders.set("Content-Disposition", isAttachment ? `attachment; filename="${safeFilename}"; filename*=UTF-8''${safeFilename}` : "inline");
+          return new NextResponse(stream as any, { status: 200, headers: fallbackHeaders });
+        }
+
+        const workerUrl = await getRemoteWorkerUrl();
+        if (workerUrl) {
+          console.warn(`[ytdownload] Upstream failed (${upstreamRes.status}), falling back to remote worker: ${workerUrl}...`);
+          const workerParams = new URLSearchParams();
+          workerParams.set("videoId", targetVideoId);
+          if (title) workerParams.set("title", title);
+          if (artist) workerParams.set("artist", artist);
+          workerParams.set("download", "true");
+          workerParams.set("proxy", "true");
+
+          const workerRes = await fetch(`${workerUrl}/api/ytdownload?${workerParams.toString()}`, {
+            headers: { "User-Agent": "AuraMusic/1.0" },
+            signal: req.signal,
+          });
+          if (workerRes.ok && workerRes.body) {
+            const workerHeaders = new Headers(NO_CACHE_HEADERS);
+            workerHeaders.set("Content-Type", workerRes.headers.get("content-type") || "audio/mp4");
+            workerHeaders.set("Access-Control-Allow-Origin", "*");
+            workerHeaders.set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges, Content-Disposition, X-Original-Content-Length");
+            workerHeaders.set("Accept-Ranges", "bytes");
+            workerHeaders.set("Content-Disposition", isAttachment ? `attachment; filename="${safeFilename}"; filename*=UTF-8''${safeFilename}` : "inline");
+            const cl = workerRes.headers.get("content-length") || workerRes.headers.get("x-original-content-length");
+            if (cl) {
+              workerHeaders.set("Content-Length", cl);
+              workerHeaders.set("X-Original-Content-Length", cl);
+            }
+            return new NextResponse(workerRes.body as any, { status: 200, headers: workerHeaders });
+          }
+        }
       }
     }
 

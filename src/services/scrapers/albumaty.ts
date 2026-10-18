@@ -129,7 +129,24 @@ async function extractDirectMp3(songId: string): Promise<string | null> {
     const dlHtml = await dlRes.text();
     const $dl = cheerio.load(dlHtml);
     const directMp3 = $dl('a[href*=".mp3"]').attr("href");
-    return directMp3 || null;
+    if (!directMp3) return null;
+
+    // Validate that the MP3 URL is alive and does not return 404
+    try {
+      const probeRes = await fetch(directMp3, {
+        method: "HEAD",
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          "Referer": "https://www.albumaty.com/",
+        },
+        signal: AbortSignal.timeout(2500),
+      });
+      if (probeRes.ok || probeRes.status === 206) {
+        return directMp3;
+      }
+    } catch {}
+
+    return null;
   } catch {
     return null;
   }

@@ -37,9 +37,14 @@ export async function GET(req: NextRequest) {
 
     const requestHeaders: Record<string, string> = {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-      "Referer": "https://www.youtube.com/",
-      "Origin": "https://www.youtube.com",
     };
+
+    if (url.includes("albumaty.com")) {
+      requestHeaders["Referer"] = "https://www.albumaty.com/";
+    } else if (url.includes("youtube.com") || url.includes("googlevideo.com")) {
+      requestHeaders["Referer"] = "https://www.youtube.com/";
+      requestHeaders["Origin"] = "https://www.youtube.com";
+    }
 
     // Forward Range header for chunked streaming, unless doing a full offline download
     if (rangeHeader && !isDownload) {

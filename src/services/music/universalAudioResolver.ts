@@ -157,10 +157,11 @@ export async function resolveUniversalAudio(params: {
     }
   }
 
-  // ── Strategy 2: If videoId is provided, USE YOUTUBE DIRECTLY! ─────────────────
-  // The user selected an exact video on YouTube — do NOT substitute it with random Indian songs!
-  if (videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
-    console.log(`[AudioResolver] Using exact YouTube videoId=${videoId} for "${title}" by "${artist}"`);
+  // ── Strategy 2: If local yt-dlp is available and videoId is provided, USE YOUTUBE DIRECTLY! ──
+  // When running locally with yt-dlp, streaming directly from YouTube stdout is instant and 100% accurate.
+  const { isYtDlpAvailable } = await import("@apis/yt-dlp");
+  if (isYtDlpAvailable() && videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+    console.log(`[AudioResolver] Local yt-dlp available. Using exact YouTube videoId=${videoId} for "${title}" by "${artist}"`);
     const result: UniversalAudioResult = {
       streamUrl: `https://www.youtube.com/watch?v=${videoId}`,
       directPlay: false,
@@ -174,33 +175,34 @@ export async function resolveUniversalAudio(params: {
     return result;
   }
 
-  // ── Strategy 3: Search YouTube by query to get official videoId ─────────────
-  if (title) {
+  // ── Strategy 3: JioSaavn (320kbps Cloudflare CDN streams for both Arabic & International) ──
+  if (title || queryTitle) {
     try {
-      const { searchYouTube } = await import("@apis/youtubei.js");
-      const searchRes = await searchYouTube(`${artist} ${title}`.trim());
-      const candidate = searchRes.songs?.[0];
-      const foundVid = candidate?.youtubeVideoId || candidate?.songId;
-      if (foundVid && /^[a-zA-Z0-9_-]{11}$/.test(foundVid)) {
-        console.log(`[AudioResolver] Found YouTube match videoId=${foundVid} for "${title}"`);
+      let saavnTrack = await resolveSaavnSong(queryTitle || title, queryArtist || artist);
+      if (!saavnTrack && title && title !== queryTitle) {
+        saavnTrack = await resolveSaavnSong(title, artist);
+      }
+      if (saavnTrack && saavnTrack.streamUrl) {
         const result: UniversalAudioResult = {
-          streamUrl: `https://www.youtube.com/watch?v=${foundVid}`,
-          directPlay: false,
-          source: "youtube",
-          title: candidate?.title || queryTitle || title,
-          artist: candidate?.artist || queryArtist || artist,
+          streamUrl: saavnTrack.streamUrl,
+          directPlay: true,
+          source: "jiosaavn",
+          title: saavnTrack.title,
+          artist: saavnTrack.artist || artist,
+          durationSec: saavnTrack.durationSec,
+          bitrate: saavnTrack.bitrate,
           format: "mp4/aac",
-          videoId: foundVid,
+          videoId,
         };
         memCache.set(cacheKey, { result, expiresAt: Date.now() + CACHE_TTL_MS });
         return result;
       }
     } catch (e: any) {
-      console.warn("[AudioResolver] YouTube search fallback failed:", e.message);
+      console.warn("[AudioResolver] JioSaavn failed:", e.message);
     }
   }
 
-  // ── Strategy 4: SoundCloud ──────────────────────────────────────────────────
+  // ── Strategy 4: SoundCloud (Direct progressive MP3 / AAC streams) ─────────────
   if (title) {
     try {
       const scUrl = await resolveSoundCloudStream(title, artist);
@@ -221,28 +223,20 @@ export async function resolveUniversalAudio(params: {
     }
   }
 
-  // ── Strategy 5: JioSaavn (Only for non-Arabic international songs, with strict artist match) ──
-  if (!isArabic && title) {
-    try {
-      const saavnTrack = await resolveSaavnSong(title, artist);
-      if (saavnTrack && saavnTrack.streamUrl) {
-        const result: UniversalAudioResult = {
-          streamUrl: saavnTrack.streamUrl,
-          directPlay: true,
-          source: "jiosaavn",
-          title: saavnTrack.title,
-          artist: saavnTrack.artist || artist,
-          durationSec: saavnTrack.durationSec,
-          bitrate: saavnTrack.bitrate,
-          format: "mp4/aac",
-          videoId,
-        };
-        memCache.set(cacheKey, { result, expiresAt: Date.now() + CACHE_TTL_MS });
-        return result;
-      }
-    } catch (e: any) {
-      console.warn("[AudioResolver] JioSaavn failed:", e.message);
-    }
+  // ── Strategy 5: Exact YouTube Video fallback (for Remote Worker tunnel proxy) ──
+  if (videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+    console.log(`[AudioResolver] Exact YouTube videoId=${videoId} queued for "${title}" by "${artist}"`);
+    const result: UniversalAudioResult = {
+      streamUrl: `https://www.youtube.com/watch?v=${videoId}`,
+      directPlay: false,
+      source: "youtube",
+      title: queryTitle || title,
+      artist: queryArtist || artist,
+      format: "mp4/aac",
+      videoId,
+    };
+    memCache.set(cacheKey, { result, expiresAt: Date.now() + CACHE_TTL_MS });
+    return result;
   }
 
   // ── Strategy 5: In-house yt-dlp (Direct extraction inspired by VenomMusic) ──────

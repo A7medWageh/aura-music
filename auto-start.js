@@ -45,6 +45,19 @@ tunnel.stderr.on('data', async (data) => {
       
       const content = `🎧 Aura Music Server is RUNNING! 🎧\n\n🔗 Your Fixed Link is:\nhttps://aura-musiic.vercel.app\n\n(It will automatically redirect to your laptop's new URL: ${url})\nGenerated at: ${new Date().toLocaleString()}`;
       fs.writeFileSync(desktopPath, content);
+
+      // Also broadcast to ntfy
+      try {
+        await fetch('https://ntfy.sh/aura_music_link_8472', {
+          method: 'POST',
+          body: `Aura Music Tunnel Online: ${url}`,
+          headers: {
+            Title: 'Aura Music Tunnel',
+            Click: url,
+            Tags: 'headphones,rocket'
+          }
+        });
+      } catch {}
     } catch (e) {
       fs.writeFileSync(desktopPath, `Server running, but failed to update database: ${e.message}\nDirect URL: ${url}`);
     }

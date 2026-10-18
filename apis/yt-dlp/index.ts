@@ -6,23 +6,27 @@ function getYtDlpBinary(): string {
   if (process.env.YT_DLP_PATH && fs.existsSync(process.env.YT_DLP_PATH)) {
     return process.env.YT_DLP_PATH;
   }
-  const localExe = path.join(process.cwd(), "yt-dlp-master", "yt-dlp.exe");
-  if (fs.existsSync(localExe)) {
-    return localExe;
-  }
-  const localCmd = path.join(process.cwd(), "yt-dlp-master", "yt-dlp.cmd");
-  if (fs.existsSync(localCmd)) {
-    return localCmd;
+  if (process.platform === "win32") {
+    const localExe = path.join(process.cwd(), "yt-dlp-master", "yt-dlp.exe");
+    if (fs.existsSync(localExe)) {
+      return localExe;
+    }
+    const localCmd = path.join(process.cwd(), "yt-dlp-master", "yt-dlp.cmd");
+    if (fs.existsSync(localCmd)) {
+      return localCmd;
+    }
   }
   return "yt-dlp";
 }
 
 export function isYtDlpAvailable(): boolean {
   if (process.env.YT_DLP_PATH && fs.existsSync(process.env.YT_DLP_PATH)) return true;
-  const localExe = path.join(process.cwd(), "yt-dlp-master", "yt-dlp.exe");
-  if (fs.existsSync(localExe)) return true;
-  const localCmd = path.join(process.cwd(), "yt-dlp-master", "yt-dlp.cmd");
-  if (fs.existsSync(localCmd)) return true;
+  if (process.platform === "win32") {
+    const localExe = path.join(process.cwd(), "yt-dlp-master", "yt-dlp.exe");
+    if (fs.existsSync(localExe)) return true;
+    const localCmd = path.join(process.cwd(), "yt-dlp-master", "yt-dlp.cmd");
+    if (fs.existsSync(localCmd)) return true;
+  }
   return false;
 }
 
