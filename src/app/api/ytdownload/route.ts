@@ -97,6 +97,18 @@ const NO_CACHE_HEADERS = {
   "Surrogate-Control": "no-store",
 };
 
+function normalizeText(text: string): string {
+  if (!text) return "";
+  return text
+    .toLowerCase()
+    .replace(/[أإآ]/g, "ا")
+    .replace(/[ة]/g, "ه")
+    .replace(/[ى]/g, "ي")
+    .replace(/[^a-z0-9\u0621-\u064A\s]/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 async function getFallbackVideoId(videoId?: string, title?: string, artist?: string): Promise<string | null> {
   if (videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId)) return videoId;
   const q = `${title || ""} ${artist || ""}`.trim();
@@ -104,9 +116,30 @@ async function getFallbackVideoId(videoId?: string, title?: string, artist?: str
   try {
     const { searchYouTube } = await import("@apis/youtubei.js");
     const res = await searchYouTube(q);
-    const first = res.songs?.[0] || (res as any).videos?.[0];
-    const vid = first?.youtubeVideoId || first?.videoId || first?.id;
-    if (vid && /^[a-zA-Z0-9_-]{11}$/.test(vid)) {
+    const songs = res.songs || (res as any).videos || [];
+    if (songs.length === 0) return null;
+
+    const normTitle = normalizeText(title || "");
+    const normArtist = normalizeText(artist || "");
+    const titleWords = normTitle.split(" ").filter((w: string) => w.length > 1);
+    const artistWords = normArtist.split(" ").filter((w: string) => w.length > 1);
+
+    for (const item of songs) {
+      const vid = item?.youtubeVideoId || item?.videoId || item?.id;
+      if (!vid || !/^[a-zA-Z0-9_-]{11}$/.test(vid)) continue;
+
+      const fullText = normalizeText(`${item.title || ""} ${item.artist || item.author?.name || ""}`);
+
+      // Must match title words if title was provided
+      if (titleWords.length > 0 && !titleWords.every((w: string) => fullText.includes(w))) {
+        continue;
+      }
+
+      // Must match artist words if artist was provided
+      if (artistWords.length > 0 && !artistWords.some((w: string) => fullText.includes(w))) {
+        continue;
+      }
+
       return vid;
     }
   } catch (e: any) {
