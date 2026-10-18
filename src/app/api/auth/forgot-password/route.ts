@@ -57,7 +57,7 @@ export async function POST(req: NextRequest) {
   });
 
   if (!sendResult.success) {
-    return fail("EMAIL_FAILED", "تعذر إرسال رمز التحقق إلى بريدك الإلكتروني، يرجى المحاولة لاحقاً.", 500);
+    return fail("EMAIL_FAILED", sendResult.error || "تعذر إرسال رمز التحقق إلى بريدك الإلكتروني، يرجى المحاولة لاحقاً.", 500);
   }
 
   return ok({

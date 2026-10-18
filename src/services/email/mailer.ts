@@ -6,7 +6,11 @@ interface SendCodeOptions {
   displayName?: string;
 }
 
-export async function sendPasswordResetEmail({ email, code, displayName }: SendCodeOptions): Promise<{ success: boolean; error?: string }> {
+export async function sendPasswordResetEmail({
+  email,
+  code,
+  displayName,
+}: SendCodeOptions): Promise<{ success: boolean; error?: string; provider?: string }> {
   const name = displayName || "عزيزنا المستخدم";
 
   const htmlContent = `
@@ -95,51 +99,106 @@ export async function sendPasswordResetEmail({ email, code, displayName }: SendC
 </html>
 `;
 
-  // Always log to console for development / auditing
   console.log(`[Mailer] 🔐 Verification code for ${email} is: ${code}`);
 
-  // 1. Try sending via configured SMTP if environment variables exist
-  const host = process.env.SMTP_HOST;
-  const port = Number(process.env.SMTP_PORT || 587);
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
-  const from = process.env.EMAIL_FROM || process.env.SMTP_FROM || `"Aura Music" <${user || "no-reply@aura-music.vercel.app"}>`;
-
-  let emailSent = false;
-
-  if (user && pass) {
+  // 1. Resend API (Recommended for Vercel Serverless HTTP)
+  const resendApiKey = process.env.RESEND_API_KEY;
+  if (resendApiKey) {
     try {
-      const isGmail = host?.includes("gmail") || user.endsWith("@gmail.com");
+      const fromEmail = process.env.RESEND_FROM || "Aura Music <onboarding@resend.dev>";
+      const res = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${resendApiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          from: fromEmail,
+          to: [email],
+          subject: `رمز إعادة تعيين كلمة المرور: ${code} - Aura Music`,
+          html: htmlContent,
+        }),
+      });
+
+      const resData = await res.json();
+      if (res.ok && resData.id) {
+        console.log(`[Mailer] ✅ Resend delivered email to ${email} (id: ${resData.id})`);
+        return { success: true, provider: "resend" };
+      } else {
+        console.warn(`[Mailer] ⚠️ Resend error:`, resData);
+      }
+    } catch (e: any) {
+      console.warn(`[Mailer] ⚠️ Resend exception:`, e.message);
+    }
+  }
+
+  // 2. Brevo HTTP API (Free 300 emails/day to any inbox without domain DNS setup)
+  const brevoApiKey = process.env.BREVO_API_KEY;
+  if (brevoApiKey) {
+    try {
+      const senderEmail = process.env.BREVO_FROM || "notifications@aura-music.vercel.app";
+      const res = await fetch("https://api.brevo.com/v3/smtp/email", {
+        method: "POST",
+        headers: {
+          "api-key": brevoApiKey,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({
+          sender: { name: "Aura Music", email: senderEmail },
+          to: [{ email }],
+          subject: `رمز إعادة تعيين كلمة المرور: ${code} - Aura Music`,
+          htmlContent,
+        }),
+      });
+
+      if (res.ok) {
+        console.log(`[Mailer] ✅ Brevo delivered email to ${email}`);
+        return { success: true, provider: "brevo" };
+      } else {
+        const errorText = await res.text();
+        console.warn(`[Mailer] ⚠️ Brevo error:`, errorText);
+      }
+    } catch (e: any) {
+      console.warn(`[Mailer] ⚠️ Brevo exception:`, e.message);
+    }
+  }
+
+  // 3. SMTP Transport (e.g. Gmail App Password)
+  const smtpUser = process.env.SMTP_USER;
+  const smtpPass = process.env.SMTP_PASS;
+  if (smtpUser && smtpPass) {
+    try {
+      const isGmail = smtpUser.endsWith("@gmail.com") || process.env.SMTP_HOST?.includes("gmail");
       const transporter = nodemailer.createTransport(
         isGmail
           ? {
               service: "gmail",
-              auth: { user, pass },
+              auth: { user: smtpUser, pass: smtpPass },
             }
           : {
-              host: host || "smtp.gmail.com",
-              port,
-              secure: port === 465,
-              auth: { user, pass },
+              host: process.env.SMTP_HOST || "smtp.gmail.com",
+              port: Number(process.env.SMTP_PORT || 587),
+              secure: Number(process.env.SMTP_PORT) === 465,
+              auth: { user: smtpUser, pass: smtpPass },
             }
       );
 
       await transporter.sendMail({
-        from,
+        from: process.env.SMTP_FROM || `"Aura Music" <${smtpUser}>`,
         to: email,
         subject: `رمز إعادة تعيين كلمة المرور: ${code} - Aura Music`,
         html: htmlContent,
       });
 
-      console.log(`[Mailer] ✅ Password reset email successfully delivered to ${email}`);
-      emailSent = true;
-      return { success: true };
+      console.log(`[Mailer] ✅ SMTP delivered email to ${email}`);
+      return { success: true, provider: "smtp" };
     } catch (err: any) {
       console.warn(`[Mailer] ⚠️ SMTP send failed:`, err.message);
     }
   }
 
-  // 2. Telegram Alert as a fallback notification
+  // 4. Telegram Fallback notification
   const tgToken = process.env.TELEGRAM_BOT_TOKEN;
   const tgChatId = process.env.TELEGRAM_CHANNEL_ID;
   if (tgToken && tgChatId) {
@@ -154,12 +213,16 @@ export async function sendPasswordResetEmail({ email, code, displayName }: SendC
           parse_mode: "Markdown",
         }),
       });
-      console.log(`[Mailer] ✅ Fallback alert sent to Telegram for ${email}`);
+      console.log(`[Mailer] ✅ Telegram alert sent for ${email}`);
     } catch (e: any) {
       console.warn(`[Mailer] Telegram alert failed:`, e.message);
     }
   }
 
-  // If SMTP wasn't configured, we logged and alerted so it succeeds
-  return { success: true };
+  // If no email provider was configured or sending failed:
+  console.error(`[Mailer] ❌ No valid email provider configured (missing RESEND_API_KEY, BREVO_API_KEY, or SMTP_USER/SMTP_PASS).`);
+  return {
+    success: false,
+    error: "لم يتم ضبط خدمة إرسال البريد الإلكتروني (مثل Resend أو Gmail SMTP) في إعدادات الخادم بعد.",
+  };
 }
