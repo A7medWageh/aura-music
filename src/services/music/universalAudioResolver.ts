@@ -101,7 +101,7 @@ export async function resolveUniversalAudio(params: {
     }
   }
 
-  const cacheKey = `${videoId || ""}_${title}__${artist}_${forDownload ? "dl" : "st"}`.toLowerCase();
+  const cacheKey = `v3_${videoId || ""}_${title}__${artist}`.toLowerCase();
   const cached = memCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.result;

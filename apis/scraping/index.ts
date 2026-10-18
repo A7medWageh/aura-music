@@ -29,7 +29,7 @@ async function getFromCache(videoId: string): Promise<StreamResult | null> {
   try {
     const redis = getRedisClient();
     const raw = await Promise.race([
-      redis.get(`aura:stream:v6:${videoId}`),
+      redis.get(`aura:stream:v7:${videoId}`),
       new Promise<null>((r) => setTimeout(() => r(null), 800)),
     ]);
     if (raw) {
@@ -46,7 +46,7 @@ async function saveToCache(videoId: string, result: StreamResult): Promise<void>
   memCache.set(videoId, { result, expiresAt: Date.now() + CACHE_TTL_MS });
   try {
     const redis = getRedisClient();
-    redis.set(`aura:stream:v6:${videoId}`, JSON.stringify(result), "EX", REDIS_TTL_SEC).catch(() => {});
+    redis.set(`aura:stream:v7:${videoId}`, JSON.stringify(result), "EX", REDIS_TTL_SEC).catch(() => {});
   } catch { /* Redis unavailable */ }
 }
 
