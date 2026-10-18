@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { streamAudioFromYouTube } from "@apis/yt-dlp";
+import { streamAudioFromYouTube, isYtDlpAvailable } from "@apis/yt-dlp";
 
 export const dynamic = "force-dynamic";
 
@@ -18,8 +18,8 @@ export async function GET(req: NextRequest) {
     const url = targetUrl ? decodeURIComponent(targetUrl) : "";
     const rangeHeader = req.headers.get("Range");
 
-    // If googlevideo URL and videoId available, bypass fetch directly via yt-dlp
-    if (videoId && (/^[a-zA-Z0-9_-]{11}$/.test(videoId)) && (url.includes("googlevideo.com") || !url)) {
+    // If googlevideo URL and videoId available AND yt-dlp is available, stream via yt-dlp
+    if (videoId && (/^[a-zA-Z0-9_-]{11}$/.test(videoId)) && (url.includes("googlevideo.com") || !url) && isYtDlpAvailable()) {
       const { stream, mimeType } = streamAudioFromYouTube(videoId);
       const safeFilename = encodeURIComponent(title.replace(/[\/\\?%*:|"<>]/g, "_")) + ".mp3";
       const headers = new Headers();
@@ -52,7 +52,7 @@ export async function GET(req: NextRequest) {
       signal: req.signal,
     });
 
-    if (!res.ok && videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+    if (!res.ok && videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId) && isYtDlpAvailable()) {
       console.warn(`[StreamProxy] Upstream returned ${res.status}, falling back to yt-dlp for ${videoId}...`);
       const { stream, mimeType } = streamAudioFromYouTube(videoId);
       const safeFilename = encodeURIComponent(title.replace(/[\/\\?%*:|"<>]/g, "_")) + ".mp3";

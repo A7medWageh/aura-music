@@ -1,8 +1,36 @@
 import { NextRequest, NextResponse } from "next/server";
 import { resolveUniversalAudio } from "@/services/music/universalAudioResolver";
-import { streamAudioFromYouTube } from "@apis/yt-dlp";
+import { streamAudioFromYouTube, isYtDlpAvailable } from "@apis/yt-dlp";
 
 export const dynamic = "force-dynamic";
+
+let lastKnownWorkerUrl = process.env.REMOTE_STREAM_WORKER || "";
+let lastWorkerCheck = 0;
+
+async function getRemoteWorkerUrl(): Promise<string | null> {
+  if (lastKnownWorkerUrl) return lastKnownWorkerUrl;
+  if (Date.now() - lastWorkerCheck < 60000) return null;
+  lastWorkerCheck = Date.now();
+  try {
+    const res = await fetch("https://ntfy.sh/aura_music_link_8472/json?poll=1", { signal: AbortSignal.timeout(2000) });
+    if (res.ok) {
+      const text = await res.text();
+      const lines = text.trim().split("\n").filter(Boolean);
+      for (let i = lines.length - 1; i >= 0; i--) {
+        try {
+          const item = JSON.parse(lines[i]);
+          const urlMatch = (item.message || "").match(/https:\/\/[a-zA-Z0-9\-]+\.ngrok[^\s]+/);
+          if (urlMatch) {
+            lastKnownWorkerUrl = urlMatch[0].trim();
+            console.log(`[ytdownload] Discovered remote worker URL: ${lastKnownWorkerUrl}`);
+            return lastKnownWorkerUrl;
+          }
+        } catch {}
+      }
+    }
+  } catch {}
+  return null;
+}
 
 const NO_CACHE_HEADERS = {
   "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
@@ -66,25 +94,47 @@ export async function GET(req: NextRequest) {
     const trackName = title || resolved.title || "song";
     const safeFilename = encodeURIComponent(trackName.replace(/[\/\\?%*:|"<>]/g, "_")) + ".mp3";
 
-    // Mode 2: If resolved source is YouTube or raw googlevideo URL, stream directly via yt-dlp (bypasses 403 Forbidden)
+    // Mode 2: If resolved source is YouTube or raw googlevideo URL
     const isGoogleVideo = resolved.streamUrl.includes("googlevideo.com") || resolved.source === "youtube";
     if (isGoogleVideo) {
       const targetVideoId = await getFallbackVideoId(videoId || resolved.videoId, title, artist);
       if (targetVideoId) {
-        console.log(`[ytdownload] Direct yt-dlp audio stream for videoId=${targetVideoId}`);
-        const { stream, mimeType } = streamAudioFromYouTube(targetVideoId);
+        // If local yt-dlp is available (local machine), stream via yt-dlp
+        if (isYtDlpAvailable()) {
+          console.log(`[ytdownload] Direct yt-dlp audio stream for videoId=${targetVideoId}`);
+          const { stream, mimeType } = streamAudioFromYouTube(targetVideoId);
 
-        const responseHeaders = new Headers(NO_CACHE_HEADERS);
-        responseHeaders.set("Content-Type", mimeType || "audio/mp4");
-        responseHeaders.set("Access-Control-Allow-Origin", "*");
-        responseHeaders.set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges, Content-Disposition, X-Original-Content-Length");
-        responseHeaders.set("Accept-Ranges", "bytes");
-        responseHeaders.set("Content-Disposition", isAttachment ? `attachment; filename="${safeFilename}"; filename*=UTF-8''${safeFilename}` : "inline");
+          const responseHeaders = new Headers(NO_CACHE_HEADERS);
+          responseHeaders.set("Content-Type", mimeType || "audio/mp4");
+          responseHeaders.set("Access-Control-Allow-Origin", "*");
+          responseHeaders.set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges, Content-Disposition, X-Original-Content-Length");
+          responseHeaders.set("Accept-Ranges", "bytes");
+          responseHeaders.set("Content-Disposition", isAttachment ? `attachment; filename="${safeFilename}"; filename*=UTF-8''${safeFilename}` : "inline");
 
-        return new NextResponse(stream as any, {
-          status: 200,
-          headers: responseHeaders,
-        });
+          return new NextResponse(stream as any, {
+            status: 200,
+            headers: responseHeaders,
+          });
+        }
+
+        // If on Vercel without yt-dlp: check if remote worker tunnel is active
+        const workerUrl = await getRemoteWorkerUrl();
+        if (workerUrl) {
+          console.log(`[ytdownload] Proxying audio from active remote worker: ${workerUrl}`);
+          const workerRes = await fetch(`${workerUrl}/api/ytdownload?videoId=${targetVideoId}&download=true&proxy=true`, {
+            headers: { "User-Agent": "AuraMusic/1.0" },
+            signal: req.signal,
+          });
+          if (workerRes.ok && workerRes.body) {
+            const workerHeaders = new Headers(NO_CACHE_HEADERS);
+            workerHeaders.set("Content-Type", workerRes.headers.get("content-type") || "audio/mp4");
+            workerHeaders.set("Access-Control-Allow-Origin", "*");
+            workerHeaders.set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges, Content-Disposition");
+            workerHeaders.set("Accept-Ranges", "bytes");
+            workerHeaders.set("Content-Disposition", isAttachment ? `attachment; filename="${safeFilename}"; filename*=UTF-8''${safeFilename}` : "inline");
+            return new NextResponse(workerRes.body as any, { status: 200, headers: workerHeaders });
+          }
+        }
       }
     }
 
@@ -108,8 +158,8 @@ export async function GET(req: NextRequest) {
       signal: req.signal,
     });
 
-    // If upstream returns 403 or fails, fallback to yt-dlp directly
-    if (!upstreamRes.ok || upstreamRes.status === 403) {
+    // If upstream returns 403 or fails, fallback to yt-dlp ONLY if available
+    if ((!upstreamRes.ok || upstreamRes.status === 403) && isYtDlpAvailable()) {
       console.warn(`[ytdownload] Upstream returned HTTP ${upstreamRes.status} for ${resolved.streamUrl}, falling back to yt-dlp...`);
       const targetVideoId = await getFallbackVideoId(videoId || resolved.videoId, title, artist);
       if (targetVideoId) {

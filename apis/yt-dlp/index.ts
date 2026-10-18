@@ -17,6 +17,15 @@ function getYtDlpBinary(): string {
   return "yt-dlp";
 }
 
+export function isYtDlpAvailable(): boolean {
+  if (process.env.YT_DLP_PATH && fs.existsSync(process.env.YT_DLP_PATH)) return true;
+  const localExe = path.join(process.cwd(), "yt-dlp-master", "yt-dlp.exe");
+  if (fs.existsSync(localExe)) return true;
+  const localCmd = path.join(process.cwd(), "yt-dlp-master", "yt-dlp.cmd");
+  if (fs.existsSync(localCmd)) return true;
+  return false;
+}
+
 /**
  * Directly stream audio from YouTube via yt-dlp to stdout.
  * Bypasses all Google Video 403 Forbidden errors.

@@ -13,6 +13,13 @@ export interface SaavnSong {
   bitrate: string;
 }
 
+const ARABIC_ARTIST_NAMES = [
+  "ramy sabry", "ramy sabri", "tamer hosny", "tamer hosni", "amr diab",
+  "hamaki", "sherine", "angham", "bahaa sultan", "wegz", "marwan pablo",
+  "marwan moussa", "cairokee", "hamza namira", "ahmed saad", "george wassouf",
+  "nancy ajram", "elissa", "hussain al jassmi", "tul8te", "rubi", "ruby", "ashour"
+];
+
 /**
  * Searches JioSaavn and resolves the best direct 320kbps/160kbps audio URL.
  * Mirrors the VenomMusic platform logic (JioSavan.py) directly in TypeScript.
@@ -20,6 +27,16 @@ export interface SaavnSong {
 export async function resolveSaavnSong(query: string, artistFilter?: string): Promise<SaavnSong | null> {
   try {
     const cleanQ = query.replace(/\(.*?\)|\[.*?\]/g, "").trim();
+    const normA = (artistFilter || "").toLowerCase().trim();
+
+    // Guard: Never search JioSaavn for Arabic queries or Arab artists (prevents matching Indian songs)
+    if (/[\u0600-\u06FF]/.test(cleanQ) || /[\u0600-\u06FF]/.test(normA)) {
+      return null;
+    }
+    if (ARABIC_ARTIST_NAMES.some(name => normA.includes(name))) {
+      return null;
+    }
+
     const searchQuery = artistFilter ? `${artistFilter} ${cleanQ}` : cleanQ;
 
     // 1. Search song via autocomplete

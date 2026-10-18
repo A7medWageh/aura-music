@@ -133,17 +133,18 @@ export async function resolveUniversalAudio(params: {
 
   console.log(`[AudioResolver] Resolving: title="${title}" (arabic="${queryTitle}") artist="${artist}" (arabic="${queryArtist}") videoId="${videoId || ""}"`);
 
-  // ── Strategy 1: Albumaty (if Arabic text detected) ──────────────────────────
-  if (isArabic && queryTitle) {
+  // ── Strategy 1: Albumaty (Highest Quality 320kbps Arabic Audio) ──────────────
+  // Always query Albumaty (it has built-in transliteration mapping for "Ya Ta3ebny", "Fi Eih", etc.)
+  if (queryTitle || title) {
     try {
-      const albumatyUrl = await resolveAlbumatyStream(queryTitle, queryArtist);
+      const albumatyUrl = await resolveAlbumatyStream(queryTitle || title, queryArtist || artist);
       if (albumatyUrl) {
         const result: UniversalAudioResult = {
           streamUrl: albumatyUrl,
           directPlay: true,
           source: "albumaty",
-          title: queryTitle,
-          artist: queryArtist,
+          title: queryTitle || title,
+          artist: queryArtist || artist,
           format: "mp3",
           bitrate: "320kbps",
           videoId,
