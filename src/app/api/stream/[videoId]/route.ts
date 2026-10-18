@@ -1,46 +1,42 @@
 /**
  * /api/stream/[videoId] — Ultra-fast stream resolver
  *
- * Returns { streamUrl } in <500ms (cache hit: <10ms)
- * Uses 4-layer scraping engine: Piped → Cobalt → Invidious → youtubei.js
- * Full songs only — Shorts (< 60s) are rejected automatically
+ * Resolves any track using Universal Audio Resolver (JioSaavn, Albumaty, SoundCloud, YouTube)
+ * Supports direct play for Cloudflare CDN URLs and streaming proxy for chunked playback.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { checkRateLimit } from "@/services/security/rateLimit";
 import { fail } from "@/services/http/response";
 import { resolveStreamUrl } from "@apis/scraping";
-import { getUserFromRequest } from "@/services/auth/session";
 
-export const maxDuration = 30; // Reduced from 60 — our engine is faster now
+export const maxDuration = 30;
 export const dynamic = "force-dynamic";
 
 type Params = { params: Promise<{ videoId: string }> };
 
-import { checkTunnelRedirect } from "@/utils/tunnelProxy";
-
 export async function GET(req: NextRequest, { params }: Params) {
-  const redirect = await checkTunnelRedirect(req);
-  if (redirect) return redirect;
-
   const rate = await checkRateLimit(req, { key: "stream", max: 120, windowSec: 60 });
   if (!rate.allowed) return fail("RATE_LIMITED", "Too many requests", 429);
 
   try {
     const { videoId } = await params;
+    const { searchParams } = new URL(req.url);
+    const title = searchParams.get("title") || undefined;
+    const artist = searchParams.get("artist") || undefined;
 
-    if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
-      return fail("INVALID_ID", "Invalid YouTube video ID", 400);
+    if (!videoId) {
+      return fail("INVALID_ID", "Missing video ID", 400);
     }
 
-    const resolved = await resolveStreamUrl(videoId);
+    const resolved = await resolveStreamUrl(videoId, title, artist);
     let streamUrl: string;
     const isDirect = resolved.directPlay && !resolved.url.includes("googlevideo.com");
 
     if (isDirect) {
-      // Piped / Invidious URLs can be played directly by the browser from any IP
+      // JioSaavn, Albumaty, SoundCloud, Piped can be streamed directly by the browser
       streamUrl = resolved.url;
     } else {
-      // Proxy if directPlay is false
+      // Stream through proxy with HTTP 206 chunking
       streamUrl = `/api/stream-proxy?url=${encodeURIComponent(resolved.url)}`;
     }
 

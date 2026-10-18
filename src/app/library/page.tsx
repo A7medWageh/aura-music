@@ -56,9 +56,12 @@ function ArtistAvatar({ artistName, fallbackCover }: { artistName: string, fallb
   return <div className="w-full h-full bg-gradient-to-br from-indigo-500/20 to-purple-600/20 flex items-center justify-center text-4xl">🎤</div>;
 }
 
+let cachedLibraryArtists: ArtistFolder[] = [];
+let cachedLibraryStats = { sizeMB: 0, count: 0 };
+
 export default function LibraryPage() {
   const { playNow, enqueueSongs } = usePlayer();
-  const [artists, setArtists] = useState<ArtistFolder[]>([]);
+  const [artists, setArtists] = useState<ArtistFolder[]>(() => cachedLibraryArtists);
   
   // Navigation State
   const [openArtist, setOpenArtist] = useState<string | null>(null);
@@ -70,22 +73,23 @@ export default function LibraryPage() {
   const [showVaultPrompt, setShowVaultPrompt] = useState(false);
   const [setupVault, setSetupVault] = useState(false);
 
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => cachedLibraryArtists.length === 0);
   const [toast, setToast] = useState<string | null>(null);
-  const [stats, setStats] = useState({ sizeMB: 0, count: 0 });
+  const [stats, setStats] = useState(() => cachedLibraryStats);
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 3000); };
 
   const loadLibrary = async () => {
-    setLoading(true);
+    if (cachedLibraryArtists.length === 0) setLoading(true);
     const songs: Song[] = await getAllOfflineSongs();
     
     // Filter hidden songs unless vault is unlocked
     const visibleSongs = songs.filter(s => vaultUnlocked ? true : !s.isHidden);
     
-    // Calculate estimated size
     const estimatedSizeMB = visibleSongs.filter(s => s.audioReady).length * 3.5;
-    setStats({ sizeMB: estimatedSizeMB, count: visibleSongs.length });
+    const newStats = { sizeMB: estimatedSizeMB, count: visibleSongs.length };
+    setStats(newStats);
+    cachedLibraryStats = newStats;
 
     // Grouping: Artist -> Album -> Songs
     const artistMap = new Map<string, { albums: Map<string, Song[]>, singles: Song[] }>();
@@ -119,6 +123,7 @@ export default function LibraryPage() {
     });
 
     setArtists(result);
+    cachedLibraryArtists = result;
     setLoading(false);
   };
 
@@ -200,7 +205,7 @@ export default function LibraryPage() {
   const currentAlbumData = currentArtistData?.albums.find(a => a.name === openAlbum);
 
   return (
-    <div className="space-y-8 pb-24 animate-in fade-in duration-500">
+    <div className="space-y-8 pb-24">
       <AnimatePresence>
         {toast && (
           <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 30 }}

@@ -1,46 +1,111 @@
 import { NextRequest, NextResponse } from "next/server";
+import { streamAudioFromYouTube } from "@apis/yt-dlp";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const targetUrl = searchParams.get("url");
+  const isDownload = searchParams.get("download") === "true";
+  const title = searchParams.get("title") || "song";
+  const videoId = searchParams.get("videoId") || undefined;
 
-  if (!targetUrl) {
+  if (!targetUrl && !videoId) {
     return new NextResponse("Missing url parameter", { status: 400 });
   }
 
   try {
-    const url = decodeURIComponent(targetUrl);
-    
-    const res = await fetch(url, {
+    const url = targetUrl ? decodeURIComponent(targetUrl) : "";
+    const rangeHeader = req.headers.get("Range");
+
+    // If googlevideo URL and videoId available, bypass fetch directly via yt-dlp
+    if (videoId && (/^[a-zA-Z0-9_-]{11}$/.test(videoId)) && (url.includes("googlevideo.com") || !url)) {
+      const { stream, mimeType } = streamAudioFromYouTube(videoId);
+      const safeFilename = encodeURIComponent(title.replace(/[\/\\?%*:|"<>]/g, "_")) + ".mp3";
+      const headers = new Headers();
+      headers.set("Content-Type", mimeType || "audio/mp4");
+      headers.set("Access-Control-Allow-Origin", "*");
+      headers.set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges, Content-Disposition");
+      headers.set("Accept-Ranges", "bytes");
+      if (isDownload) {
+        headers.set("Content-Disposition", `attachment; filename="${safeFilename}"; filename*=UTF-8''${safeFilename}`);
+      } else {
+        headers.set("Content-Disposition", "inline");
+      }
+      return new NextResponse(stream as any, { status: 200, headers });
+    }
+
+    const requestHeaders: Record<string, string> = {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      "Referer": "https://www.youtube.com/",
+      "Origin": "https://www.youtube.com",
+    };
+
+    // Forward Range header for chunked streaming, unless doing a full offline download
+    if (rangeHeader && !isDownload) {
+      requestHeaders["Range"] = rangeHeader;
+    }
+
+    let res = await fetch(url, {
       cache: "no-store",
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Range": req.headers.get("Range") || "bytes=0-",
-        "Referer": "https://www.youtube.com/",
-        "Origin": "https://www.youtube.com",
-      },
+      headers: requestHeaders,
+      signal: req.signal,
     });
 
-    const headers = new Headers();
-    // Copy all safe headers
+    if (!res.ok && videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+      console.warn(`[StreamProxy] Upstream returned ${res.status}, falling back to yt-dlp for ${videoId}...`);
+      const { stream, mimeType } = streamAudioFromYouTube(videoId);
+      const safeFilename = encodeURIComponent(title.replace(/[\/\\?%*:|"<>]/g, "_")) + ".mp3";
+      const headers = new Headers();
+      headers.set("Content-Type", mimeType || "audio/mp4");
+      headers.set("Access-Control-Allow-Origin", "*");
+      headers.set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges, Content-Disposition");
+      headers.set("Accept-Ranges", "bytes");
+      if (isDownload) {
+        headers.set("Content-Disposition", `attachment; filename="${safeFilename}"; filename*=UTF-8''${safeFilename}`);
+      } else {
+        headers.set("Content-Disposition", "inline");
+      }
+      return new NextResponse(stream as any, { status: 200, headers });
+    }
+
+    const responseHeaders = new Headers();
+
+    // Copy essential streaming and caching headers
     res.headers.forEach((value, key) => {
-      if (['content-type', 'content-length', 'content-range', 'accept-ranges'].includes(key.toLowerCase())) {
-        headers.set(key, value);
+      const lower = key.toLowerCase();
+      if (["content-type", "content-length", "content-range", "accept-ranges"].includes(lower)) {
+        responseHeaders.set(key, value);
       }
     });
-    
-    headers.set("Access-Control-Allow-Origin", "*");
-    headers.set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges");
 
-    console.log(`[StreamProxy] Fetched URL. Status: ${res.status}. Range req: ${req.headers.get("Range")}`);
+    responseHeaders.set("Access-Control-Allow-Origin", "*");
+    responseHeaders.set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges, Content-Disposition");
+    responseHeaders.set("Accept-Ranges", "bytes");
+
+    // Ensure audio mime type
+    const currentType = responseHeaders.get("content-type") || "";
+    if (!currentType.includes("audio") && !currentType.includes("video")) {
+      const ext = url.split("?")[0].split(".").pop()?.toLowerCase();
+      if (ext === "mp3") responseHeaders.set("content-type", "audio/mpeg");
+      else if (ext === "m4a" || ext === "mp4") responseHeaders.set("content-type", "audio/mp4");
+      else responseHeaders.set("content-type", "audio/mpeg");
+    }
+
+    // Set download headers when requested
+    if (isDownload) {
+      const safeFilename = encodeURIComponent(title.replace(/[\/\\?%*:|"<>]/g, "_")) + ".mp3";
+      responseHeaders.set("Content-Disposition", `attachment; filename="${safeFilename}"; filename*=UTF-8''${safeFilename}`);
+    }
 
     return new NextResponse(res.body, {
       status: res.status,
-      headers,
+      headers: responseHeaders,
     });
   } catch (error: any) {
+    if (error.name === "AbortError" || req.signal.aborted) {
+      return new NextResponse(null, { status: 499 });
+    }
     console.error("[StreamProxy] Error:", error.message);
     return new NextResponse("Failed to proxy stream", { status: 500 });
   }

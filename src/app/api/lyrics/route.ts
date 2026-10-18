@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getLyricsYoutube } from "@apis/youtubei.js";
+import { getLyricsYoutube, getSyncedLyricsYoutube } from "@apis/youtubei.js";
 
 export const dynamic = "force-dynamic";
 
@@ -26,61 +26,77 @@ export async function GET(req: NextRequest) {
   const artistName = searchParams.get("artistName");
   const videoId = searchParams.get("videoId");
 
-  if (!trackName || !artistName) {
-    return NextResponse.json({ error: "Missing trackName or artistName" }, { status: 400 });
+  if (!trackName && !videoId) {
+    return NextResponse.json({ error: "Missing trackName or videoId" }, { status: 400 });
   }
 
-  const cleanTrackName = trackName
+  const cleanTrackName = (trackName || "")
     .replace(/\|.*$/g, '')
     .replace(/\(.*?\)/g, '')
     .replace(/\[.*?\]/g, '')
     .replace(/(official|music|video|audio|lyric|lyrics|remix|hd|4k)/ig, '')
     .trim();
 
-  const searchQuery = `${cleanTrackName} ${artistName}`;
-  console.log(`[Lyrics] Searching using LRCLIB & RapidAPI: "${searchQuery}"`);
+  const searchQuery = `${cleanTrackName} ${artistName || ""}`.trim();
+  console.log(`[Lyrics] Searching lyrics for: "${searchQuery}" (videoId="${videoId || ""}")`);
 
   try {
-    // 1. Try LRCLIB for perfectly synced line-by-line lyrics (LRC format)
-    const lrclibUrl = `https://lrclib.net/api/get?track_name=${encodeURIComponent(cleanTrackName)}&artist_name=${encodeURIComponent(artistName)}`;
-    const lrclibRes = await fetch(lrclibUrl, {
-      headers: { "User-Agent": "AuraMusic/1.0.0 (https://github.com/A7medWageh)" },
-    });
-
-    if (lrclibRes.ok) {
-      const data = await lrclibRes.json();
-      if (data.syncedLyrics) {
-        console.log(`[Lyrics] Found synced lyrics via LRCLIB!`);
+    // 1. YouTube Timed Captions (100% accurate second-by-second synced lyrics for official videos)
+    if (videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+      console.log(`[Lyrics] Checking YouTube timed captions for: ${videoId}`);
+      const ytSynced = await getSyncedLyricsYoutube(videoId).catch(() => null);
+      if (ytSynced && ytSynced.syncedLyrics) {
+        console.log(`[Lyrics] Found synced lyrics via YouTube TimedText!`);
         return NextResponse.json({ 
-          lyrics: data.plainLyrics, 
-          syncedLyrics: data.syncedLyrics,
-          source: "lrclib" 
+          lyrics: ytSynced.plainLyrics, 
+          syncedLyrics: ytSynced.syncedLyrics,
+          source: ytSynced.source || "youtube-timedtext" 
         });
       }
     }
 
-    // 2. Try LRCLIB Search as a fallback
-    const searchUrl = `https://lrclib.net/api/search?q=${encodeURIComponent(searchQuery)}`;
-    const searchRes = await fetch(searchUrl, {
-      headers: { "User-Agent": "AuraMusic/1.0.0 (https://github.com/A7medWageh)" },
-    });
-    
-    if (searchRes.ok) {
-      const results = await searchRes.json();
-      const synced = results?.find?.((r: any) => r.syncedLyrics);
-      if (synced) {
-        console.log(`[Lyrics] Found synced lyrics via LRCLIB Search!`);
-        return NextResponse.json({ 
-          lyrics: synced.plainLyrics, 
-          syncedLyrics: synced.syncedLyrics,
-          source: "lrclib" 
-        });
+    // 2. Try LRCLIB for perfectly synced line-by-line lyrics (LRC format)
+    if (cleanTrackName && artistName) {
+      const lrclibUrl = `https://lrclib.net/api/get?track_name=${encodeURIComponent(cleanTrackName)}&artist_name=${encodeURIComponent(artistName)}`;
+      const lrclibRes = await fetch(lrclibUrl, {
+        headers: { "User-Agent": "AuraMusic/1.0.0 (https://github.com/A7medWageh)" },
+      });
+
+      if (lrclibRes.ok) {
+        const data = await lrclibRes.json();
+        if (data.syncedLyrics) {
+          console.log(`[Lyrics] Found synced lyrics via LRCLIB!`);
+          return NextResponse.json({ 
+            lyrics: data.plainLyrics, 
+            syncedLyrics: data.syncedLyrics,
+            source: "lrclib" 
+          });
+        }
+      }
+
+      // 3. Try LRCLIB Search as a fallback
+      const searchUrl = `https://lrclib.net/api/search?q=${encodeURIComponent(searchQuery)}`;
+      const searchRes = await fetch(searchUrl, {
+        headers: { "User-Agent": "AuraMusic/1.0.0 (https://github.com/A7medWageh)" },
+      });
+      
+      if (searchRes.ok) {
+        const results = await searchRes.json();
+        const synced = results?.find?.((r: any) => r.syncedLyrics);
+        if (synced) {
+          console.log(`[Lyrics] Found synced lyrics via LRCLIB Search!`);
+          return NextResponse.json({ 
+            lyrics: synced.plainLyrics, 
+            syncedLyrics: synced.syncedLyrics,
+            source: "lrclib" 
+          });
+        }
       }
     }
 
-    // 3. YouTube Music native lyrics
+    // 4. YouTube Music native lyrics
     if (videoId) {
-      console.log(`[Lyrics] Trying youtubei.js for: ${videoId}`);
+      console.log(`[Lyrics] Trying youtubei.js description for: ${videoId}`);
       const ytLyrics = await getLyricsYoutube(videoId).catch(() => null);
       if (ytLyrics) {
         return NextResponse.json({ lyrics: ytLyrics, source: "youtubei" });
@@ -114,15 +130,28 @@ export async function GET(req: NextRequest) {
         if (lyricsRes.ok) {
           const lyricsData = await lyricsRes.json();
           let rawLyrics = "";
-          if (lyricsData?.lyrics?.lyrics?.body?.plain) {
-            rawLyrics = lyricsData.lyrics.lyrics.body.plain;
-          } else {
-            rawLyrics = JSON.stringify(lyricsData);
+          const bodyObj = lyricsData?.lyrics?.lyrics?.body || lyricsData?.lyrics?.body || lyricsData?.body;
+
+          if (bodyObj?.plain && typeof bodyObj.plain === "string") {
+            rawLyrics = bodyObj.plain;
+          } else if (bodyObj?.html && typeof bodyObj.html === "string") {
+            rawLyrics = bodyObj.html
+              .replace(/<br\s*\/?>/gi, "\n")
+              .replace(/<\/p>/gi, "\n\n")
+              .replace(/<[^>]+>/g, "")
+              .replace(/&amp;/g, "&")
+              .replace(/&lt;/g, "<")
+              .replace(/&gt;/g, ">")
+              .replace(/&quot;/g, '"')
+              .replace(/&#39;/g, "'")
+              .replace(/&nbsp;/g, " ");
+          } else if (typeof lyricsData?.lyrics === "string") {
+            rawLyrics = lyricsData.lyrics;
           }
 
           const finalLyrics = cleanGeniusLyrics(rawLyrics);
           if (finalLyrics.length >= 10) {
-            return NextResponse.json({ lyrics: finalLyrics, source: "rapidapi-genius" });
+            return NextResponse.json({ lyrics: finalLyrics, plainLyrics: finalLyrics, source: "rapidapi-genius" });
           }
         }
       }

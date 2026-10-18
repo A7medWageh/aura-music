@@ -44,6 +44,8 @@ getYTWeb().catch(() => {});
 const searchCache = new Map<string, { data: any; expiresAt: number }>();
 const SEARCH_TTL = 5 * 60 * 1000; // 5 min
 const albumCache = new Map<string, { data: any; expiresAt: number }>();
+const artistCache = new Map<string, { data: any; expiresAt: number }>();
+const ARTIST_TTL = 30 * 60 * 1000; // 30 min
 
 export function sanitizeTitle(title: string) {
   return title
@@ -51,7 +53,9 @@ export function sanitizeTitle(title: string) {
     .replace(/\[Official.*?\]/gi, "")
     .replace(/\(Lyric.*?\)/gi, "")
     .replace(/\[Lyric.*?\]/gi, "")
-    .replace(/\|.*/g, "")
+    .replace(/\(Audio.*?\)/gi, "")
+    .replace(/\[Audio.*?\]/gi, "")
+    .replace(/\|\s*(?:Official|Audio|Video|Lyrics?|Music Video|كليب|فيديو|أغنية).*$/gi, "")
     .replace(/FT\..*/gi, "")
     .replace(/FEAT\..*/gi, "")
     .trim();
@@ -137,21 +141,28 @@ export async function getMusicCharts() {
   }
 
   // ── Ultimate Fallback: Piped API (Bypasses IP Blocks) ──
-  try {
-    const res = await fetch("https://api.piped.yt/trending?region=EG", {
-      cache: "no-store",
-      headers: { "Accept": "application/json" }
-    });
-    const data = await res.json();
-    return (data || []).slice(0, 30).map((v: any) => ({
-      songId: v.url.replace("/watch?v=", ""),
-      youtubeVideoId: v.url.replace("/watch?v=", ""),
-      title: sanitizeTitle(v.title || ""),
-      artist: v.uploaderName || "فنان غير معروف",
-      thumbnailUrl: v.thumbnail || ""
-    }));
-  } catch (e) {
-    console.warn("[Charts] Piped API fallback failed");
+  const pipedChartsInstances = ["https://cf.piped.video", "https://api.piped.private.coffee"];
+  for (const inst of pipedChartsInstances) {
+    try {
+      const res = await fetch(`${inst}/trending?region=EG`, {
+        cache: "no-store",
+        headers: { "Accept": "application/json" },
+        signal: AbortSignal.timeout(2500),
+      });
+      if (!res.ok) continue;
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        return data.slice(0, 30).map((v: any) => ({
+          songId: v.url.replace("/watch?v=", ""),
+          youtubeVideoId: v.url.replace("/watch?v=", ""),
+          title: sanitizeTitle(v.title || ""),
+          artist: v.uploaderName || "فنان غير معروف",
+          thumbnailUrl: v.thumbnail || ""
+        }));
+      }
+    } catch (e) {
+      // try next instance
+    }
   }
 
   return [];
@@ -218,12 +229,12 @@ export async function searchYouTube(query: string) {
   try {
     return await searchYouTubeInnertube(query);
   } catch (e) {
-    console.warn(`[Search] YouTube failed for "${query}", trying Piped fallback...`);
+    console.warn(`[Search] Innertube multi-search failed for "${query}", trying yt-search fallback...`);
     try {
       const yts = require("yt-search");
       const r = await yts(query);
       
-      const songs = r.videos.slice(0, 20).map((v: any) => ({
+      const songs = (r.videos || []).slice(0, 20).map((v: any) => ({
         songId: v.videoId,
         youtubeVideoId: v.videoId,
         title: sanitizeTitle(v.title),
@@ -250,8 +261,24 @@ export async function searchYouTube(query: string) {
       searchCache.set(query.trim().toLowerCase(), { data: result, expiresAt: Date.now() + SEARCH_TTL });
       return result;
     } catch (err) {
-      console.error("[Search] yt-search fallback failed:", err);
-      return { query, songs: [], albums: [], artists: [], source: "error" };
+      console.warn("[Search] yt-search fallback failed, trying basic Innertube search:", err);
+      try {
+        const yt = await getYTWeb();
+        const res = await yt.search(query, { type: "video" });
+        const raw = (res as any)?.videos ?? (res as any)?.contents ?? [];
+        const songs = (Array.isArray(raw) ? raw : []).slice(0, 20).map((v: any) => ({
+          type: "song",
+          songId: v.id ?? v.videoId,
+          title: sanitizeTitle(v.title?.toString() || ""),
+          artist: v.author?.name ?? v.channel?.name ?? "YouTube",
+          youtubeVideoId: v.id ?? v.videoId,
+          thumbnailUrl: getHighResThumbnail(v.thumbnails),
+        })).filter((s: any) => s.songId && s.title);
+
+        return { query, songs, albums: [], artists: [], source: "basic-innertube" };
+      } catch (innertubeErr) {
+        return { query, songs: [], albums: [], artists: [], source: "error" };
+      }
     }
   }
 }
@@ -272,12 +299,9 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Pro
 
 // ── Piped API instances (better than Invidious for audio) ────────────────────
 const PIPED_INSTANCES = [
-  "https://pipedapi.kavin.rocks",
+  "https://cf.piped.video",
+  "https://api.piped.private.coffee",
   "https://pipedapi.adminforge.de",
-  "https://piped-api.garudalinux.org",
-  "https://api.piped.yt",
-  "https://pipedapi.kescher.at",
-  "https://piped.video/api",
 ];
 
 /**
@@ -289,8 +313,9 @@ async function resolveWithPiped(videoId: string): Promise<string> {
     const res = await withTimeout(
       fetch(`${api}/streams/${videoId}`, {
         cache: "no-store",
-        headers: { "User-Agent": "Mozilla/5.0 (compatible; Aura/1.0)", "Accept": "application/json" }
-      }), 7000, null
+        headers: { "User-Agent": "Mozilla/5.0 (compatible; Aura/1.0)", "Accept": "application/json" },
+        signal: AbortSignal.timeout(3500),
+      }), 4000, null
     );
     if (!res || !res.ok) throw new Error("failed");
     const data = await res.json();
@@ -536,9 +561,34 @@ export async function getArtistDetailsYoutube(artistId: string) {
     
     for (const item of extraPromises) {
       try {
-        const action = (item.p as any).action || 'browse';
-        const payload = (item.p as any).payload || (item.p as any).data;
-        
+        const payload = (item.p as any)?.payload || (item.p as any)?.data;
+        const browseId = payload?.browseId;
+
+        // If it's songs and has a playlist browse ID (e.g. VLOLAK...), fetch the playlist directly!
+        if (item.type === 'songs' && browseId && (browseId.startsWith('VL') || browseId.startsWith('PL') || browseId.startsWith('OLAK'))) {
+          try {
+            const pl = await innertube.music.getPlaylist(browseId);
+            if (pl.items && pl.items.length > 0) {
+              pl.items.forEach((m: any) => {
+                const vid = m.id ?? m.videoId;
+                if (!vid) return;
+                songs.push({
+                  songId: vid,
+                  youtubeVideoId: vid,
+                  title: sanitizeTitle(m.title?.toString() || ""),
+                  artist: m.author?.name || m.artists?.[0]?.name || artistName,
+                  thumbnailUrl: getHighResThumbnail(m.thumbnails || m.thumbnail?.thumbnails || []) || artistImage || "",
+                  views: m.view_count?.toString() || "",
+                });
+              });
+              continue;
+            }
+          } catch (plErr) {
+            // fallback to actions.execute below
+          }
+        }
+
+        const action = (item.p as any)?.action || 'browse';
         const res: any = await (innertube as any).actions.execute(action, payload);
         
         let contents: any[] = [];
@@ -603,6 +653,17 @@ export async function getArtistDetailsYoutube(artistId: string) {
     console.warn("[Artist] Discography expansion failed:", err);
   }
 
+  // If songs are still low, enrich with music search
+  if (songs.length < 15 && artistName && artistName !== "Unknown Artist") {
+    try {
+      const searchRes = await innertube.music.search(artistName, { type: "song" });
+      const moreSongs = extractSongs(searchRes);
+      for (const s of moreSongs) {
+        songs.push(s);
+      }
+    } catch (e) {}
+  }
+
   const uniqueSongs = Array.from(new Map(songs.map(s => [s.songId, s])).values());
 
   if (uniqueSongs.length === 0 && oldAlbums.length === 0) {
@@ -625,42 +686,39 @@ export async function getChannelDetailsYoutube(channelId: string) {
   const innertube = await getYTWeb();
   const channel = await innertube.getChannel(channelId);
   
-  const header = channel.header as any;
-  const artistName = header?.author?.name || "Unknown Artist";
-  const artistImage = getHighResThumbnail(header?.author?.thumbnails || []) || null;
-  const rawSubscribers = header?.subscribers?.toString() || "";
+  const rawTitle = (channel.metadata as any)?.music_artist_name ||
+    (channel.metadata as any)?.title ||
+    (channel.header as any)?.title?.toString() ||
+    (channel.header as any)?.page_title?.toString() ||
+    (channel.header as any)?.author?.name ||
+    "Unknown Artist";
+
+  const artistName = sanitizeTitle(rawTitle.replace(/\s*-\s*Topic\s*$/i, "").trim());
+  const artistImage = (channel.metadata as any)?.avatar?.[0]?.url ||
+    getHighResThumbnail((channel.header as any)?.author?.thumbnails || (channel.header as any)?.avatar?.thumbnails || []) ||
+    null;
+  const rawSubscribers = (channel.metadata as any)?.subscribers || (channel.header as any)?.subscribers?.toString() || "";
 
   const songs: any[] = [];
   try {
-    const videos = await channel.getVideos();
-    videos.videos.slice(0, 50).forEach((item: any) => {
-      const vid = item.id ?? item.videoId;
-      if (!vid) return;
-      songs.push({
-        songId: vid,
-        youtubeVideoId: vid,
-        title: sanitizeTitle(item.title?.toString() || ""),
-        artist: artistName,
-        thumbnailUrl: getHighResThumbnail(item.thumbnails || []) || artistImage || "",
-        views: item.view_count?.toString() || "",
-      });
-    });
+    const searchRes = await innertube.music.search(artistName, { type: "song" });
+    const extracted = extractSongs(searchRes);
+    songs.push(...extracted);
   } catch (err) {
-    console.warn(`[Artist] Failed to fetch channel videos for ${channelId}`, err);
+    console.warn(`[Artist] Music search failed for channel ${artistName}:`, err);
   }
 
   if (songs.length === 0) {
     try {
-      console.warn(`[Artist] No channel videos for ${artistName}, falling back to search`);
       const searchRes = await searchYouTube(artistName);
       songs.push(...searchRes.songs);
     } catch(err) {
-      console.warn(`[Artist] Search fallback failed for ${artistName}`, err);
+      console.warn(`[Artist] Search fallback failed for ${artistName}:`, err);
     }
   }
 
   if (songs.length === 0) {
-    throw new Error("No channel videos found");
+    throw new Error("No channel videos or songs found");
   }
   return {
     artistId: channelId,
@@ -668,58 +726,82 @@ export async function getChannelDetailsYoutube(channelId: string) {
     artistImage,
     subscribers: rawSubscribers,
     isVerified: true,
-    songs,
+    songs: songs.slice(0, 50),
     newReleases: [],
     oldAlbums: [],
   };
 }
 
 export async function getArtistDetails(artistId: string) {
+  const cached = artistCache.get(artistId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.data;
+  }
+
+  let result: any = null;
   try {
     try {
-      return await getArtistDetailsYoutube(artistId);
-    } catch (e) {
-      console.warn(`[Artist] music.getArtist failed for ${artistId}, trying getChannel...`);
-      return await getChannelDetailsYoutube(artistId);
+      result = await getArtistDetailsYoutube(artistId);
+    } catch (e: any) {
+      console.warn(`[Artist] music.getArtist failed for ${artistId}:`, e?.message || e, ", trying getChannel...");
+      result = await getChannelDetailsYoutube(artistId);
     }
-  } catch (e) {
-    console.warn(`[Artist] YouTube failed completely for ${artistId}, trying Piped fallback...`);
-    try {
-      const res = await fetch(`https://api.piped.yt/channel/${artistId}`, {
-        headers: { "Accept": "application/json" }
-      });
-      const data = await res.json();
-      
-      const songs = (data.relatedStreams || [])
-        .filter((s: any) => s.type === "stream")
-        .map((s: any) => ({
-          songId: s.url.replace("/watch?v=", ""),
-          youtubeVideoId: s.url.replace("/watch?v=", ""),
-          title: sanitizeTitle(s.title),
-          artist: data.name || "فنان غير معروف",
-          thumbnailUrl: s.thumbnail || data.avatarUrl || "",
-          views: s.views || 0
-        }));
+  } catch (e: any) {
+    console.warn(`[Artist] YouTube failed completely for ${artistId}:`, e?.message || e, ", trying Piped fallback...");
+    const instances = ["https://cf.piped.video", "https://api.piped.private.coffee", "https://pipedapi.adminforge.de"];
+    for (const inst of instances) {
+      try {
+        const res = await fetch(`${inst}/channel/${artistId}`, {
+          headers: { "Accept": "application/json" },
+          signal: AbortSignal.timeout(3000),
+        });
+        if (!res.ok) continue;
+        const data = await res.json();
+        const songs = (data.relatedStreams || [])
+          .filter((s: any) => s.type === "stream")
+          .map((s: any) => ({
+            songId: s.url.replace("/watch?v=", ""),
+            youtubeVideoId: s.url.replace("/watch?v=", ""),
+            title: sanitizeTitle(s.title),
+            artist: data.name || "فنان غير معروف",
+            thumbnailUrl: s.thumbnail || data.avatarUrl || "",
+            views: s.views || 0
+          }));
 
-      return {
-        artistId,
-        artistName: data.name || "Unknown Artist",
-        artistImage: data.avatarUrl || null,
-        subscribers: data.subscriberCount || "",
-        isVerified: data.verified || false,
-        songs: songs.slice(0, 20),
-        newReleases: [],
-        oldAlbums: [],
-        source: "piped"
-      };
-    } catch (err) {
-      console.error("[Artist] Piped fallback failed too:", err);
-      return {
-        artistId, artistName: "Unknown Artist", artistImage: null, subscribers: "",
-        isVerified: false, songs: [], newReleases: [], oldAlbums: [], source: "error"
-      };
+        if (songs.length > 0) {
+          result = {
+            artistId,
+            artistName: data.name || "Unknown Artist",
+            artistImage: data.avatarUrl || null,
+            subscribers: data.subscriberCount || "",
+            isVerified: data.verified || false,
+            songs: songs.slice(0, 50),
+            newReleases: [],
+            oldAlbums: [],
+            source: "piped"
+          };
+          break;
+        }
+      } catch (err) {}
     }
   }
+
+  if (!result || !result.songs || result.songs.length === 0) {
+    return {
+      artistId,
+      artistName: result?.artistName || "Unknown Artist",
+      artistImage: result?.artistImage || null,
+      subscribers: "",
+      isVerified: false,
+      songs: [],
+      newReleases: [],
+      oldAlbums: [],
+      source: "error"
+    };
+  }
+
+  artistCache.set(artistId, { data: result, expiresAt: Date.now() + ARTIST_TTL });
+  return result;
 }
 
 export async function getAlbumDetailsYoutube(albumId: string) {
@@ -759,45 +841,44 @@ export async function getAlbumDetailsYoutube(albumId: string) {
 export async function getAlbumDetails(albumId: string) {
   try {
     return await getAlbumDetailsYoutube(albumId);
-    } catch (e) {
-      console.warn(`[Album] YouTube failed for ${albumId}, trying Piped fallback...`);
-      const instances = ["https://api.piped.yt", "https://pipedapi.kavin.rocks", "https://pipedapi.moomoo.me"];
-      
-      for (const instance of instances) {
-        try {
-          const res = await fetch(`${instance}/playlists/${albumId}`, {
-            headers: { "Accept": "application/json" },
-            // Add a timeout to not get stuck on a bad instance
-            signal: AbortSignal.timeout(5000)
-          });
-          if (!res.ok) continue;
-          
-          const data = await res.json();
-          const songs = (data.relatedStreams || [])
-            .map((s: any) => ({
-              songId: s.url.replace("/watch?v=", ""),
-              youtubeVideoId: s.url.replace("/watch?v=", ""),
-              title: sanitizeTitle(s.title),
-              artist: data.uploaderName || data.uploader || "فنان غير معروف",
-              thumbnailUrl: s.thumbnail || data.thumbnailUrl || ""
-            }));
+  } catch (e) {
+    console.warn(`[Album] YouTube failed for ${albumId}, trying Piped fallback...`);
+    const instances = ["https://cf.piped.video", "https://api.piped.private.coffee", "https://pipedapi.adminforge.de"];
+    
+    for (const instance of instances) {
+      try {
+        const res = await fetch(`${instance}/playlists/${albumId}`, {
+          headers: { "Accept": "application/json" },
+          signal: AbortSignal.timeout(3000),
+        });
+        if (!res.ok) continue;
+        
+        const data = await res.json();
+        const songs = (data.relatedStreams || [])
+          .map((s: any) => ({
+            songId: s.url.replace("/watch?v=", ""),
+            youtubeVideoId: s.url.replace("/watch?v=", ""),
+            title: sanitizeTitle(s.title),
+            artist: data.uploaderName || data.uploader || "فنان غير معروف",
+            thumbnailUrl: s.thumbnail || data.thumbnailUrl || ""
+          }));
 
-          return {
-            albumId,
-            title: data.name || "Unknown Album",
-            artist: data.uploader || "Unknown Artist",
-            coverUrl: data.thumbnailUrl || null,
-            year: "",
-            songs,
-            source: "piped"
-          };
-        } catch (err) {
-          console.error(`[Album] Piped fallback failed on ${instance}`);
-        }
+        return {
+          albumId,
+          title: data.name || "Unknown Album",
+          artist: data.uploader || "Unknown Artist",
+          coverUrl: data.thumbnailUrl || null,
+          year: "",
+          songs,
+          source: "piped"
+        };
+      } catch (err) {
+        console.error(`[Album] Piped fallback failed on ${instance}`);
       }
-      
-      return { albumId, title: "Unknown Album", artist: "Unknown", coverUrl: null, year: "", songs: [], source: "error" };
     }
+    
+    return { albumId, title: "Unknown Album", artist: "Unknown", coverUrl: null, year: "", songs: [], source: "error" };
+  }
 }
 
 export async function getMoodMix(mood: string) {
@@ -828,19 +909,92 @@ export async function getMoodMix(mood: string) {
 }
 
 // ── getLyricsYoutube ──────────────────────────────────────────────────────────
-export async function getLyricsYoutube(videoId: string): Promise<string | null> {
+export interface SyncedLyricsResult {
+  plainLyrics: string;
+  syncedLyrics: string;
+  source: string;
+}
+
+export async function getSyncedLyricsYoutube(videoId: string): Promise<SyncedLyricsResult | null> {
   try {
     const innertube = await getYTWeb();
-    const info = await innertube.music.getInfo(videoId);
-    const lyrics: any = await info.getLyrics();
-    
-    // lyrics is of type MusicDescriptionShelf which has a description property
-    const lyricsText = lyrics?.description?.text || lyrics?.text;
-    if (lyricsText) {
-      return lyricsText;
+    const info = await innertube.getInfo(videoId);
+    const tracks = info.captions?.caption_tracks || [];
+
+    if (tracks.length > 0) {
+      // Find Arabic captions first, then English, or the first available track
+      const track =
+        tracks.find((t: any) => t.language_code === "ar" || t.name?.text?.toLowerCase().includes("arabic")) ||
+        tracks.find((t: any) => t.language_code === "en") ||
+        tracks[0];
+
+      if (track?.base_url) {
+        const res = await fetch(`${track.base_url}&fmt=json3`, { signal: AbortSignal.timeout(4500) });
+        if (res.ok) {
+          const data = await res.json();
+          const events = data?.events || [];
+          const validSegments: { timeMs: number; text: string }[] = [];
+
+          for (const ev of events) {
+            if (!ev.segs || typeof ev.tStartMs !== "number") continue;
+            const lineText = ev.segs
+              .map((s: any) => s.utf8 || "")
+              .join("")
+              .replace(/\n+/g, " ")
+              .trim();
+
+            // Filter sound effect markers like [موسيقى] or [Music] or empty symbols
+            if (!lineText || /^\[.*\]$/.test(lineText) || /^[♪♫\s]+$/.test(lineText)) continue;
+
+            validSegments.push({
+              timeMs: ev.tStartMs,
+              text: lineText,
+            });
+          }
+
+          if (validSegments.length >= 3) {
+            // Build LRC format: [mm:ss.xx]
+            const lrcLines = validSegments.map((seg) => {
+              const totalSec = seg.timeMs / 1000;
+              const min = Math.floor(totalSec / 60);
+              const sec = (totalSec % 60).toFixed(2);
+              const mm = String(min).padStart(2, "0");
+              const ss = String(sec).padStart(5, "0");
+              return `[${mm}:${ss}] ${seg.text}`;
+            });
+
+            const plainLines = validSegments.map((s) => s.text);
+
+            return {
+              plainLyrics: plainLines.join("\n"),
+              syncedLyrics: lrcLines.join("\n"),
+              source: "youtube-timedtext",
+            };
+          }
+        }
+      }
     }
-  } catch (e) {
-    console.warn(`[Lyrics] youtubei.js failed to get lyrics for ${videoId}`);
+
+    // Fallback: Check YouTube Music description plain lyrics
+    try {
+      const musicInfo = await innertube.music.getInfo(videoId);
+      const lyricsObj: any = await musicInfo.getLyrics();
+      const lyricsText = lyricsObj?.description?.text || lyricsObj?.text;
+      if (lyricsText && lyricsText.trim().length > 10) {
+        return {
+          plainLyrics: lyricsText.trim(),
+          syncedLyrics: "",
+          source: "youtubei-music",
+        };
+      }
+    } catch {}
+  } catch (e: any) {
+    console.warn(`[Lyrics] youtubei.js failed to get synced lyrics for ${videoId}:`, e.message);
   }
   return null;
+}
+
+export async function getLyricsYoutube(videoId: string): Promise<string | null> {
+  const synced = await getSyncedLyricsYoutube(videoId);
+  return synced?.plainLyrics || null;
 }

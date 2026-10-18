@@ -154,9 +154,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </header>
 
           <main className="flex-1 p-4 md:p-8 pt-4">
-            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
-              {children}
-            </motion.div>
+            {children}
           </main>
         </div>
 

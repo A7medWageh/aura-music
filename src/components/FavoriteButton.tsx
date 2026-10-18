@@ -28,45 +28,36 @@ export function FavoriteButton({
   const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => {
-    // Initial check from local store
     setIsLiked(isFavoriteLocal(songId));
-    
-    // Also check server to be sure
-    if (songId) {
-      fetch(`/api/likes?songId=${songId}`)
-        .then(r => r.json())
-        .then(d => setIsLiked(d.liked))
-        .catch(() => {});
-    }
   }, [songId]);
 
   const toggleLike = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    
-    const res = await fetch("/api/likes", {
+    const nextState = !isLiked;
+    setIsLiked(nextState);
+
+    if (nextState) {
+      upsertFavorite({
+        songId,
+        title,
+        artist,
+        thumbnailUrl,
+        youtubeVideoId: youtubeVideoId || songId
+      });
+      setToast(`تمت إضافة "${title}" إلى المفضلة ❤️`);
+    } else {
+      removeFavorite(songId);
+      setToast(`تمت إزالة "${title}" من المفضلة`);
+    }
+
+    setTimeout(() => setToast(null), 2500);
+
+    // Sync to cookie in background without blocking UI
+    fetch("/api/likes", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ songId })
-    });
-    const d = await res.json();
-    
-    if (d.success) {
-      setIsLiked(d.liked);
-      if (d.liked) {
-        upsertFavorite({
-          songId,
-          title,
-          artist,
-          thumbnailUrl,
-          youtubeVideoId,
-        });
-      } else {
-        removeFavorite(songId);
-      }
-      
-      setToast(d.liked ? "تمت الإضافة للمفضلة ❤️" : "تمت الإزالة من المفضلة");
-      setTimeout(() => setToast(null), 2500);
-    }
+    }).catch(() => {});
   };
 
   return (

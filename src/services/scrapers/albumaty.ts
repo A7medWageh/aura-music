@@ -2,53 +2,116 @@
 import axios from "axios";
 import * as cheerio from "cheerio";
 
+function stripTashkeel(s: string): string {
+  return s
+    .replace(/[\u064B-\u065F\u0670]/g, "") // Remove Fatha, Damma, Kasra, Sukun, Tanween, Shadda, Dagger Alef
+    .replace(/[إأآا]/g, "ا")
+    .replace(/[يى]/g, "ي")
+    .replace(/[ةه]/g, "ه")
+    .trim();
+}
+
 /**
- * Albumaty Search & Resolve
+  * Albumaty Search & Resolve
  * Highly efficient direct MP3 scraper for Arabic music.
  */
 export async function resolveAlbumatyStream(title: string, artist: string): Promise<string | null> {
   try {
-    // Clean title from (Official Video), (Live), etc.
-    const cleanTitle = title.replace(/\(.*?\)|\[.*?\]/g, "").trim();
-    const query = `${artist} ${cleanTitle}`.trim();
-    const searchUrl = `https://www.albumaty.com/search.php?q=${encodeURIComponent(query)}`;
+    const norm = (s: string) => stripTashkeel(s).toLowerCase().replace(/[^\u0600-\u06FFa-z0-9]/g, "");
 
-    console.log(`[Albumaty] Searching for: ${query}...`);
-    let searchRes = await axios.get(searchUrl, {
-      headers: { "User-Agent": "Mozilla/5.0" },
-      timeout: 3000,
-    });
+    // 1. Clean boilerplate terms that are not song names
+    let clean = title
+      .replace(/ريد\s*بُ?ل\s*مزيكا\s*صالونات/gi, "")
+      .replace(/ريد\s*بُ?ل\s*سيكا/gi, "")
+      .replace(/فيديو\s*كليب/gi, "")
+      .replace(/كليب\s*رسمي/gi, "")
+      .replace(/الأغنية\s*الرسمية/gi, "")
+      .replace(/\(.*?\)|\[.*?\]/g, "")
+      .trim();
 
-    let $search = cheerio.load(searchRes.data);
+    // Split on delimiters (| , - , etc.)
+    const segments = clean.split(/[\|\-–—]/).map(s => s.trim()).filter(Boolean);
+    const coreSong = segments[0] || clean;
+    const normCore = norm(coreSong);
+
+    if (!normCore || normCore.length < 2) return null;
+
+    // Extract individual artist keyword tokens for scoring
+    const artistWords = (artist || "")
+      .split(/[\s,،&+|/\\]+/)
+      .map(w => norm(w))
+      .filter(w => w.length >= 3 && !["مع", "في", "من", "على"].includes(w));
+
+    // Prepare search queries: try core song, and core song with artist
+    const searchTerms: string[] = [coreSong];
+    if (artist && artistWords.length > 0) {
+      searchTerms.unshift(`${coreSong} ${artistWords[0]}`);
+    }
+
     let songId: string | null = null;
+    let $search: any = null;
 
-    const findId = ($: any) => {
-      let id: string | null = null;
-      $('a[href*="/song/"]').each((i: number, el: any) => {
-        const href = $(el).attr("href");
-        if (href) {
-          const match = href.match(/\/song\/(\d+)\.html/);
-          if (match) { id = match[1]; return false; }
-        }
-      });
-      return id;
-    };
-
-    songId = findId($search);
-
-    // If no match, try title only (broad search)
-    if (!songId && cleanTitle.length > 3) {
-        console.log(`[Albumaty] No hit for artist+title, trying title only: ${cleanTitle}`);
-        searchRes = await axios.get(`https://www.albumaty.com/search.php?q=${encodeURIComponent(cleanTitle)}`, {
-            headers: { "User-Agent": "Mozilla/5.0" },
-            timeout: 3000,
+    for (const term of searchTerms) {
+      if (!term || term.length < 2) continue;
+      console.log(`[Albumaty] Searching term: "${term}"...`);
+      try {
+        const searchRes = await axios.get(`https://www.albumaty.com/search.php?q=${encodeURIComponent(term)}`, {
+          headers: { "User-Agent": "Mozilla/5.0" },
+          timeout: 3500,
         });
         $search = cheerio.load(searchRes.data);
-        songId = findId($search);
+
+        const candidates: { id: string; text: string; score: number }[] = [];
+
+        $search('a[href*="/song/"]').each((i: number, el: any) => {
+          const href = $search(el).attr("href");
+          const text = $search(el).text().trim();
+          if (!href) return;
+          const match = href.match(/\/song\/(\d+)\.html/);
+          if (!match) return;
+
+          const normText = norm(text);
+
+          // CANDIDATE MUST CONTAIN THE CORE SONG NAME!
+          if (!normText.includes(normCore)) return;
+
+          let score = 10;
+          if (normText === normCore) {
+            score += 100;
+          } else if (normText.startsWith(normCore)) {
+            score += 60; // Exact song name prefix (e.g. "خنقاني - مع سنور")
+          }
+
+          // Reward artist keywords
+          let hasArtistMatch = false;
+          for (const w of artistWords) {
+            if (normText.includes(w)) {
+              score += 50;
+              hasArtistMatch = true;
+            }
+          }
+
+          // If user specified artist, reject songs from different artists!
+          if (artistWords.length > 0 && !hasArtistMatch && normText !== normCore) {
+            return;
+          }
+
+          candidates.push({ id: match[1], text, score });
+        });
+
+        if (candidates.length > 0) {
+          candidates.sort((a, b) => b.score - a.score);
+          console.log(`[Albumaty] Best match for "${term}": "${candidates[0].text}" (score: ${candidates[0].score})`);
+          songId = candidates[0].id;
+          break;
+        }
+      } catch (e: any) {
+        console.warn(`[Albumaty] Search for "${term}" error:`, e.message);
+      }
     }
 
     if (!songId) {
-      console.log(`[Albumaty] No song ID found for: ${query}`);
+      console.log(`[Albumaty] No song ID found for: ${title}`);
       return null;
     }
 
@@ -65,9 +128,10 @@ export async function resolveAlbumatyStream(title: string, artist: string): Prom
     const $dl = cheerio.load(downloadRes.data);
     
     // The download button is usually a .btn-success or similar
-    const directLink = $dl('a.btn-success[href*=".mp3"]').attr("href");
+    let directLink = $dl('a.btn-success[href*=".mp3"]').attr("href") || $dl('a[href$=".mp3"]').attr("href");
 
     if (directLink) {
+      if (directLink.startsWith("/")) directLink = `https://www.albumaty.com${directLink}`;
       console.log(`[Albumaty] Found direct link: ${directLink}`);
       return directLink;
     }

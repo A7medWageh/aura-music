@@ -44,26 +44,25 @@ export function MobileTabBar() {
             <Link
               key={item.href}
               href={item.href}
-              className="relative flex flex-col items-center gap-1 px-2 py-1 min-w-0 flex-1"
+              prefetch={true}
+              className="relative flex flex-col items-center gap-1 px-2 py-1 min-w-0 flex-1 active:scale-90 transition-transform duration-75"
               style={{ minWidth: 0 }}
             >
               {isActive && (
-                <motion.div
-                  layoutId="tab-indicator"
-                  className="absolute -top-[10px] left-0 right-0 mx-auto w-8 h-1 bg-cyan-400 rounded-b-full"
-                  transition={{ type: "spring", bounce: 0.3, duration: 0.5 }}
+                <div
+                  className="absolute -top-[10px] left-0 right-0 mx-auto w-8 h-1 bg-indigo-500 rounded-b-full shadow-[0_0_10px_rgba(99,102,241,0.8)]"
                 />
               )}
               <item.icon
-                className={`w-6 h-6 transition-all duration-200 ${
+                className={`w-6 h-6 transition-colors duration-150 ${
                   isActive
-                    ? "text-indigo-400 scale-110"
-                    : "text-gray-500"
+                    ? "text-indigo-400 scale-105"
+                    : "text-gray-500 hover:text-gray-300"
                 }`}
                 strokeWidth={isActive ? 2.5 : 1.8}
               />
               <span
-                className={`text-[10px] font-bold transition-colors duration-200 leading-tight ${
+                className={`text-[10px] font-bold transition-colors duration-150 leading-tight ${
                   isActive ? "text-indigo-400" : "text-gray-500"
                 }`}
               >

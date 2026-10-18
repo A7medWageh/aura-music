@@ -38,7 +38,7 @@ export default function FavoritesPage() {
   }, []);
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-700">
+    <div className="space-y-8">
       <header className="flex items-end gap-8 pb-6 border-b border-white/5">
         <div className="w-52 h-52 rounded-2xl bg-gradient-to-br from-red-500 to-pink-600 flex items-center justify-center shadow-2xl">
           <Heart className="w-24 h-24 text-white fill-current" />

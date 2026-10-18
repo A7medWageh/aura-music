@@ -12,10 +12,19 @@ type SongMeta = {
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-function getSmartFolderName(rawArtist: string, allSongs: any[]): string {
-  if (!rawArtist) return "أخرى";
+function getSmartFolderName(rawArtist: string, allSongs: any[], title?: string): string {
+  let artist = rawArtist;
+  if (!artist || artist === "فنان" || artist === "فنان غير معروف") {
+    if (title && title.includes("-")) {
+      const parts = title.split("-");
+      if (parts[0].trim().length > 1) {
+        artist = parts[0].trim();
+      }
+    }
+  }
+  if (!artist || artist === "فنان" || artist === "فنان غير معروف") return "أخرى";
   const existingFolders = new Set(allSongs.map(s => s.folderName).filter(Boolean));
-  const parts = rawArtist.split(/&| و | x | X | ft\.? | feat\.? |,|،/).map(p => p.trim()).filter(Boolean);
+  const parts = artist.split(/&| و | x | X | ft\.? | feat\.? |,|،/).map(p => p.trim()).filter(Boolean);
   if (parts.length === 0) return "أخرى";
   if (parts.length === 1) return parts[0];
   const matched = parts.find(p => existingFolders.has(p));
@@ -41,7 +50,15 @@ async function downloadViaBackgroundFetch(
     const sw = (await navigator.serviceWorker.ready) as any;
     if (!sw.backgroundFetch) throw new Error("No BackgroundFetch on registration");
 
-    const url = `/api/ytdownload?videoId=${encodeURIComponent(videoId)}&title=${encodeURIComponent(title)}&artist=${encodeURIComponent(artist)}&proxy=true&t=${Date.now()}`;
+    const params = new URLSearchParams();
+    if (videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId)) params.set("videoId", videoId);
+    if (title) params.set("title", title);
+    if (artist) params.set("artist", artist);
+    params.set("proxy", "true");
+    params.set("download", "true");
+    params.set("t", Date.now().toString());
+
+    const url = `/api/ytdownload?${params.toString()}`;
     const fetchId = `song-${songId}-${Date.now()}`;
 
     // Start the background fetch
@@ -123,8 +140,23 @@ async function downloadAudioBlob(
     try {
       if (signal?.aborted) return false;
 
-      const apiUrl = `/api/ytdownload?videoId=${encodeURIComponent(videoId)}&title=${encodeURIComponent(title)}&artist=${encodeURIComponent(artist)}&proxy=true&t=${Date.now()}`;
-      const res = await fetch(apiUrl, { cache: "no-store", signal });
+      const params = new URLSearchParams();
+      if (videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId)) params.set("videoId", videoId);
+      if (title) params.set("title", title);
+      if (artist) params.set("artist", artist);
+      params.set("proxy", "true");
+      params.set("download", "true");
+      params.set("t", Date.now().toString());
+
+      const apiUrl = `/api/ytdownload?${params.toString()}`;
+      const res = await fetch(apiUrl, {
+        cache: "no-store",
+        signal,
+        headers: {
+          "X-Aura-Offline": "true",
+          "Accept": "audio/*, application/octet-stream",
+        },
+      });
       if (!res.ok) throw new Error(`API HTTP ${res.status}`);
 
       let contentLength = parseInt(
@@ -132,42 +164,46 @@ async function downloadAudioBlob(
         res.headers.get("content-length") ||
         "0"
       );
-      if (contentLength === 0 && !onProgress) contentLength = 3.5 * 1024 * 1024;
-      if (!onProgress) updateJob(jobId, { totalBytes: contentLength, progressBytes: 0 });
+      if (contentLength === 0) contentLength = 3.5 * 1024 * 1024;
+      updateJob(jobId, { totalBytes: contentLength, progressBytes: 1 });
 
       const reader = res.body?.getReader();
       if (!reader) throw new Error("Body is null");
 
       const chunks: Uint8Array[] = [];
       let receivedBytes = 0;
+      let lastReport = Date.now();
 
       while (true) {
         // Pause support
         while (isJobPaused(jobId)) {
           if (signal?.aborted) return false;
-          await new Promise(r => setTimeout(r, 500));
+          await new Promise(r => setTimeout(r, 400));
         }
         const { done, value } = await reader.read();
         if (done) break;
         if (signal?.aborted) return false;
 
-        let offset = 0;
-        const chunkSize = 64 * 1024;
-        while (offset < value.length) {
-          const slice = value.slice(offset, offset + chunkSize);
-          chunks.push(slice);
-          const delta = slice.length;
-          receivedBytes += delta;
-          if (onProgress) onProgress(receivedBytes, contentLength, delta);
-          else updateJob(jobId, { progressBytes: receivedBytes });
-          offset += chunkSize;
-          await new Promise(r => setTimeout(r, 35));
+        chunks.push(value);
+        const delta = value.length;
+        receivedBytes += delta;
+
+        const now = Date.now();
+        // Update at least every 80ms or on completion for butter-smooth UI counters
+        if (now - lastReport > 80 || receivedBytes >= contentLength) {
+          lastReport = now;
+          const currentTotal = Math.max(contentLength, receivedBytes);
+          if (onProgress) onProgress(receivedBytes, currentTotal, delta);
+          updateJob(jobId, { progressBytes: receivedBytes, totalBytes: currentTotal });
         }
       }
 
-      if (receivedBytes < 1000) throw new Error("Empty file — possible 403.");
+      if (receivedBytes < 1000) throw new Error("الملف الصوتي فارغ أو تم رفض الوصول");
 
-      const blob = new Blob(chunks as any, { type: "audio/mpeg" });
+      updateJob(jobId, { progressBytes: receivedBytes, totalBytes: receivedBytes });
+
+      const mimeType = res.headers.get("content-type") || "audio/mpeg";
+      const blob = new Blob(chunks as any, { type: mimeType });
       await storeAudioBlob(songId, blob);
       return true;
     } catch (err: any) {
@@ -183,9 +219,7 @@ async function downloadAudioBlob(
 
 // ─── Public API: downloadSong ─────────────────────────────────────────────────
 /**
- * Download a song to offline storage.
- * • Tries Background Fetch first (works even after tab/browser close).
- * • Falls back to foreground streaming download.
+ * Download a song to offline storage with instant live progress.
  */
 export async function downloadSong(
   songId: string,
@@ -197,7 +231,7 @@ export async function downloadSong(
 
   try {
     const allSongs = await getAllOfflineSongs();
-    const smartFolder = getSmartFolderName(metadata?.folderName || artist, allSongs);
+    const smartFolder = getSmartFolderName(metadata?.folderName || artist, allSongs, title);
 
     await saveSongMeta({
       songId,
@@ -211,23 +245,27 @@ export async function downloadSong(
     });
 
     startJob(songId, title, "song", 1);
-    updateJob(songId, { currentSong: title });
+    updateJob(songId, { currentSong: title, totalBytes: 3.5 * 1024 * 1024, progressBytes: 1 });
 
-    // ── Try Background Fetch first ──
-    if (isBgFetchSupported()) {
-      const bgOk = await downloadViaBackgroundFetch(songId, songId, videoId, title, artist);
-      if (bgOk) return true;
-      // If it returned false, BG fetch might still be running in SW — don't double-download
-      // Only fall through if we're sure it failed (not just unsupported)
-    }
-
-    // ── Fallback: standard foreground download ──
     const ctrl = new AbortController();
     setJobController(songId, ctrl);
     const ok = await downloadAudioBlob(songId, songId, videoId, title, artist, undefined, ctrl.signal);
     if (ctrl.signal.aborted) return false;
-    if (ok) updateJob(songId, { done: 1, failed: 0 });
-    else updateJob(songId, { done: 0, failed: 1 });
+    if (ok) {
+      updateJob(songId, { done: 1, failed: 0 });
+      // Asynchronously pre-cache lyrics for offline use
+      fetch(`/api/lyrics?trackName=${encodeURIComponent(title)}&artistName=${encodeURIComponent(artist)}&videoId=${videoId}`)
+        .then(r => r.json())
+        .then(async (d) => {
+          if (d.lyrics || d.syncedLyrics) {
+            await storeLyrics(songId, { lyrics: d.lyrics, syncedLyrics: d.syncedLyrics });
+            console.log(`[Downloader] Offline lyrics saved for "${title}"`);
+          }
+        })
+        .catch(() => {});
+    } else {
+      updateJob(songId, { done: 0, failed: 1 });
+    }
     finishJob(songId, ok);
     return ok;
   } catch (err) {

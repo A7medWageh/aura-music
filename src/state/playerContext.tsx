@@ -24,6 +24,8 @@ type PlayerContextValue = {
   prewarm: (videoId: string) => void;
   setHighQuality: (value: boolean) => void;
   setIsAiMix: (value: boolean) => void;
+  soundPreset: "crystal" | "bass" | "vocal" | "spatial";
+  setSoundPreset: (preset: "crystal" | "bass" | "vocal" | "spatial") => void;
 };
 
 const PlayerContext = createContext<PlayerContextValue | null>(null);
@@ -171,7 +173,19 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     setState((prev) => ({ ...prev, currentTime: player.currentTime }));
   };
 
+  const [soundPreset, setSoundPresetState] = useState<"crystal" | "bass" | "vocal" | "spatial">("crystal");
+
+  const setSoundPreset = (preset: "crystal" | "bass" | "vocal" | "spatial") => {
+    try {
+      localStorage.setItem("aura_sound_preset", preset);
+    } catch {}
+    setSoundPresetState(preset);
+  };
+
   const setHighQuality = (value: boolean) => {
+    try {
+      localStorage.setItem("aura_hq_audio", value ? "true" : "false");
+    } catch {}
     setState((prev) => ({ ...prev, isHighQuality: value }));
   };
 
@@ -179,90 +193,189 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     setState((prev) => ({ ...prev, isAiMix: value }));
   };
 
-  // ─── Web Audio API (High Quality 5-Band Equalizer) ──────────────────
+  // Load saved preferences
+  useEffect(() => {
+    try {
+      const isPrem = localStorage.getItem("aura_user_tier") === "premium";
+      const hqPref = localStorage.getItem("aura_hq_audio");
+      if (isPrem || hqPref === "true") {
+        setState((prev) => ({ ...prev, isHighQuality: true }));
+      }
+      const savedPreset = localStorage.getItem("aura_sound_preset") as any;
+      if (savedPreset && ["crystal", "bass", "vocal", "spatial"].includes(savedPreset)) {
+        setSoundPresetState(savedPreset);
+      }
+    } catch {}
+  }, []);
+
+  // ─── Web Audio API (Master-Grade Studio Sound Clarity & Dynamics) ──
   const audioCtxRef = useRef<AudioContext | null>(null);
   const mediaSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
   const eqNodesRef = useRef<BiquadFilterNode[]>([]);
   const compressorRef = useRef<DynamicsCompressorNode | null>(null);
+  const preGainRef = useRef<GainNode | null>(null);
+  const postGainRef = useRef<GainNode | null>(null);
 
-  const buildEQChain = (ctx: AudioContext, source: MediaElementAudioSourceNode) => {
-    // 5-Band Professional EQ Profile for Music
-    const bands = [
-      { type: "lowshelf" as BiquadFilterType, frequency: 80,   gain: 7  }, // Sub-bass boost
-      { type: "peaking"  as BiquadFilterType, frequency: 250,  gain: 4  }, // Bass body
-      { type: "peaking"  as BiquadFilterType, frequency: 2500, gain: 2  }, // Mid presence
-      { type: "peaking"  as BiquadFilterType, frequency: 6000, gain: 3  }, // Upper presence / air
-      { type: "highshelf" as BiquadFilterType, frequency: 10000,gain: 4 }, // Air / Treble
-    ];
+  const PRESET_CONFIGS = {
+    crystal: {
+      bands: [
+        { type: "lowshelf" as BiquadFilterType, freq: 50, gain: 4.5 },
+        { type: "peaking"  as BiquadFilterType, freq: 180, gain: 2.5, Q: 0.9 },
+        { type: "peaking"  as BiquadFilterType, freq: 450, gain: -3.0, Q: 1.4 }, // Anti-mud notch
+        { type: "peaking"  as BiquadFilterType, freq: 3400, gain: 5.0, Q: 1.0 }, // Crystal vocal presence
+        { type: "highshelf" as BiquadFilterType, freq: 12000, gain: 6.5 },        // High-end shimmer
+      ],
+      comp: { threshold: -15, ratio: 2.4, attack: 0.004, release: 0.12 },
+      postGain: 1.25,
+    },
+    bass: {
+      bands: [
+        { type: "lowshelf" as BiquadFilterType, freq: 50, gain: 8.0 },
+        { type: "peaking"  as BiquadFilterType, freq: 160, gain: 4.0, Q: 0.9 },
+        { type: "peaking"  as BiquadFilterType, freq: 450, gain: -2.0, Q: 1.2 },
+        { type: "peaking"  as BiquadFilterType, freq: 3200, gain: 3.2, Q: 1.0 },
+        { type: "highshelf" as BiquadFilterType, freq: 11000, gain: 4.5 },
+      ],
+      comp: { threshold: -17, ratio: 2.8, attack: 0.005, release: 0.14 },
+      postGain: 1.20,
+    },
+    vocal: {
+      bands: [
+        { type: "lowshelf" as BiquadFilterType, freq: 65, gain: 1.5 },
+        { type: "peaking"  as BiquadFilterType, freq: 200, gain: 1.0, Q: 1.0 },
+        { type: "peaking"  as BiquadFilterType, freq: 450, gain: -4.0, Q: 1.5 },
+        { type: "peaking"  as BiquadFilterType, freq: 3500, gain: 6.8, Q: 1.1 }, // Ultra crisp vocal forward
+        { type: "highshelf" as BiquadFilterType, freq: 12500, gain: 5.5 },
+      ],
+      comp: { threshold: -14, ratio: 2.0, attack: 0.003, release: 0.10 },
+      postGain: 1.20,
+    },
+    spatial: {
+      bands: [
+        { type: "lowshelf" as BiquadFilterType, freq: 55, gain: 3.5 },
+        { type: "peaking"  as BiquadFilterType, freq: 220, gain: 2.0, Q: 0.8 },
+        { type: "peaking"  as BiquadFilterType, freq: 450, gain: -2.5, Q: 1.3 },
+        { type: "peaking"  as BiquadFilterType, freq: 3600, gain: 4.5, Q: 0.9 },
+        { type: "highshelf" as BiquadFilterType, freq: 13000, gain: 7.5 }, // Ultra wide spatial top
+      ],
+      comp: { threshold: -14, ratio: 2.2, attack: 0.004, release: 0.12 },
+      postGain: 1.28,
+    },
+  };
 
-    const nodes = bands.map(b => {
-      const f = ctx.createBiquadFilter();
-      f.type = b.type;
-      f.frequency.value = b.frequency;
-      f.gain.value = b.gain;
-      if (b.type === "peaking") f.Q.value = 0.8;
-      return f;
+  const applyAudioParameters = (ctx: AudioContext, isHq: boolean, presetKey: "crystal" | "bass" | "vocal" | "spatial") => {
+    const now = ctx.currentTime;
+    const t = 0.05; // 50ms smooth transition, zero click/pop
+
+    if (!isHq) {
+      if (preGainRef.current) preGainRef.current.gain.setTargetAtTime(1.0, now, t);
+      eqNodesRef.current.forEach((n) => n.gain.setTargetAtTime(0, now, t));
+      if (compressorRef.current) {
+        compressorRef.current.threshold.setTargetAtTime(0, now, t);
+        compressorRef.current.ratio.setTargetAtTime(1.0, now, t);
+      }
+      if (postGainRef.current) postGainRef.current.gain.setTargetAtTime(1.0, now, t);
+      return;
+    }
+
+    const cfg = PRESET_CONFIGS[presetKey] || PRESET_CONFIGS.crystal;
+    if (preGainRef.current) preGainRef.current.gain.setTargetAtTime(0.85, now, t); // -1.4 dB headroom
+
+    eqNodesRef.current.forEach((node, i) => {
+      const b = cfg.bands[i];
+      if (b) {
+        node.frequency.setTargetAtTime(b.freq, now, t);
+        node.gain.setTargetAtTime(b.gain, now, t);
+        if (b.Q && node.Q) node.Q.setTargetAtTime(b.Q, now, t);
+      }
     });
 
-    // Dynamic compressor for loudness and punchy sound
-    const comp = ctx.createDynamicsCompressor();
-    comp.threshold.value = -18;
-    comp.knee.value = 8;
-    comp.ratio.value = 3;
-    comp.attack.value = 0.003;
-    comp.release.value = 0.18;
-    compressorRef.current = comp;
+    if (compressorRef.current) {
+      compressorRef.current.threshold.setTargetAtTime(cfg.comp.threshold, now, t);
+      compressorRef.current.knee.setTargetAtTime(12, now, t);
+      compressorRef.current.ratio.setTargetAtTime(cfg.comp.ratio, now, t);
+      compressorRef.current.attack.setTargetAtTime(cfg.comp.attack, now, t);
+      compressorRef.current.release.setTargetAtTime(cfg.comp.release, now, t);
+    }
 
-    // Chain: source → EQ bands → compressor → output
-    source.connect(nodes[0]);
-    nodes.forEach((n, i) => { if (i < nodes.length - 1) n.connect(nodes[i + 1]); });
-    nodes[nodes.length - 1].connect(comp);
-    comp.connect(ctx.destination);
-    eqNodesRef.current = nodes;
+    if (postGainRef.current) postGainRef.current.gain.setTargetAtTime(cfg.postGain, now, t);
+  };
+
+  const initWebAudio = () => {
+    const player = audioRef.current;
+    if (!player || typeof window === "undefined" || audioCtxRef.current) return;
+
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtx) return;
+
+    try {
+      const ctx = new AudioCtx();
+      audioCtxRef.current = ctx;
+
+      const source = ctx.createMediaElementSource(player);
+      mediaSourceRef.current = source;
+
+      // 1. Pre-Gain stage
+      const preGain = ctx.createGain();
+      preGain.gain.value = 1.0;
+      preGainRef.current = preGain;
+
+      // 2. 5-Band Studio Equalizer (starts neutral)
+      const bands = PRESET_CONFIGS.crystal.bands;
+      const nodes = bands.map((b) => {
+        const f = ctx.createBiquadFilter();
+        f.type = b.type;
+        f.frequency.value = b.freq;
+        f.gain.value = 0;
+        if (b.Q) f.Q.value = b.Q;
+        return f;
+      });
+      eqNodesRef.current = nodes;
+
+      // 3. Studio Mastering Compressor
+      const comp = ctx.createDynamicsCompressor();
+      comp.threshold.value = 0;
+      comp.knee.value = 12;
+      comp.ratio.value = 1.0;
+      comp.attack.value = 0.004;
+      comp.release.value = 0.12;
+      compressorRef.current = comp;
+
+      // 4. Post-Gain stage
+      const postGain = ctx.createGain();
+      postGain.gain.value = 1.0;
+      postGainRef.current = postGain;
+
+      // Connect graph: source -> preGain -> nodes -> comp -> postGain -> destination
+      source.connect(preGain);
+      let lastNode: AudioNode = preGain;
+      for (const n of nodes) {
+        lastNode.connect(n);
+        lastNode = n;
+      }
+      lastNode.connect(comp);
+      comp.connect(postGain);
+      postGain.connect(ctx.destination);
+
+      // Apply initial audio parameters
+      applyAudioParameters(ctx, state.isHighQuality, soundPreset);
+    } catch (err) {
+      console.warn("[WebAudio] Init error:", err);
+    }
   };
 
   useEffect(() => {
-    const player = audioRef.current;
-    if (!player || typeof window === "undefined") return;
-
-    // Initialize AudioContext only once when needed
     if (state.isHighQuality && !audioCtxRef.current) {
-      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-      if (!AudioCtx) return;
-      try {
-        const ctx = new AudioCtx();
-        audioCtxRef.current = ctx;
-        const source = ctx.createMediaElementSource(player);
-        mediaSourceRef.current = source;
-        buildEQChain(ctx, source);
-      } catch (err) {
-        console.warn("[WebAudio] Failed to create EQ chain:", err);
-        audioCtxRef.current = null;
-      }
+      initWebAudio();
     }
-
     const ctx = audioCtxRef.current;
-    const source = mediaSourceRef.current;
-    if (!ctx || !source) return;
-
-    if (state.isHighQuality) {
-      if (ctx.state === "suspended") ctx.resume();
-      // Already connected via buildEQChain on first enable
-      // Re-connect if previously bypassed
-      try {
-        source.disconnect();
-        buildEQChain(ctx, source);
-      } catch { /* already connected */ }
-    } else {
-      // Bypass EQ: disconnect all, connect source directly to output
-      try {
-        source.disconnect();
-        eqNodesRef.current.forEach(n => { try { n.disconnect(); } catch {} });
-        compressorRef.current?.disconnect();
-        source.connect(ctx.destination);
-      } catch { /* ignore */ }
+    if (ctx) {
+      if (ctx.state === "suspended" && state.isPlaying) {
+        ctx.resume().catch(() => {});
+      }
+      applyAudioParameters(ctx, state.isHighQuality, soundPreset);
     }
-  }, [state.isHighQuality]);
+  }, [state.isHighQuality, soundPreset]);
 
   useEffect(() => {
     isPlayingRef.current = state.isPlaying;
@@ -352,81 +465,70 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
     (async () => {
       try {
-        let videoIdToPlay = song.youtubeVideoId;
-        
-        // ⚡ Lazy YouTube Resolution if missing
-        if (!videoIdToPlay) {
-          try {
-            const res = await fetch(`/api/resolve-youtube?title=${encodeURIComponent(song.title)}&artist=${encodeURIComponent(song.artist || "")}`);
-            const data = await res.json();
-            if (data.success && !cancelled) {
-              if (data.videoId) {
-                videoIdToPlay = data.videoId;
-                // Mutate queue to save the resolved ID
-                setState(prev => ({
-                  ...prev,
-                  queue: prev.queue.map(s => s.songId === song.songId ? { ...s, youtubeVideoId: videoIdToPlay } : s)
-                }));
-              } else if (data.isDirectMp3 && data.streamUrl) {
-                // Ignore direct mp3 for offline playing, we need a videoId to download via our worker usually,
-                // but if we have directMp3 maybe we can't easily download it with our downloadSong.
-                // However, downloadSong uses /api/download?videoId.
-                // If we don't have videoId, we can't download.
-                throw new Error("لم نتمكن من العثور على الأغنية");
-              } else {
-                throw new Error("لم نتمكن من العثور على الأغنية");
-              }
-            } else if (!cancelled) {
-              throw new Error("لم نتمكن من العثور على الأغنية");
-            }
-          } catch (e) {
-            if (!cancelled) setState(prev => ({ ...prev, isBuffering: false, error: "فشل البحث عن الأغنية" }));
-            return;
-          }
-        }
-        
-        // Check Offline cache
-        let cachedBlob = await getAudioBlob(song.songId);
-        
-        if (cachedBlob) {
-           console.log("[Player] Playing from offline storage.");
-           setState((prev) => ({ ...prev, isBuffering: false, streamUrl: URL.createObjectURL(cachedBlob) }));
-           player.src = URL.createObjectURL(cachedBlob);
-           player.load();
-           if (isPlayingRef.current) player.play().catch(console.error);
-           return;
+        // 1. Check Offline cache first (instant local play)
+        const cachedBlob = await getAudioBlob(song.songId);
+        if (cachedBlob && !cancelled) {
+          console.log("[Player] Playing from offline storage.");
+          const blobUrl = URL.createObjectURL(cachedBlob);
+          setState((prev) => ({ ...prev, isBuffering: false, streamUrl: blobUrl }));
+          player.src = blobUrl;
+          player.load();
+          if (isPlayingRef.current) player.play().catch(console.error);
+          return;
         }
 
-        // Not downloaded - stream online using direct CDN URL for perfect HTTP 206 chunking
-        console.log("[Player] Resolving CDN URL for streaming...");
-        
+        // 2. Resolve stream URL via Universal Audio Resolver (JioSaavn / Albumaty / SoundCloud / YouTube)
+        console.log(`[Player] Resolving audio stream for "${song.title}" (${song.artist || ""})...`);
         setState((prev) => ({ ...prev, isBuffering: true }));
-        
-        const resolveRes = await fetch(`/api/ytdownload?videoId=${videoIdToPlay}&resolveOnly=true`);
-        if (!resolveRes.ok) throw new Error("فشل في تحليل رابط الأغنية");
-        const { url: cdnUrl, contentLength } = await resolveRes.json();
-        if (!cdnUrl) throw new Error("لم يُعثر على رابط الأغنية");
-        
-        if (cancelled) return;
-        
-        console.log(`[Player] Got CDN URL (${contentLength ? Math.round(contentLength/1024) + 'KB' : 'unknown size'}), streaming...`);
 
-        // Set source with explicit type hint for m4a/mp4 container
-        player.src = cdnUrl;
-        if (contentLength) {
-          // Hint browser about expected size so it can estimate duration before full download
-          player.preload = "auto";
+        const params = new URLSearchParams();
+        const vid = song.youtubeVideoId || song.songId || "";
+        if (vid && /^[a-zA-Z0-9_-]{11}$/.test(vid)) {
+          params.set("videoId", vid);
         }
-        player.load();
-        setState((prev) => ({ ...prev, isBuffering: false, streamUrl: cdnUrl }));
-        if (isPlayingRef.current) player.play().catch(console.error);
+        if (song.title) params.set("title", song.title);
+        if (song.artist) params.set("artist", song.artist);
+        params.set("resolveOnly", "true");
 
+        const resolveRes = await fetch(`/api/ytdownload?${params.toString()}`);
+        if (!resolveRes.ok) {
+          const errData = await resolveRes.json().catch(() => ({}));
+          console.error(`[Player] ytdownload error for "${song.title}":`, errData);
+          throw new Error(errData.error || "فشل في استخراج الرابط الصوتي للأغنية");
+        }
+        const data = await resolveRes.json();
+        
+        if (!data.url) throw new Error("لم يتم العثور على رابط صوتي للأغنية");
+        if (cancelled) return;
+
+        // If directPlay is true and host allows CORS (like JioSaavn CDN), stream directly.
+        // If host blocks CORS (like Albumaty) or requires custom headers (googlevideo), proxy via /api/stream-proxy to inject CORS headers
+        const hasDirectCors = data.url.includes("saavncdn.com") || data.url.includes("sndcdn.com");
+        const isDirect = Boolean(data.directPlay && hasDirectCors && !data.url.includes("googlevideo.com") && !data.url.includes("albumaty.com"));
+        const playUrl = isDirect ? data.url : `/api/stream-proxy?url=${encodeURIComponent(data.url)}&title=${encodeURIComponent(song.title)}`;
+
+        console.log(`[Player] Streaming "${song.title}" via ${data.source || "direct"}...`);
+        player.src = playUrl;
+        player.preload = "auto";
+        player.load();
+
+        setState((prev) => ({
+          ...prev,
+          isBuffering: false,
+          streamUrl: playUrl,
+          duration: data.durationSec || prev.duration,
+        }));
+
+        if (isPlayingRef.current) {
+          player.play().catch(console.error);
+        }
       } catch (error) {
         if (!cancelled) {
+          console.error("[Player] Playback error:", error);
           setState((prev) => ({
             ...prev,
             isBuffering: false,
-            error: error instanceof Error ? error.message : "Playback error"
+            error: error instanceof Error ? error.message : "Playback error",
           }));
         }
       }
@@ -456,13 +558,16 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }
   }, [state.isPlaying, state.streamUrl]);
 
+  const lastTimeUpdateRef = useRef(0);
   const onTimeUpdate = () => {
     const player = audioRef.current;
     if (player) {
-      // MASSIVE mobile optimization: Don't thrash React state (re-rendering) when the screen is locked
-      // or the app is in the background. The native audio will continue perfectly without JS overhead.
       if (typeof document !== "undefined" && document.hidden) return;
-      setState((prev) => ({ ...prev, currentTime: player.currentTime || 0 }));
+      const now = performance.now();
+      if (now - lastTimeUpdateRef.current >= 400 || player.currentTime === 0) {
+        lastTimeUpdateRef.current = now;
+        setState((prev) => ({ ...prev, currentTime: player.currentTime || 0 }));
+      }
     }
   };
 
@@ -478,10 +583,16 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   };
 
   const onPlaying = () => {
+    if (audioCtxRef.current && audioCtxRef.current.state === "suspended") {
+      audioCtxRef.current.resume().catch(() => {});
+    }
     setState((prev) => ({ ...prev, isBuffering: false, error: null }));
   };
 
   const onPlay = () => {
+    if (audioCtxRef.current && audioCtxRef.current.state === "suspended") {
+      audioCtxRef.current.resume().catch(() => {});
+    }
     setState((prev) => ({ ...prev, isPlaying: true }));
   };
 
@@ -541,6 +652,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     seekTo,
     setHighQuality,
     setIsAiMix,
+    soundPreset,
+    setSoundPreset,
     prewarm: (videoId: string) => {
       // Prewarming removed for direct download chunking proxy
     }
@@ -595,6 +708,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       {children}
       <audio
         ref={audioRef}
+        crossOrigin="anonymous"
         preload="auto"
         onTimeUpdate={onTimeUpdate}
         onLoadedMetadata={onLoadedMetadata}

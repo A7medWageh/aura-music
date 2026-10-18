@@ -4,8 +4,6 @@ import { ReactNode } from "react";
 import { AppShell } from "@/layouts/AppShell";
 import { PwaRegistration } from "@/components/PwaRegistration";
 import { OfflineSyncBridge } from "@/components/OfflineSyncBridge";
-import { redirect } from "next/navigation";
-import { neon } from "@neondatabase/serverless";
 
 export const viewport: Viewport = {
   themeColor: "#6366f1",
@@ -31,20 +29,7 @@ export const metadata: Metadata = {
   },
 };
 
-export default async function RootLayout({ children }: { children: ReactNode }) {
-  // Gateway Redirect Logic: If hosted on Vercel, always redirect to the dynamic laptop URL
-  if (process.env.VERCEL === "1" && process.env.NEON_DB_HOST) {
-    try {
-      const dbUrl = `postgresql://${process.env.NEON_DB_USERNAME}:${process.env.NEON_DB_PASSWORD}@${process.env.NEON_DB_HOST}/${process.env.NEON_DB_NAME}?sslmode=require`;
-      const sql = neon(dbUrl);
-      const rows = await sql`SELECT value FROM system_config WHERE key = 'tunnel_url'`;
-      if (rows && rows.length > 0 && rows[0].value) {
-        redirect(rows[0].value);
-      }
-    } catch (e) {
-      console.error("Failed to fetch tunnel URL for gateway:", e);
-    }
-  }
+export default function RootLayout({ children }: { children: ReactNode }) {
 
   return (
     <html dir="rtl" lang="ar">

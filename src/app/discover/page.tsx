@@ -6,23 +6,29 @@ import { Sparkles, Music, Play, Disc3 } from "lucide-react";
 import { motion } from "framer-motion";
 import { getProxyUrl } from "@/utils/media";
 
+import { getClientCached, setClientCached } from "@/utils/clientCache";
+
 export default function DiscoverPage() {
-  const [newReleases, setNewReleases] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const cachedReleases = getClientCached<any[]>("discover_new_releases");
+  const [newReleases, setNewReleases] = useState<any[]>(() => cachedReleases || []);
+  const [loading, setLoading] = useState(() => !cachedReleases || cachedReleases.length === 0);
   const { playNow } = usePlayer();
 
   useEffect(() => {
-    // Fetch true YouTube New Releases data
+    // Fetch YouTube New Releases data and cache in background
     fetch("/api/discovery/new-releases")
       .then(res => res.json())
       .then(data => {
-        setNewReleases(data.data || []);
+        if (data.data) {
+          setNewReleases(data.data);
+          setClientCached("discover_new_releases", data.data);
+        }
       })
       .finally(() => setLoading(false));
   }, []);
 
   return (
-    <div className="space-y-10 animate-in fade-in duration-700 pb-20">
+    <div className="space-y-10 pb-20">
       <header className="relative h-64 rounded-[2rem] overflow-hidden glass flex items-center px-10 shadow-[0_0_40px_rgba(0,229,255,0.15)] border border-cyan-500/20">
         <div className="absolute inset-0 bg-gradient-to-r from-cyan-500/30 via-blue-500/10 to-transparent z-0" />
         <div className="relative z-10 space-y-4">

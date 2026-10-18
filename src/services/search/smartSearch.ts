@@ -26,11 +26,13 @@ async function getLocalCatalog() {
     return catalogSongs;
   }
   try {
-    const [songsRes, artistsRes] = await Promise.all([
-      getAllSongs(1, 500),
-      getAllArtists(1, 200),
+    const timeout = new Promise<any>((_, reject) => setTimeout(() => reject(new Error("db_timeout")), 1500));
+    const fetchCatalog = Promise.all([
+      getAllSongs(1, 100),
+      getAllArtists(1, 50),
     ]);
-    const artistsById = new Map(artistsRes.data.map((a) => [a.id, a]));
+    const [songsRes, artistsRes] = await Promise.race([fetchCatalog, timeout]);
+    const artistsById = new Map<string, any>(artistsRes.data.map((a: any) => [a.id, a]));
     catalogSongs = await enrichSongs(songsRes.data, artistsById);
     catalogLoadedAt = Date.now();
     return catalogSongs;

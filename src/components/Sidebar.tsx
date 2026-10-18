@@ -35,18 +35,17 @@ export function Sidebar() {
               <Link
                 key={item.href}
                 href={item.href}
-                className={`relative flex items-center gap-4 px-4 py-3 rounded-xl transition-all duration-300 group ${
+                prefetch={true}
+                className={`relative flex items-center gap-4 px-4 py-3 rounded-xl transition-colors duration-150 group ${
                   isActive ? "text-white" : "text-gray-400 hover:text-white"
                 }`}
               >
                 {isActive && (
-                  <motion.div
-                    layoutId="sidebar-active"
-                    className="absolute inset-0 bg-indigo-500/10 rounded-xl border border-indigo-500/20"
-                    transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
+                  <div
+                    className="absolute inset-0 bg-indigo-500/15 rounded-xl border border-indigo-500/25"
                   />
                 )}
-                <item.icon className={`w-5 h-5 transition-transform duration-300 group-hover:scale-110 ${
+                <item.icon className={`w-5 h-5 transition-transform duration-150 group-hover:scale-110 ${
                   isActive ? "text-indigo-400" : "group-hover:text-indigo-400"
                 }`} />
                 <span className="font-medium">{item.name}</span>

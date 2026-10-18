@@ -21,7 +21,7 @@ export default async function AlbumPage({ params }: { params: Promise<{ id: stri
   const { title, artist, coverUrl, year, songs } = albumData as any;
 
   return (
-    <div className="animate-in fade-in duration-700 -mx-4 md:mx-0 pb-4 md:pb-20">
+    <div className="-mx-4 md:mx-0 pb-4 md:pb-20">
       {/* ── Unified Hero (Mobile & Desktop) ── */}
       <AlbumHeroClient
         albumId={id}

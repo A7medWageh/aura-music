@@ -17,9 +17,15 @@ const INTL_ARTISTS = [
   "Lil Nas X", "Lil Uzi Vert", "Juice WRLD", "XXXTentacion", "Avicii", "Calvin Harris", "David Guetta", "Martin Garrix", "Skrillex", "Marshmello"
 ];
 
+import staticArtists from "@/services/music/artistsData.json";
+
 type ArtistEntry = { name: string; artistId: string; thumbnailUrl: string };
 
-let cache: { egyptian: ArtistEntry[]; intl: ArtistEntry[]; fetchedAt: number } | null = null;
+let cache: { egyptian: ArtistEntry[]; intl: ArtistEntry[]; fetchedAt: number } = {
+  egyptian: (staticArtists.egyptian || []) as ArtistEntry[],
+  intl: (staticArtists.intl || []) as ArtistEntry[],
+  fetchedAt: Date.now(),
+};
 const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 
 let fetchPromise: Promise<{egyptian: ArtistEntry[], intl: ArtistEntry[]}> | null = null;
@@ -27,22 +33,37 @@ let fetchPromise: Promise<{egyptian: ArtistEntry[], intl: ArtistEntry[]}> | null
 async function buildArtistList(): Promise<{egyptian: ArtistEntry[], intl: ArtistEntry[]}> {
   try {
     const fetchArtists = async (names: string[]) => {
-      const promises = names.map(async (name) => {
-        try {
-          const searchRes = await searchYouTube(name);
-          if (searchRes.artists && searchRes.artists.length > 0) {
-            const bestMatch = searchRes.artists[0];
-            return {
-              name,
-              artistId: bestMatch.artistId,
-              thumbnailUrl: bestMatch.thumbnailUrl ?? "",
-            };
+      const results: ArtistEntry[] = [];
+      const seenIds = new Set<string>();
+
+      // Process in small batches of 4 to prevent network congestion or rate limits
+      for (let i = 0; i < names.length; i += 4) {
+        const batch = names.slice(i, i + 4);
+        const batchResults = await Promise.all(
+          batch.map(async (name) => {
+            try {
+              const searchRes = await searchYouTube(name);
+              if (searchRes.artists && searchRes.artists.length > 0) {
+                const bestMatch = searchRes.artists[0];
+                return {
+                  name,
+                  artistId: bestMatch.artistId,
+                  thumbnailUrl: bestMatch.thumbnailUrl ?? "",
+                };
+              }
+            } catch (e) {}
+            return null;
+          })
+        );
+
+        for (const a of batchResults) {
+          if (a && a.artistId && !seenIds.has(a.artistId)) {
+            seenIds.add(a.artistId);
+            results.push(a);
           }
-        } catch (e) {}
-        return null;
-      });
-      const resolved = await Promise.all(promises);
-      return resolved.filter(a => a !== null) as ArtistEntry[];
+        }
+      }
+      return results;
     };
 
     const [egyptian, intl] = await Promise.all([
@@ -50,14 +71,17 @@ async function buildArtistList(): Promise<{egyptian: ArtistEntry[], intl: Artist
       fetchArtists(INTL_ARTISTS)
     ]);
 
-    const results = { egyptian, intl };
+    const results = {
+      egyptian: egyptian.length > 0 ? egyptian : cache.egyptian,
+      intl: intl.length > 0 ? intl : cache.intl,
+    };
     cache = { ...results, fetchedAt: Date.now() };
     fetchPromise = null;
     return results;
   } catch (err) {
     console.error("[Artists API] Failed to build artist list:", err);
     fetchPromise = null;
-    return { egyptian: [], intl: [] };
+    return cache;
   }
 }
 

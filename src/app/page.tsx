@@ -46,23 +46,39 @@ function ArtistGrid({ artists, loading, count = 10 }: { artists: ArtistEntry[]; 
       </div>
     );
   }
+  // Deduplicate artists by artistId or name
+  const seen = new Set<string>();
+  const uniqueArtists = artists.filter(a => {
+    const id = a.artistId || a.name;
+    if (!id || seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+
   return (
     <div className="grid grid-cols-4 sm:grid-cols-5 md:grid-cols-6 lg:grid-cols-8 xl:grid-cols-10 gap-x-4 gap-y-6">
-      {artists.slice(0, count).map(a => (
-        <ArtistCard key={a.artistId || a.name} artist={a} />
+      {uniqueArtists.slice(0, count).map((a, idx) => (
+        <ArtistCard key={`${a.artistId || a.name}-${idx}`} artist={a} />
       ))}
     </div>
   );
 }
 
+import { getClientCached, setClientCached } from "@/utils/clientCache";
+
 export default function HomePage() {
   const { playNow } = usePlayer();
   const [greeting, setGreeting] = useState("مساء الخير");
-  const [trending, setTrending] = useState<any[]>([]);
-  const [egyptianArtists, setEgyptianArtists] = useState<ArtistEntry[]>([]);
-  const [intlArtists, setIntlArtists] = useState<ArtistEntry[]>([]);
-  const [trendLoading, setTrendLoading] = useState(true);
-  const [artistsLoading, setArtistsLoading] = useState(true);
+  
+  // Instantaneous state initialization from memory/session cache (0ms delay)
+  const cachedTrending = getClientCached<any[]>("home_trending");
+  const cachedArtists = getClientCached<{ egyptian: ArtistEntry[]; intl: ArtistEntry[] }>("home_artists");
+
+  const [trending, setTrending] = useState<any[]>(() => cachedTrending || []);
+  const [egyptianArtists, setEgyptianArtists] = useState<ArtistEntry[]>(() => cachedArtists?.egyptian || []);
+  const [intlArtists, setIntlArtists] = useState<ArtistEntry[]>(() => cachedArtists?.intl || []);
+  const [trendLoading, setTrendLoading] = useState(() => !cachedTrending || cachedTrending.length === 0);
+  const [artistsLoading, setArtistsLoading] = useState(() => !cachedArtists || cachedArtists.egyptian.length === 0);
   const [toast, setToast] = useState<string | null>(null);
   const [currentSlide, setCurrentSlide] = useState(0);
   const autoPlayRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -102,30 +118,33 @@ export default function HomePage() {
     autoPlayRef.current = setInterval(goNext, 4000);
   };
 
-  // Pre-warm stream cache on hover → instant playback
-  const onSongHover = (videoId?: string) => {
-    if (!videoId) return;
-    fetch(`/api/stream/${videoId}`).catch(() => {});
-  };
-
   useEffect(() => {
     const hour = new Date().getHours();
     if (hour < 12) setGreeting("صباح الخير");
     else if (hour < 18) setGreeting("طاب يومك");
     else setGreeting("مساء الخير");
 
-    // ─── ONLY 2 parallel API calls ───
+    // Fetch and cache in background (Stale While Revalidate)
     fetch("/api/discovery/trending")
       .then(r => r.json())
-      .then(res => { if (res.success) setTrending(res.data.slice(0, 12)); })
+      .then(res => {
+        if (res.success && res.data) {
+          const topSongs = res.data.slice(0, 12);
+          setTrending(topSongs);
+          setClientCached("home_trending", topSongs);
+        }
+      })
       .catch(() => {})
       .finally(() => setTrendLoading(false));
 
     fetch("/api/artists")
       .then(r => r.json())
       .then(res => {
-        setEgyptianArtists(res.egyptian || []);
-        setIntlArtists(res.intl || []);
+        const eg = res.egyptian || [];
+        const intl = res.intl || [];
+        setEgyptianArtists(eg);
+        setIntlArtists(intl);
+        setClientCached("home_artists", { egyptian: eg, intl });
       })
       .catch(() => {})
       .finally(() => setArtistsLoading(false));
@@ -204,7 +223,6 @@ export default function HomePage() {
                 : currentSongs.map(item => (
                   <motion.div key={item.songId} whileHover={{ y: -5, scale: 1.02 }}
                     className="group cursor-pointer"
-                    onMouseEnter={() => onSongHover(item.youtubeVideoId)}
                     onClick={() => playNow(item)}
                   >
                     <div className="relative aspect-video rounded-2xl overflow-hidden glass mb-3 border border-transparent group-hover:border-indigo-500 group-hover:shadow-[0_0_25px_rgba(99,102,241,0.3)] transition-all">

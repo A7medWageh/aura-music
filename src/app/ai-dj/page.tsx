@@ -54,7 +54,7 @@ export default function SmartDJPage() {
   };
 
   return (
-    <div className="space-y-12 animate-in fade-in duration-700 pb-20">
+    <div className="space-y-12 pb-20">
       <header className="flex flex-col items-center justify-center pt-10 pb-6">
         <div className="w-20 h-20 bg-indigo-500/20 backdrop-blur-md rounded-full flex items-center justify-center mb-6 shadow-[0_0_50px_rgba(99,102,241,0.3)] animate-pulse">
           <Sparkles className="w-10 h-10 text-indigo-400" />

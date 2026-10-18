@@ -4,7 +4,7 @@ import {
   Play, Pause, SkipForward, SkipBack, Shuffle,
   Repeat, Volume2, VolumeX, Heart, DownloadCloud,
   ChevronDown, Maximize2, ListMusic, Share2, Crown,
-  Settings, Music2, FileText
+  Settings, Music2, FileText, Sparkles, Sliders, Waves
 } from "lucide-react";
 import { usePlayer } from "@/state/playerContext";
 import { useCallback, useEffect, useRef, useState, useMemo } from "react";
@@ -12,8 +12,9 @@ import { motion, AnimatePresence } from "framer-motion";
 import { getProxyUrl } from "@/utils/media";
 import { PremiumModal } from "./PremiumModal";
 import { downloadSong } from "@/services/offline/downloader";
-import { upsertFavorite, removeFavorite } from "@/services/user/favoritesStore";
+import { upsertFavorite, removeFavorite, isFavoriteLocal } from "@/services/user/favoritesStore";
 import { useToastStore } from "@/state/toastStore";
+import { getLyrics, storeLyrics } from "@/offline/indexedDbCache";
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 function fmtTime(s: number) {
@@ -186,7 +187,7 @@ function FullPlayer({
   isPremium: boolean; setIsPremiumModalOpen: (v: boolean) => void; setPremiumFeatureName: (v: string) => void;
   showToast: (msg: string, type?: "normal" | "hq") => void;
 }) {
-  const { state, currentSong, togglePlay, next, prev, seekTo, setVolume, cycleRepeat, setShuffle, setHighQuality, setIsAiMix } = usePlayer();
+  const { state, currentSong, togglePlay, next, prev, seekTo, setVolume, cycleRepeat, setShuffle, setHighQuality, setIsAiMix, soundPreset, setSoundPreset } = usePlayer();
   const art = currentSong?.thumbnailUrl || currentSong?.metadata?.thumbnailUrl;
   const proxyArt = getProxyUrl(art);
 
@@ -201,39 +202,111 @@ function FullPlayer({
   const [syncedLyrics, setSyncedLyrics] = useState<{ timeMs: number; text: string }[] | null>(null);
   const [isLyricsLoading, setIsLyricsLoading] = useState(false);
 
+  // Helper to parse standard LRC string [mm:ss.xx]
+  const parseLrc = (lrcString: string) => {
+    const lines = lrcString.split("\n");
+    const parsed: { timeMs: number; text: string }[] = [];
+    for (const line of lines) {
+      const match = line.match(/^\[(\d{2}):(\d{2}(?:\.\d{2,3})?)\](.*)/);
+      if (match) {
+        const min = parseInt(match[1]);
+        const sec = parseFloat(match[2]);
+        const timeMs = Math.floor((min * 60 + sec) * 1000);
+        const text = match[3].trim();
+        if (text) parsed.push({ timeMs, text });
+      }
+    }
+    return parsed;
+  };
+
+  // 1. Immediately check offline IndexedDB cache when currentSong changes
   useEffect(() => {
+    let cancelled = false;
+    if (!currentSong?.songId) {
+      setLyrics(null);
+      setSyncedLyrics(null);
+      return;
+    }
+
     setLyrics(null);
     setSyncedLyrics(null);
+
+    getLyrics(currentSong.songId).then((cached: any) => {
+      if (cancelled || !cached) return;
+      if (cached.syncedLyrics && Array.isArray(cached.syncedLyrics) && cached.syncedLyrics.length > 0) {
+        setSyncedLyrics(cached.syncedLyrics);
+        setLyrics(cached.lyrics || null);
+      } else if (cached.rawSynced) {
+        const parsed = parseLrc(cached.rawSynced);
+        setSyncedLyrics(parsed.length > 0 ? parsed : null);
+        setLyrics(cached.lyrics || null);
+      } else if (cached.lyrics && typeof cached.lyrics === "string") {
+        setLyrics(cached.lyrics);
+        setSyncedLyrics(null);
+      } else if (Array.isArray(cached) && cached.length > 0) {
+        setSyncedLyrics(cached);
+      }
+    }).catch(() => {});
+
+    return () => { cancelled = true; };
   }, [currentSong?.songId]);
 
+  // 2. Fetch lyrics once from API only if not in cache, and save permanently offline
   useEffect(() => {
     if (activeTab === "lyrics" && currentSong && !lyrics && !syncedLyrics && !isLyricsLoading) {
       setIsLyricsLoading(true);
-      fetch(`/api/lyrics?trackName=${encodeURIComponent(currentSong.title)}&artistName=${encodeURIComponent(currentSong.artist || "")}&videoId=${currentSong.youtubeVideoId}`)
-        .then(r => r.json())
-        .then(d => {
-          if (d.syncedLyrics) {
-            const lines = d.syncedLyrics.split("\n");
-            const parsed = [];
-            for (const line of lines) {
-              const match = line.match(/^\[(\d{2}):(\d{2}(?:\.\d{2,3})?)\](.*)/);
-              if (match) {
-                const min = parseInt(match[1]);
-                const sec = parseFloat(match[2]);
-                const timeMs = Math.floor((min * 60 + sec) * 1000);
-                const text = match[3].trim();
-                if (text) parsed.push({ timeMs, text });
-              }
-            }
-            setSyncedLyrics(parsed.length > 0 ? parsed : null);
-            setLyrics(d.lyrics || null);
-          } else {
+
+      getLyrics(currentSong.songId).then((cached: any) => {
+        if (cached && (cached.syncedLyrics || cached.lyrics)) {
+          if (cached.syncedLyrics && Array.isArray(cached.syncedLyrics) && cached.syncedLyrics.length > 0) {
+            setSyncedLyrics(cached.syncedLyrics);
+            setLyrics(cached.lyrics || null);
+          } else if (cached.lyrics) {
+            setLyrics(cached.lyrics);
             setSyncedLyrics(null);
-            setLyrics(d.lyrics || "عذراً، لم نتمكن من العثور على كلمات هذه الأغنية.");
           }
-        })
-        .catch(() => setLyrics("حدث خطأ أثناء جلب الكلمات."))
-        .finally(() => setIsLyricsLoading(false));
+          setIsLyricsLoading(false);
+          return;
+        }
+
+        const url = `/api/lyrics?trackName=${encodeURIComponent(currentSong.title)}&artistName=${encodeURIComponent(currentSong.artist || "")}&videoId=${currentSong.youtubeVideoId || ""}`;
+        fetch(url)
+          .then(r => r.json())
+          .then(async (d) => {
+            if (d.syncedLyrics) {
+              const parsed = parseLrc(d.syncedLyrics);
+              const cleanPlain = d.lyrics || parsed.map(p => p.text).join("\n");
+              setSyncedLyrics(parsed.length > 0 ? parsed : null);
+              setLyrics(cleanPlain);
+              await storeLyrics(currentSong.songId, {
+                lyrics: cleanPlain,
+                syncedLyrics: parsed,
+                rawSynced: d.syncedLyrics,
+                source: d.source
+              }).catch(() => {});
+            } else if (d.lyrics) {
+              const cleanText = d.lyrics
+                .replace(/<br\s*\/?>/gi, "\n")
+                .replace(/<\/p>/gi, "\n")
+                .replace(/<[^>]+>/g, "")
+                .trim();
+              setSyncedLyrics(null);
+              setLyrics(cleanText);
+              await storeLyrics(currentSong.songId, {
+                lyrics: cleanText,
+                syncedLyrics: null,
+                source: d.source
+              }).catch(() => {});
+            } else {
+              setSyncedLyrics(null);
+              setLyrics("عذراً، لم نتمكن من العثور على كلمات هذه الأغنية.");
+            }
+          })
+          .catch(() => setLyrics("حدث خطأ أثناء جلب الكلمات."))
+          .finally(() => setIsLyricsLoading(false));
+      }).catch(() => {
+        setIsLyricsLoading(false);
+      });
     }
   }, [activeTab, currentSong, lyrics, syncedLyrics, isLyricsLoading]);
 
@@ -250,14 +323,13 @@ function FullPlayer({
   }, [syncedLyrics, currentTimeMs]);
 
   useEffect(() => {
-    if (activeTab === "lyrics" && activeLineIndex !== -1 && lyricsContainerRef.current) {
-      const container = lyricsContainerRef.current;
-      // Note: we add 1 to skip the header element in the children array
-      const activeElement = container.children[activeLineIndex + 1] as HTMLElement;
+    if (activeTab === "lyrics" && activeLineIndex !== -1) {
+      const activeElement = document.getElementById(`lyrics-line-${activeLineIndex}`);
       if (activeElement) {
-        container.scrollTo({
-          top: activeElement.offsetTop - container.clientHeight / 2 + activeElement.clientHeight / 2,
-          behavior: 'smooth'
+        activeElement.scrollIntoView({
+          behavior: "smooth",
+          block: "center",
+          inline: "nearest",
         });
       }
     }
@@ -284,7 +356,14 @@ function FullPlayer({
       animate={{ y: !isOpen ? "100%" : (swipeOffset > 0 ? swipeOffset : 0) }}
       transition={{ type: "spring", damping: 28, stiffness: 220 }}
       className="fixed inset-0 z-50 flex flex-col overflow-hidden"
-      style={{ pointerEvents: isOpen ? "auto" : "none", background: `linear-gradient(180deg, ${bg1} 0%, ${bg2} 100%)`, willChange: "transform", transform: "translateZ(0)" }}
+      style={{
+        pointerEvents: isOpen ? "auto" : "none",
+        background: `linear-gradient(180deg, ${bg1} 0%, ${bg2} 100%)`,
+        willChange: "transform",
+        transform: "translateZ(0)",
+        height: "100dvh",
+        maxHeight: "100dvh",
+      }}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
@@ -301,20 +380,25 @@ function FullPlayer({
       </div>
 
       {/* ── Content ── */}
-      <div className="relative z-10 flex flex-col h-full w-full max-w-sm mx-auto">
+      <div className="relative z-10 flex flex-col h-full w-full max-w-sm mx-auto overflow-hidden">
 
         {/* Top drag indicator */}
-        <div className="flex justify-center pt-3 pb-1">
+        <div className="flex justify-center pt-2.5 pb-1 shrink-0">
           <div className="w-10 h-1 rounded-full bg-white/20" />
         </div>
 
         {/* Top Bar */}
-        <div className="flex items-center justify-between px-5 pt-2 pb-4">
+        <div className="flex items-center justify-between px-5 pt-1 pb-1 shrink-0">
           <button onClick={onClose} className="p-2 rounded-full hover:bg-white/10 transition active:scale-90">
             <ChevronDown className="w-7 h-7 text-white" />
           </button>
-          <div className="text-center">
-            <p className="text-white/50 text-xs font-bold uppercase tracking-widest">يعزف الآن</p>
+          <div className="flex flex-col items-center">
+            <p className="text-white/50 text-[11px] font-bold uppercase tracking-widest">يعزف الآن</p>
+            {state.isHighQuality && (
+              <span className="text-[10px] font-black text-amber-300 flex items-center gap-1 bg-amber-400/15 px-2 py-0.5 rounded-full border border-amber-400/30 shadow-[0_0_10px_rgba(251,191,36,0.2)]">
+                استوديو HQ 320k 🎧
+              </span>
+            )}
           </div>
           <button
             onClick={() => {
@@ -330,38 +414,40 @@ function FullPlayer({
 
         {/* ═══════════ NOW PLAYING TAB ═══════════ */}
         {activeTab === "now" && (
-          <div className="flex-1 flex flex-col items-center justify-between px-5 pb-2 pt-2 overflow-hidden">
+          <div className="flex-1 flex flex-col items-center justify-between px-5 pb-1 pt-0 overflow-hidden min-h-0">
 
-            {/* Large Album Art */}
-            <motion.div
-              key={currentSong?.songId}
-              initial={{ scale: 0.85, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              transition={{ type: "spring", stiffness: 200, damping: 22 }}
-              className="relative mt-2 mb-4 shrink-0"
-            >
-              <div
-                className="w-64 h-64 md:w-72 md:h-72 rounded-3xl overflow-hidden shadow-2xl"
-                style={{ boxShadow: `0 24px 80px ${accent}55, 0 8px 30px rgba(0,0,0,0.6)` }}
+            {/* Responsive Scaled Album Art that dynamically fits available height */}
+            <div className="flex-1 min-h-0 w-full flex items-center justify-center py-2 shrink">
+              <motion.div
+                key={currentSong?.songId}
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                transition={{ type: "spring", stiffness: 220, damping: 24 }}
+                className="relative h-full max-h-[min(30dvh,215px)] aspect-square flex items-center justify-center mx-auto"
               >
-                <img src={proxyArt} alt={currentSong?.title} className="w-full h-full object-cover" />
-              </div>
-              {/* Spinning vinyl ring when playing */}
-              {state.isPlaying && (
-                <motion.div
-                  animate={{ rotate: 360 }}
-                  transition={{ duration: 8, repeat: Infinity, ease: "linear" }}
-                  className="absolute inset-[-12px] rounded-[40px] border-2 border-dashed pointer-events-none"
-                  style={{ borderColor: `${accent}40` }}
-                />
-              )}
-            </motion.div>
+                <div
+                  className="w-full h-full rounded-2xl sm:rounded-3xl overflow-hidden shadow-2xl relative"
+                  style={{ boxShadow: `0 14px 44px ${accent}44, 0 8px 24px rgba(0,0,0,0.6)` }}
+                >
+                  <img src={proxyArt} alt={currentSong?.title} className="w-full h-full object-cover" />
+                  {/* Spinning vinyl ring when playing */}
+                  {state.isPlaying && (
+                    <motion.div
+                      animate={{ rotate: 360 }}
+                      transition={{ duration: 8, repeat: Infinity, ease: "linear" }}
+                      className="absolute inset-[-4px] rounded-[24px] sm:rounded-[32px] border-2 border-dashed pointer-events-none"
+                      style={{ borderColor: `${accent}40` }}
+                    />
+                  )}
+                </div>
+              </motion.div>
+            </div>
 
             {/* Song Info + Like */}
-            <div className="w-full flex items-center justify-between px-1 mb-3">
+            <div className="w-full flex items-center justify-between px-1 mb-1 shrink-0">
               <button onClick={onLike} className="p-2 active:scale-90 transition-transform">
                 <Heart
-                  className={`w-7 h-7 transition-all ${isLiked ? "fill-current text-pink-400 scale-110" : "text-white/40"}`}
+                  className={`w-6 h-6 transition-all ${isLiked ? "fill-current text-pink-400 scale-110" : "text-white/40"}`}
                   style={isLiked ? { filter: `drop-shadow(0 0 8px ${accent})` } : {}}
                 />
               </button>
@@ -374,8 +460,8 @@ function FullPlayer({
                     exit={{ opacity: 0, y: -10 }}
                     transition={{ duration: 0.3 }}
                   >
-                    <h2 className="text-white font-black text-xl leading-tight truncate">{currentSong?.title || "—"}</h2>
-                    <p className="text-white/55 text-sm font-medium mt-1 truncate">{currentSong?.artist || "فنان"}</p>
+                    <h2 className="text-white font-black text-base sm:text-lg leading-tight truncate">{currentSong?.title || "—"}</h2>
+                    <p className="text-white/55 text-xs sm:text-sm font-medium mt-0.5 truncate">{currentSong?.artist || "فنان"}</p>
                   </motion.div>
                 </AnimatePresence>
               </div>
@@ -385,12 +471,12 @@ function FullPlayer({
             </div>
 
             {/* Waveform Visualizer */}
-            <div className="w-full mb-3">
+            <div className="w-full mb-1 shrink-0">
               <WaveformVisualizer isPlaying={state.isPlaying} accent={accent} />
             </div>
 
             {/* Seek Bar */}
-            <div className="w-full px-1 mb-2">
+            <div className="w-full px-1 mb-1 shrink-0">
               <SeekBar
                 progress={state.currentTime}
                 duration={state.duration}
@@ -401,14 +487,14 @@ function FullPlayer({
                 isPremium={isPremium}
                 onPremiumClick={() => { setPremiumFeatureName("تقديم وتأخير الأغنية"); setIsPremiumModalOpen(true); }}
               />
-              <div className="flex justify-between mt-2 text-[11px] font-bold text-white/40 tabular-nums" dir="ltr">
+              <div className="flex justify-between mt-1 text-[11px] font-bold text-white/40 tabular-nums" dir="ltr">
                 <span>{fmtTime(state.currentTime)}</span>
                 <span>-{fmtTime(state.duration - state.currentTime)}</span>
               </div>
             </div>
 
             {/* Main Controls */}
-            <div className="flex items-center justify-between w-full px-2 mb-4 mt-2">
+            <div className="flex items-center justify-between w-full px-3 mb-2 shrink-0">
               <button
                 onClick={() => setShuffle(!state.shuffle)}
                 className={`p-2 transition-colors active:scale-90 ${state.shuffle ? "text-white" : "text-white/30"}`}
@@ -418,28 +504,28 @@ function FullPlayer({
               </button>
 
               <button onClick={prev} className="active:scale-90 transition-transform p-2">
-                <SkipBack className="text-white w-10 h-10 fill-current" />
+                <SkipBack className="text-white w-8 h-8 fill-current" />
               </button>
 
               <button
                 onClick={togglePlay}
-                className="w-[72px] h-[72px] rounded-full flex items-center justify-center shadow-2xl active:scale-95 transition-transform shrink-0"
+                className="w-16 h-16 rounded-full flex items-center justify-center shadow-2xl active:scale-95 transition-transform shrink-0"
                 style={{
                   background: "white",
-                  boxShadow: `0 8px 32px ${accent}66, 0 4px 16px rgba(0,0,0,0.4)`
+                  boxShadow: `0 8px 30px ${accent}66, 0 4px 16px rgba(0,0,0,0.4)`
                 }}
               >
                 {state.isBuffering ? (
-                  <div className="w-8 h-8 border-4 border-black/10 border-t-black rounded-full animate-spin" />
+                  <div className="w-7 h-7 border-4 border-black/10 border-t-black rounded-full animate-spin" />
                 ) : state.isPlaying ? (
-                  <Pause className="w-9 h-9 fill-current" style={{ color: bg2 }} />
+                  <Pause className="w-8 h-8 fill-current" style={{ color: bg2 }} />
                 ) : (
-                  <Play className="w-9 h-9 fill-current ml-1" style={{ color: bg2 }} />
+                  <Play className="w-8 h-8 fill-current ml-1" style={{ color: bg2 }} />
                 )}
               </button>
 
               <button onClick={next} className="active:scale-90 transition-transform p-2">
-                <SkipForward className="text-white w-10 h-10 fill-current" />
+                <SkipForward className="text-white w-8 h-8 fill-current" />
               </button>
 
               <button
@@ -523,6 +609,7 @@ function FullPlayer({
                   return (
                     <div
                       key={i}
+                      id={`lyrics-line-${i}`}
                       onClick={() => seekTo(line.timeMs / 1000)}
                       className={`font-black text-2xl md:text-3xl leading-snug transition-all duration-500 cursor-pointer ${
                         isActive 
@@ -550,12 +637,12 @@ function FullPlayer({
 
         {/* ═══════════ AUDIO TAB ═══════════ */}
         {activeTab === "audio" && (
-          <div className="flex-1 flex flex-col justify-center items-center p-8 space-y-10">
-            <div className="w-full space-y-4">
+          <div className="flex-1 overflow-y-auto no-scrollbar p-6 space-y-6" dir="rtl">
+            <div className="w-full space-y-3 bg-white/5 p-4 rounded-2xl border border-white/10 backdrop-blur-md">
               <div className="flex items-center justify-between text-white font-bold text-sm">
-                <VolumeX className="w-5 h-5 text-white/50" />
+                <VolumeX className="w-4 h-4 text-white/50" />
                 <span>مستوى الصوت</span>
-                <Volume2 className="w-5 h-5 text-white/50" />
+                <Volume2 className="w-4 h-4 text-white/50" />
               </div>
               <input
                 type="range" min="0" max="1" step="0.01"
@@ -566,29 +653,92 @@ function FullPlayer({
               />
             </div>
 
-            <button
-              onClick={() => {
-                if (!isPremium) { setPremiumFeatureName("جودة الصوت الخارقة (HQ)"); setIsPremiumModalOpen(true); }
-                else {
-                  const newVal = !state.isHighQuality;
-                  setHighQuality(newVal);
-                  showToast(newVal ? "تم تفعيل جودة الصوت الخارقة 🎧✨" : "تم إيقاف الجودة الخارقة", "hq");
-                }
-              }}
-              className={`w-full py-4 rounded-2xl flex items-center justify-center gap-3 font-black text-lg transition-all ${
-                state.isHighQuality
-                  ? "text-black shadow-2xl"
-                  : "bg-white/10 text-white/70 hover:bg-white/20"
-              }`}
-              style={state.isHighQuality ? {
-                background: `linear-gradient(135deg, #f59e0b, #ef4444)`,
-                boxShadow: `0 0 30px rgba(245,158,11,0.4)`
-              } : {}}
-            >
-              <span className="border-2 border-current px-2 rounded-lg">HQ</span>
-              جودة صوت خارقة
-              {!isPremium && <Crown className="w-5 h-5 text-amber-400 drop-shadow-md" />}
-            </button>
+            {/* Master Studio Clarity Toggle */}
+            <div className="space-y-3">
+              <button
+                onClick={() => {
+                  if (!isPremium) {
+                    setPremiumFeatureName("نقاء وجودة الصوت الخارقة (Aura Studio Master)");
+                    setIsPremiumModalOpen(true);
+                  } else {
+                    const newVal = !state.isHighQuality;
+                    setHighQuality(newVal);
+                    showToast(newVal ? "تم تفعيل نقاء الصوت الفائق (Master Studio) 🎧✨" : "تم إيقاف معالجة نقاء الصوت", "hq");
+                  }
+                }}
+                className={`w-full py-4 px-5 rounded-2xl flex items-center justify-between font-black text-lg transition-all ${
+                  state.isHighQuality
+                    ? "text-black shadow-2xl"
+                    : "bg-white/10 text-white/80 hover:bg-white/15 border border-white/10"
+                }`}
+                style={state.isHighQuality ? {
+                  background: `linear-gradient(135deg, #f59e0b, #ef4444)`,
+                  boxShadow: `0 0 35px rgba(245,158,11,0.45)`
+                } : {}}
+              >
+                <div className="flex items-center gap-3">
+                  <Sparkles className="w-6 h-6 animate-pulse" />
+                  <div className="text-right">
+                    <div className="flex items-center gap-2">
+                      <span>نقاء الصوت الفائق (Studio Master)</span>
+                      {!isPremium && <Crown className="w-4 h-4 text-amber-400" />}
+                    </div>
+                    <p className={`text-xs font-medium ${state.isHighQuality ? "text-black/80" : "text-white/50"}`}>
+                      معالجة احترافية 32-bit مثل سبوتيفاي وأنغامي Hi-Fi
+                    </p>
+                  </div>
+                </div>
+                <span className={`text-xs font-black px-2.5 py-1 rounded-full border ${state.isHighQuality ? "border-black/30 bg-black/10" : "border-amber-400/40 text-amber-400 bg-amber-400/10"}`}>
+                  {state.isHighQuality ? "مُفعّل" : "HQ 320k"}
+                </span>
+              </button>
+            </div>
+
+            {/* Studio Sound Presets (When HQ is active) */}
+            {state.isHighQuality && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="space-y-3 bg-white/5 p-4 rounded-2xl border border-white/10"
+              >
+                <div className="flex items-center gap-2 text-white/80 font-bold text-sm">
+                  <Sliders className="w-4 h-4 text-amber-400" />
+                  <span>طابع ونمط نقاء الصوت:</span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2.5">
+                  {[
+                    { id: "crystal", label: "نقاء فائق (Studio)", icon: "🎧", desc: "وضوح فائق وتفاصيل ناعمة" },
+                    { id: "bass", label: "بيس ونقاء عميق", icon: "🔊", desc: "تضخيم عميق بدون كتم" },
+                    { id: "vocal", label: "صوت غنائي (Vocal)", icon: "🎙️", desc: "إبراز صوت المطرب بوضوح" },
+                    { id: "spatial", label: "محيطي ثلاثي الأبعاد", icon: "🌌", desc: "مسرح صوتي واسع 3D" },
+                  ].map((p) => {
+                    const isSelected = (soundPreset || "crystal") === p.id;
+                    return (
+                      <button
+                        key={p.id}
+                        onClick={() => {
+                          setSoundPreset?.(p.id as any);
+                          showToast(`تم تفعيل طابع: ${p.label} ✨`);
+                        }}
+                        className={`p-3 rounded-xl text-right transition-all flex flex-col justify-between ${
+                          isSelected
+                            ? "bg-amber-400 text-black shadow-lg shadow-amber-400/20 font-bold"
+                            : "bg-white/5 text-white/70 hover:bg-white/10 border border-white/5"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-base">{p.icon}</span>
+                          {isSelected && <span className="text-[10px] bg-black/20 px-1.5 py-0.5 rounded-full font-black">نشط</span>}
+                        </div>
+                        <p className="text-xs font-bold">{p.label}</p>
+                        <p className={`text-[10px] mt-0.5 ${isSelected ? "text-black/80" : "text-white/40"}`}>{p.desc}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+              </motion.div>
+            )}
           </div>
         )}
 
@@ -626,8 +776,8 @@ function FullPlayer({
 
         {/* ─── Bottom Tab Navigation ─── */}
         <div
-          className="flex items-center justify-around px-4 py-3 border-t mt-auto shrink-0"
-          style={{ borderColor: "rgba(255,255,255,0.08)", paddingBottom: "max(12px, env(safe-area-inset-bottom, 12px))" }}
+          className="flex items-center justify-around px-2 py-2 border-t mt-auto shrink-0 bg-black/30 backdrop-blur-md"
+          style={{ borderColor: "rgba(255,255,255,0.08)", paddingBottom: "max(10px, env(safe-area-inset-bottom, 10px))" }}
         >
           {[
             { id: "now", icon: Music2, label: "يعزف" },
@@ -679,13 +829,10 @@ export function PlayerBar() {
 
   const isPremium = typeof window !== "undefined" && localStorage.getItem("aura_user_tier") === "premium";
 
-  // Like state
+  // Like state: check local store instantly without network call
   useEffect(() => {
     if (!currentSong?.songId) return;
-    fetch(`/api/likes?songId=${currentSong.songId}`)
-      .then(r => r.json())
-      .then(d => setIsLiked(d.liked))
-      .catch(() => {});
+    setIsLiked(isFavoriteLocal(currentSong.songId));
   }, [currentSong?.songId]);
 
   const toggleLike = async () => {
@@ -709,11 +856,11 @@ export function PlayerBar() {
 
   const handleDownload = async () => {
     if (!currentSong) return;
-    addToast(`جاري تحميل "${currentSong.title}"... 🚀`);
+    addToast(`جاري حفظ "${currentSong.title}" في مكتبة الموقع... 🚀`);
     const ok = await downloadSong(currentSong.songId, currentSong.youtubeVideoId, {
       title: currentSong.title, artist: currentSong.artist || "فنان", thumbnailUrl: currentSong.thumbnailUrl, folderName: currentSong.artist || "أخرى"
     });
-    addToast(ok ? "تم الحفظ للأوفلاين ✅" : "فشل التحميل ❌", ok ? "success" : "error");
+    addToast(ok ? "تم حفظ الأغنية في مكتبتك (الأوفلاين) ✅" : "فشل التحميل ❌", ok ? "success" : "error");
   };
 
   const art = currentSong?.thumbnailUrl || currentSong?.metadata?.thumbnailUrl;

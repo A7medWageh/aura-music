@@ -22,13 +22,13 @@ const withPWA = withPWAInit({
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
-  swcMinify: false,
+  devIndicators: false,
   // output: "standalone",
   experimental: {
     optimizePackageImports: ["framer-motion"],
   },
   // Packages that should NOT be bundled by webpack (use native Node.js require)
-  serverExternalPackages: ["play-dl", "@distube/ytdl-core", "youtubei.js", "ioredis", "pg"],
+  serverExternalPackages: ["play-dl", "@distube/ytdl-core", "youtubei.js", "ioredis", "pg", "yt-search", "cheerio"],
   async headers() {
     return [
       {

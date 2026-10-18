@@ -1,26 +1,25 @@
 /**
- * AURA MUSIC — Stream Engine (Simplified)
+ * AURA MUSIC — Stream Engine
  *
- * Uses the new external youtupe-api for all YouTube resolutions.
- * Flow: youtupe-api -> returns download_url -> /api/audio/[videoId] proxies it or redirects
+ * Uses the Universal Audio Resolver (JioSaavn, Albumaty, SoundCloud, YouTube)
+ * to resolve direct audio streams without needing external localhost servers.
  */
 
 import { getRedisClient } from "../redis";
+import { resolveUniversalAudio } from "@/services/music/universalAudioResolver";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export interface StreamResult {
   url: string;
   directPlay: boolean;
-  source: "youtupe-api" | "piped" | "cobalt" | "invidious" | "youtubei";
+  source: "youtupe-api" | "piped" | "cobalt" | "invidious" | "youtubei" | "jiosaavn" | "albumaty" | "soundcloud";
   durationSec?: number;
 }
 
 // ─── In-memory cache ──────────────────────────────────────────────────────────
 const memCache = new Map<string, { result: StreamResult; expiresAt: number }>();
-const CACHE_TTL_MS = 25 * 60 * 1000; // 25 min (URLs expire in ~30 min)
+const CACHE_TTL_MS = 25 * 60 * 1000; // 25 min
 const REDIS_TTL_SEC = 1500;           // 25 min
-
-const YOUTUBE_API_URL = process.env.YOUTUBE_API_URL || "http://127.0.0.1:3001";
 
 // ─── Cache helpers ────────────────────────────────────────────────────────────
 async function getFromCache(videoId: string): Promise<StreamResult | null> {
@@ -31,7 +30,7 @@ async function getFromCache(videoId: string): Promise<StreamResult | null> {
     const redis = getRedisClient();
     const raw = await Promise.race([
       redis.get(`aura:stream:v6:${videoId}`),
-      new Promise<null>((r) => setTimeout(() => r(null), 1200)),
+      new Promise<null>((r) => setTimeout(() => r(null), 800)),
     ]);
     if (raw) {
       const result: StreamResult = JSON.parse(raw);
@@ -52,7 +51,7 @@ async function saveToCache(videoId: string, result: StreamResult): Promise<void>
 }
 
 // ─── Main export ──────────────────────────────────────────────────────────────
-export async function resolveStreamUrl(videoId: string): Promise<StreamResult> {
+export async function resolveStreamUrl(videoId: string, title?: string, artist?: string): Promise<StreamResult> {
   const start = Date.now();
 
   // 0. Cache (instant)
@@ -62,34 +61,18 @@ export async function resolveStreamUrl(videoId: string): Promise<StreamResult> {
     return cached;
   }
 
-  console.log(`[Stream] Resolving ${videoId} via youtupe-api...`);
+  console.log(`[Stream] Resolving ${videoId} via Universal Audio Resolver...`);
 
-  const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
-  const apiUrl = `${YOUTUBE_API_URL}/api/download/mp3?url=${encodeURIComponent(targetUrl)}`;
-
-  const res = await fetch(apiUrl);
-  
-  if (!res.ok) {
-    throw new Error(`youtupe-api returned ${res.status}`);
-  }
-
-  const data = await res.json();
-  if (!data.success || !data.download_url) {
-    throw new Error(`youtupe-api failed to extract url: ${data.error || "Unknown error"}`);
-  }
-
-  const url = data.download_url;
+  const resolved = await resolveUniversalAudio({ videoId, title, artist });
 
   const result: StreamResult = {
-    url,
-    // googlevideo URLs from yt-dlp might be IP-locked depending on the server location.
-    // Setting directPlay to false forces our Next.js API to proxy or redirect.
-    // Wait, yt-dlp URLs are usually googlevideo URLs. We'll set directPlay false to ensure we can proxy if needed.
-    directPlay: false,
-    source: "youtupe-api",
+    url: resolved.streamUrl,
+    directPlay: resolved.directPlay,
+    source: resolved.source as any,
+    durationSec: resolved.durationSec,
   };
 
-  console.log(`[Stream] ✅ Resolved ${videoId} in ${Date.now() - start}ms`);
+  console.log(`[Stream] ✅ Resolved ${videoId} via ${resolved.source} in ${Date.now() - start}ms`);
   await saveToCache(videoId, result);
   return result;
 }

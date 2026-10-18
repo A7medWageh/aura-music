@@ -119,7 +119,7 @@ export async function getAudioBlob(songId: string): Promise<Blob | null> {
   return record?.blob || null;
 }
 
-export async function storeLyrics(songId: string, lyrics: any[]): Promise<void> {
+export async function storeLyrics(songId: string, lyrics: any): Promise<void> {
   const db = await openOfflineDb();
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(LYRICS_STORE, "readwrite");
@@ -129,7 +129,7 @@ export async function storeLyrics(songId: string, lyrics: any[]): Promise<void> 
   });
 }
 
-export async function getLyrics(songId: string): Promise<any[] | null> {
+export async function getLyrics(songId: string): Promise<any | null> {
   const db = await openOfflineDb();
   const record: any = await new Promise((resolve, reject) => {
     const tx = db.transaction(LYRICS_STORE, "readonly");

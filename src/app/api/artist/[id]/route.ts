@@ -34,6 +34,9 @@ export async function GET(
     // ONLY cache if it's not an error response
     if (enrichedData.source !== "error" && enrichedData.artistName !== "Unknown Artist") {
       cache.set(id, { data: enrichedData, at: Date.now() });
+      return NextResponse.json(enrichedData, {
+        headers: { "Cache-Control": "public, s-maxage=1800, stale-while-revalidate=86400" },
+      });
     }
     
     return NextResponse.json(enrichedData);
