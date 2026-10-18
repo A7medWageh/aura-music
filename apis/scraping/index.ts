@@ -21,20 +21,26 @@ const memCache = new Map<string, { result: StreamResult; expiresAt: number }>();
 const CACHE_TTL_MS = 25 * 60 * 1000; // 25 min
 const REDIS_TTL_SEC = 1500;           // 25 min
 
+function getCacheKey(videoId: string, title?: string, artist?: string): string {
+  if (videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId)) return videoId;
+  return `${title || ""}__${artist || ""}`.toLowerCase().trim();
+}
+
 // ─── Cache helpers ────────────────────────────────────────────────────────────
-async function getFromCache(videoId: string): Promise<StreamResult | null> {
-  const mem = memCache.get(videoId);
+async function getFromCache(key: string): Promise<StreamResult | null> {
+  if (!key) return null;
+  const mem = memCache.get(key);
   if (mem && mem.expiresAt > Date.now()) return mem.result;
 
   try {
     const redis = getRedisClient();
     const raw = await Promise.race([
-      redis.get(`aura:stream:v8:${videoId}`),
+      redis.get(`aura:stream:v8:${key}`),
       new Promise<null>((r) => setTimeout(() => r(null), 800)),
     ]);
     if (raw) {
       const result: StreamResult = JSON.parse(raw);
-      memCache.set(videoId, { result, expiresAt: Date.now() + CACHE_TTL_MS });
+      memCache.set(key, { result, expiresAt: Date.now() + CACHE_TTL_MS });
       return result;
     }
   } catch { /* Redis unavailable */ }
@@ -42,26 +48,30 @@ async function getFromCache(videoId: string): Promise<StreamResult | null> {
   return null;
 }
 
-async function saveToCache(videoId: string, result: StreamResult): Promise<void> {
-  memCache.set(videoId, { result, expiresAt: Date.now() + CACHE_TTL_MS });
+async function saveToCache(key: string, result: StreamResult): Promise<void> {
+  if (!key) return;
+  memCache.set(key, { result, expiresAt: Date.now() + CACHE_TTL_MS });
   try {
     const redis = getRedisClient();
-    redis.set(`aura:stream:v8:${videoId}`, JSON.stringify(result), "EX", REDIS_TTL_SEC).catch(() => {});
+    redis.set(`aura:stream:v8:${key}`, JSON.stringify(result), "EX", REDIS_TTL_SEC).catch(() => {});
   } catch { /* Redis unavailable */ }
 }
 
 // ─── Main export ──────────────────────────────────────────────────────────────
 export async function resolveStreamUrl(videoId: string, title?: string, artist?: string): Promise<StreamResult> {
   const start = Date.now();
+  const cacheKey = getCacheKey(videoId, title, artist);
 
   // 0. Cache (instant)
-  const cached = await getFromCache(videoId);
-  if (cached) {
-    console.log(`[Stream] ⚡ Cache hit ${videoId} (${Date.now() - start}ms)`);
-    return cached;
+  if (cacheKey) {
+    const cached = await getFromCache(cacheKey);
+    if (cached) {
+      console.log(`[Stream] ⚡ Cache hit ${cacheKey} (${Date.now() - start}ms)`);
+      return cached;
+    }
   }
 
-  console.log(`[Stream] Resolving ${videoId} via Universal Audio Resolver...`);
+  console.log(`[Stream] Resolving ${videoId} (${title || ""} - ${artist || ""}) via Universal Audio Resolver...`);
 
   const resolved = await resolveUniversalAudio({ videoId, title, artist });
 
@@ -73,6 +83,8 @@ export async function resolveStreamUrl(videoId: string, title?: string, artist?:
   };
 
   console.log(`[Stream] ✅ Resolved ${videoId} via ${resolved.source} in ${Date.now() - start}ms`);
-  await saveToCache(videoId, result);
+  if (cacheKey) {
+    await saveToCache(cacheKey, result);
+  }
   return result;
 }

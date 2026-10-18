@@ -7,8 +7,22 @@ const CACHE_TTL = 60 * 60 * 1000; // 60 minutes
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
-  const title = searchParams.get("title")?.trim();
-  const artist = searchParams.get("artist")?.trim() ?? "";
+  let title = searchParams.get("title")?.trim() || "";
+  let artist = searchParams.get("artist")?.trim() || "";
+
+  const genericArtists = ["فنان", "فنان غير معروف", "artist", "unknown", "various artists", "unknown artist"];
+  if (genericArtists.includes(artist.toLowerCase())) {
+    artist = "";
+  }
+
+  // If title has "Artist - Song", extract
+  if ((!artist || genericArtists.includes(artist.toLowerCase())) && title.includes(" - ")) {
+    const parts = title.split(" - ");
+    if (parts.length === 2 && parts[0].trim().length > 1 && parts[1].trim().length > 1) {
+      artist = parts[0].trim();
+      title = parts[1].trim();
+    }
+  }
 
   if (!title) {
     return NextResponse.json({ success: false, error: "Missing title" }, { status: 400 });

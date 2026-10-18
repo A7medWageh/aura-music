@@ -64,6 +64,18 @@ function cleanArtist(str: string): string {
     .trim();
 }
 
+function normalizeText(text: string): string {
+  if (!text) return "";
+  return text
+    .toLowerCase()
+    .replace(/[أإآ]/g, "ا")
+    .replace(/[ة]/g, "ه")
+    .replace(/[ى]/g, "ي")
+    .replace(/[^a-z0-9\u0621-\u064A\s]/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 /**
  * Quick oEmbed query to get video title and channel when only videoId is available
  */
@@ -216,9 +228,30 @@ export async function resolveUniversalAudio(params: {
           searchYouTube(q),
           new Promise<any>((_, reject) => setTimeout(() => reject(new Error("search timeout")), 2500)),
         ]);
-        const top = ytRes?.songs?.[0];
-        if (top?.youtubeVideoId && /^[a-zA-Z0-9_-]{11}$/.test(top.youtubeVideoId)) {
-          videoId = top.youtubeVideoId;
+        const songs = ytRes?.songs || [];
+        if (title && songs.length > 0) {
+          const normTitle = normalizeText(title);
+          const normArtist = normalizeText(artist);
+          const titleWords = normTitle.split(" ").filter((w: string) => w.length > 1);
+          const artistWords = normArtist.split(" ").filter((w: string) => w.length > 1);
+
+          for (const s of songs) {
+            if (!s?.youtubeVideoId || !/^[a-zA-Z0-9_-]{11}$/.test(s.youtubeVideoId)) continue;
+            const fullSongText = normalizeText(`${s.title || ""} ${s.artist || ""}`);
+
+            // Strict check: title words must match
+            const titleMatches = titleWords.length > 0 && titleWords.every((w: string) => fullSongText.includes(w));
+            if (!titleMatches) continue;
+
+            // Strict check: if artist is provided, artist words must match
+            if (artistWords.length > 0) {
+              const artistMatches = artistWords.some((w: string) => fullSongText.includes(w));
+              if (!artistMatches) continue;
+            }
+
+            videoId = s.youtubeVideoId;
+            break;
+          }
         }
       } catch (e: any) {
         console.warn("[AudioResolver] Fallback YouTube search failed:", e.message);
@@ -339,7 +372,29 @@ export async function resolveUniversalAudio(params: {
         searchYouTube(searchQuery),
         new Promise<any>((_, reject) => setTimeout(() => reject(new Error("search timeout")), 3000)),
       ]);
-      const candidate = searchRes.songs?.[0];
+      const songs = searchRes?.songs || [];
+      let candidate: any = null;
+
+      if (songs.length > 0) {
+        const normTitle = normalizeText(title);
+        const normArtist = normalizeText(artist);
+        const titleWords = normTitle.split(" ").filter((w: string) => w.length > 1);
+        const artistWords = normArtist.split(" ").filter((w: string) => w.length > 1);
+
+        for (const s of songs) {
+          const fullSongText = normalizeText(`${s.title || ""} ${s.artist || ""}`);
+          const titleMatches = titleWords.length > 0 && titleWords.every((w: string) => fullSongText.includes(w));
+          if (!titleMatches) continue;
+
+          if (artistWords.length > 0) {
+            const artistMatches = artistWords.some((w: string) => fullSongText.includes(w));
+            if (!artistMatches) continue;
+          }
+
+          candidate = s;
+          break;
+        }
+      }
       const fallbackVid = candidate?.youtubeVideoId || candidate?.songId;
 
       if (fallbackVid && fallbackVid !== videoId) {
