@@ -13,6 +13,9 @@ node_modules/
 
 # production
 /build
+/out/
+ios/App/derived_data/
+*.ipa
 
 # misc
 .DS_Store
