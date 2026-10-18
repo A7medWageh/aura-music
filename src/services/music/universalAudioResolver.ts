@@ -51,6 +51,19 @@ function cleanTitle(str: string): string {
     .trim();
 }
 
+function cleanArtist(str: string): string {
+  if (!str) return "";
+  return str
+    .replace(/\s*-\s*topic\b/gi, "")
+    .replace(/\s*vevo\b/gi, "")
+    .replace(/\s*official\b/gi, "")
+    .replace(/\s*channel\b/gi, "")
+    .replace(/\s*records\b/gi, "")
+    .replace(/\s*music\b/gi, "")
+    .replace(/\s*قناة\s*رسمية/gi, "")
+    .trim();
+}
+
 /**
  * Quick oEmbed query to get video title and channel when only videoId is available
  */
@@ -63,7 +76,7 @@ async function fetchYouTubeOEmbed(videoId: string): Promise<{ title: string; aut
     if (res.data?.title) {
       return {
         title: cleanTitle(res.data.title),
-        author: res.data.author_name || "",
+        author: cleanArtist(res.data.author_name || ""),
       };
     }
   } catch {
@@ -81,7 +94,7 @@ export async function resolveUniversalAudio(params: {
   let { videoId, title = "", artist = "", forDownload = false } = params;
 
   const originalCleanTitle = cleanTitle(title);
-  const originalCleanArtist = artist.trim();
+  const originalCleanArtist = cleanArtist(artist);
   title = originalCleanTitle;
   artist = originalCleanArtist;
 
@@ -96,12 +109,12 @@ export async function resolveUniversalAudio(params: {
         oembedArabicTitle = cleanTitle(oembed.title);
       }
       if (!artist && oembed.author) {
-        artist = oembed.author.trim();
+        artist = cleanArtist(oembed.author);
       }
     }
   }
 
-  const cacheKey = `v3_${videoId || ""}_${title}__${artist}`.toLowerCase();
+  const cacheKey = `v4_${videoId || ""}_${title}__${artist}`.toLowerCase();
   const cached = memCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.result;
@@ -161,6 +174,9 @@ export async function resolveUniversalAudio(params: {
       }
       if (!albumatyUrl && originalCleanTitle && originalCleanTitle !== title) {
         albumatyUrl = await resolveAlbumatyStream(originalCleanTitle, artist);
+      }
+      if (!albumatyUrl && title && title.length >= 4 && artist) {
+        albumatyUrl = await resolveAlbumatyStream(title, "");
       }
       if (albumatyUrl) {
         const result: UniversalAudioResult = {

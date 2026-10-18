@@ -27,7 +27,17 @@ const ARABIC_ARTIST_NAMES = [
 export async function resolveSaavnSong(query: string, artistFilter?: string): Promise<SaavnSong | null> {
   try {
     const cleanQ = query.replace(/\(.*?\)|\[.*?\]/g, "").trim();
-    const searchQuery = artistFilter ? `${artistFilter} ${cleanQ}` : cleanQ;
+    const cleanArt = artistFilter
+      ? artistFilter
+          .replace(/\s*-\s*topic\b/gi, "")
+          .replace(/\s*vevo\b/gi, "")
+          .replace(/\s*official\b/gi, "")
+          .replace(/\s*channel\b/gi, "")
+          .replace(/\s*records\b/gi, "")
+          .replace(/\s*music\b/gi, "")
+          .trim()
+      : undefined;
+    const searchQuery = cleanArt ? `${cleanArt} ${cleanQ}` : cleanQ;
 
     // 1. Search song via autocomplete
     const searchRes = await axios.get(JIOSAAVN_API, {
@@ -75,12 +85,12 @@ export async function resolveSaavnSong(query: string, artistFilter?: string): Pr
       const cNorm = norm(s.title || "");
       if (!cNorm || !qNorm) return false;
 
-      // 1. If artistFilter is provided, verify artist match!
-      if (artistFilter) {
-        const aNorm = norm(artistFilter);
+      // 1. If cleanArt is provided, verify artist match!
+      if (cleanArt) {
+        const aNorm = norm(cleanArt);
         const cArtist = norm(s.artist || s.more_info?.singers || s.more_info?.music || s.description || "");
         if (aNorm.length >= 3) {
-          const aWords = artistFilter.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+          const aWords = cleanArt.toLowerCase().split(/\s+/).filter(w => w.length > 2);
           const hasArtistWord = aWords.some(w => cArtist.includes(norm(w)));
           if (!hasArtistWord && !cArtist.includes(aNorm) && !aNorm.includes(cArtist)) {
             return false; // Reject candidate from wrong artist!

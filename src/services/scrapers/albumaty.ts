@@ -221,11 +221,17 @@ export async function resolveAlbumatyStream(title: string, artist: string): Prom
     }
 
     // 1. Resolve artist and title names (translating Franco if present)
-    const lowerArtist = rawArtist.toLowerCase();
-    const resolvedArtist = ARTIST_NAME_MAP[lowerArtist] || rawArtist
-      .replace(/ - Topic$/i, "")
-      .replace(/ official.*$/gi, "")
+    const cleanedArtist = rawArtist
+      .replace(/\s*-\s*topic\b/gi, "")
+      .replace(/\s*vevo\b/gi, "")
+      .replace(/\s*official\b/gi, "")
+      .replace(/\s*channel\b/gi, "")
+      .replace(/\s*records\b/gi, "")
+      .replace(/\s*music\b/gi, "")
+      .replace(/\s*قناة\s*رسمية/gi, "")
       .trim();
+    const lowerArtist = cleanedArtist.toLowerCase();
+    const resolvedArtist = ARTIST_NAME_MAP[lowerArtist] || cleanedArtist;
 
     const lowerTitle = rawTitle.toLowerCase();
     const resolvedTitle = SONG_TITLE_MAP[lowerTitle] || rawTitle
@@ -359,8 +365,8 @@ export async function resolveAlbumatyStream(title: string, artist: string): Prom
 
         // Verify top candidates
         for (const cand of candidates.slice(0, 4)) {
-          // If artist is known, verify candidate belongs to this artist
-          if (normTargetArtist) {
+          // If artist is known and in Arabic, verify candidate belongs to this artist
+          if (normTargetArtist && /[\u0600-\u06FF]/.test(normTargetArtist)) {
             try {
               const songPageRes = await fetch(`https://www.albumaty.com/song/${cand.id}.html`, {
                 headers: { "User-Agent": "Mozilla/5.0" },
@@ -377,7 +383,7 @@ export async function resolveAlbumatyStream(title: string, artist: string): Prom
                   singerNorm.includes(normTargetArtist) ||
                   normTargetArtist.includes(singerNorm);
 
-                if (!isArtistVerified) {
+                if (!isArtistVerified && cand.score < 100) {
                   console.log(`[Albumaty] Rejecting search candidate id=${cand.id} (wrong artist: "${singerNorm}")`);
                   continue;
                 }
