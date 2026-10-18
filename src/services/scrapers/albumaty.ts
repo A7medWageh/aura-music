@@ -217,17 +217,15 @@ export async function resolveAlbumatyStream(title: string, artist: string): Prom
           let score = 0;
           if (normText === normTargetSong) {
             score = 100;
-          } else if (normText.startsWith(normTargetSong) || normText.includes(normTargetSong)) {
-            score = 80;
-          } else if (normTargetSong.includes(normText) && normText.length >= 4) {
-            score = 70;
+          } else if (normTargetArtist && (normText === `${normTargetArtist}${normTargetSong}` || normText === `${normTargetSong}${normTargetArtist}`)) {
+            score = 100;
+          } else if (normTargetSong.length >= 4 && (normText.startsWith(normTargetSong) || normText.includes(normTargetSong))) {
+            if (!normTargetArtist || normText.includes(normTargetArtist)) {
+              score = 90;
+            }
           }
 
-          if (score > 0 && normTargetArtist) {
-            if (normText.includes(normTargetArtist)) score += 20;
-          }
-
-          if (score > bestScore && score >= 70) {
+          if (score > bestScore && score >= 90) {
             bestScore = score;
             bestSongId = sId;
           }
@@ -286,9 +284,9 @@ export async function resolveAlbumatyStream(title: string, artist: string): Prom
               return false;
             }
 
-            if (normSTitle.includes(normTargetSong) || normTargetSong.includes(normSTitle)) {
-              if (85 > bestScore) {
-                bestScore = 85;
+            if (normTargetSong.length >= 4 && (normSTitle.startsWith(normTargetSong) || normSTitle.includes(normTargetSong))) {
+              if (90 > bestScore) {
+                bestScore = 90;
                 bestSongHref = href;
               }
             }

@@ -99,22 +99,25 @@ const NO_CACHE_HEADERS = {
 
 async function getFallbackVideoId(videoId?: string, title?: string, artist?: string): Promise<string | null> {
   if (videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId)) return videoId;
-  const q = `${artist || ""} ${title || ""}`.trim();
+  const q = `${title || ""} ${artist || ""}`.trim();
   if (!q) return null;
   try {
     const { searchYouTube } = await import("@apis/youtubei.js");
     const res = await searchYouTube(q);
-    const first = res.songs?.[0];
-    if (first?.youtubeVideoId && /^[a-zA-Z0-9_-]{11}$/.test(first.youtubeVideoId)) {
-      return first.youtubeVideoId;
+    const first = res.songs?.[0] || (res as any).videos?.[0];
+    const vid = first?.youtubeVideoId || first?.videoId || first?.id;
+    if (vid && /^[a-zA-Z0-9_-]{11}$/.test(vid)) {
+      return vid;
     }
-  } catch {}
+  } catch (e: any) {
+    console.warn("[getFallbackVideoId] YouTube search failed:", e.message);
+  }
   return null;
 }
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
-  const videoId = searchParams.get("videoId") || undefined;
+  const videoId = searchParams.get("videoId") || searchParams.get("id") || undefined;
   const title = searchParams.get("title") || undefined;
   const artist = searchParams.get("artist") || undefined;
   const useProxy = searchParams.get("proxy") === "true";
@@ -146,7 +149,7 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const isAttachment = req.nextUrl.searchParams.get("attachment") === "true";
+    const isAttachment = req.nextUrl.searchParams.get("attachment") === "true" || isDownload;
     const trackName = title || resolved.title || "song";
     const safeFilename = encodeURIComponent(trackName.replace(/[\/\\?%*:|"<>]/g, "_")) + ".mp3";
 

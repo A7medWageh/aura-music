@@ -88,15 +88,18 @@ export async function resolveSaavnSong(query: string, artistFilter?: string): Pr
         }
       }
 
-      // 2. Title must match query
+      // 2. Title must match query strictly
       if (cNorm === qNorm) return true;
-      if (cNorm.startsWith(qNorm) || qNorm.startsWith(cNorm)) return true;
+      if (qNorm.length >= 4 && (cNorm.startsWith(qNorm) || qNorm.startsWith(cNorm))) return true;
 
-      // Word overlap
+      // Word match only if all words match and artist also matched
       const qWords = cleanQ.toLowerCase().split(/\s+/).filter(w => w.length > 2);
       const cWords = (s.title || "").toLowerCase().split(/\s+/).filter((w: string) => w.length > 2);
-      const overlap = qWords.filter(w => cWords.includes(w)).length;
-      return overlap >= Math.max(1, qWords.length);
+      if (qWords.length >= 2 && qWords.every(w => cWords.includes(w))) {
+        return true;
+      }
+
+      return false;
     });
 
     if (!validCandidate) {

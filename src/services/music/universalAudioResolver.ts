@@ -96,92 +96,70 @@ export async function resolveUniversalAudio(params: {
     }
   }
 
-  // If title still lacks Arabic characters, do a fast yt-search check to uncover official bilingual/Arabic title
-  let searchArabicTitle = "";
-  let searchArabicArtist = "";
-  if (artist || title) {
-    try {
-      const yts = require("yt-search");
-      const ytLookup = await yts(`${artist} ${title}`.trim());
-      const arabicVid = ytLookup?.videos?.slice(0, 8).find((v: any) => /[\u0600-\u06FF]/.test(v.title));
-      if (arabicVid?.title) {
-        console.log(`[AudioResolver] Discovered Arabic title via yt-search: "${arabicVid.title}"`);
-        const cleanArabic = cleanTitle(arabicVid.title);
-        const parts = cleanArabic.split(/[/|\-–—]/).map((s: string) => s.trim()).filter((s: string) => /[\u0600-\u06FF]/.test(s));
-        if (parts.length >= 2) {
-          searchArabicArtist = parts[0];
-          searchArabicTitle = parts[1];
-        } else if (parts.length === 1) {
-          searchArabicTitle = parts[0];
-        }
-        if ((!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) && arabicVid.videoId) {
-          videoId = arabicVid.videoId;
-        }
-      }
-    } catch {}
-  }
-
-  const queryTitle = searchArabicTitle || title;
-  const queryArtist = searchArabicArtist || artist;
-  const isArabic = /[\u0600-\u06FF]/.test(queryTitle) || /[\u0600-\u06FF]/.test(queryArtist);
-
   const cacheKey = `${videoId || ""}_${title}__${artist}_${forDownload ? "dl" : "st"}`.toLowerCase();
   const cached = memCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.result;
   }
 
-  console.log(`[AudioResolver] Resolving: title="${title}" (arabic="${queryTitle}") artist="${artist}" (arabic="${queryArtist}") videoId="${videoId || ""}"`);
-
-  // ── Strategy 1: Albumaty (Highest Quality 320kbps Arabic Audio) ──────────────
-  // Always query Albumaty (it has built-in transliteration mapping for "Ya Ta3ebny", "Fi Eih", etc.)
-  if (queryTitle || title) {
-    try {
-      const albumatyUrl = await resolveAlbumatyStream(queryTitle || title, queryArtist || artist);
-      if (albumatyUrl) {
-        const result: UniversalAudioResult = {
-          streamUrl: albumatyUrl,
-          directPlay: true,
-          source: "albumaty",
-          title: queryTitle || title,
-          artist: queryArtist || artist,
-          format: "mp3",
-          bitrate: "320kbps",
-          videoId,
-        };
-        memCache.set(cacheKey, { result, expiresAt: Date.now() + CACHE_TTL_MS });
-        return result;
-      }
-    } catch (e: any) {
-      console.warn("[AudioResolver] Albumaty failed:", e.message);
+  // 1. If videoId is provided, this is the exact song the user selected
+  if (videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+    // For downloads, always use the exact YouTube video to guarantee 100% correct audio
+    if (forDownload) {
+      console.log(`[AudioResolver] Download mode: using exact YouTube videoId=${videoId} for "${title}" by "${artist}"`);
+      const result: UniversalAudioResult = {
+        streamUrl: `https://www.youtube.com/watch?v=${videoId}`,
+        directPlay: false,
+        source: "youtube",
+        title,
+        artist,
+        format: "mp4/aac",
+        videoId,
+      };
+      memCache.set(cacheKey, { result, expiresAt: Date.now() + CACHE_TTL_MS });
+      return result;
     }
   }
 
-  // ── Strategy 2: If local yt-dlp is available and videoId is provided, USE YOUTUBE DIRECTLY! ──
-  // When running locally with yt-dlp, streaming directly from YouTube stdout is instant and 100% accurate.
-  const { isYtDlpAvailable } = await import("@apis/yt-dlp");
-  if (isYtDlpAvailable() && videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
-    console.log(`[AudioResolver] Local yt-dlp available. Using exact YouTube videoId=${videoId} for "${title}" by "${artist}"`);
-    const result: UniversalAudioResult = {
-      streamUrl: `https://www.youtube.com/watch?v=${videoId}`,
-      directPlay: false,
-      source: "youtube",
-      title: queryTitle || title,
-      artist: queryArtist || artist,
-      format: "mp4/aac",
-      videoId,
-    };
-    memCache.set(cacheKey, { result, expiresAt: Date.now() + CACHE_TTL_MS });
-    return result;
+  // 2. If videoId is missing, resolve it accurately via YouTube search: "${title} ${artist}"
+  if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+    const q = `${title} ${artist}`.trim();
+    if (q) {
+      try {
+        const { searchYouTube } = await import("@apis/youtubei.js");
+        const ytRes = await searchYouTube(q);
+        const top = ytRes.songs?.[0];
+        if (top?.youtubeVideoId && /^[a-zA-Z0-9_-]{11}$/.test(top.youtubeVideoId)) {
+          videoId = top.youtubeVideoId;
+          if (!title) title = top.title;
+          if (!artist) artist = top.artist;
+          if (forDownload) {
+            console.log(`[AudioResolver] Resolved exact videoId=${videoId} via query "${q}"`);
+            const result: UniversalAudioResult = {
+              streamUrl: `https://www.youtube.com/watch?v=${videoId}`,
+              directPlay: false,
+              source: "youtube",
+              title,
+              artist,
+              format: "mp4/aac",
+              videoId,
+            };
+            memCache.set(cacheKey, { result, expiresAt: Date.now() + CACHE_TTL_MS });
+            return result;
+          }
+        }
+      } catch (e: any) {
+        console.warn("[AudioResolver] Fallback YouTube search failed:", e.message);
+      }
+    }
   }
 
-  // ── Strategy 3: JioSaavn (320kbps Cloudflare CDN streams for both Arabic & International) ──
-  if (title || queryTitle) {
+  console.log(`[AudioResolver] Resolving stream for title="${title}" artist="${artist}" videoId="${videoId || ""}"`);
+
+  // ── Strategy 1: JioSaavn (320kbps Cloudflare CDN streams - strict title & artist match) ──
+  if (title) {
     try {
-      let saavnTrack = await resolveSaavnSong(queryTitle || title, queryArtist || artist);
-      if (!saavnTrack && title && title !== queryTitle) {
-        saavnTrack = await resolveSaavnSong(title, artist);
-      }
+      const saavnTrack = await resolveSaavnSong(title, artist);
       if (saavnTrack && saavnTrack.streamUrl) {
         const result: UniversalAudioResult = {
           streamUrl: saavnTrack.streamUrl,
@@ -202,7 +180,30 @@ export async function resolveUniversalAudio(params: {
     }
   }
 
-  // ── Strategy 4: SoundCloud (Direct progressive MP3 / AAC streams) ─────────────
+  // ── Strategy 2: Albumaty (Direct Arabic MP3 files - strict title & artist match) ──────
+  if (title) {
+    try {
+      const albumatyUrl = await resolveAlbumatyStream(title, artist);
+      if (albumatyUrl) {
+        const result: UniversalAudioResult = {
+          streamUrl: albumatyUrl,
+          directPlay: true,
+          source: "albumaty",
+          title,
+          artist,
+          format: "mp3",
+          bitrate: "320kbps",
+          videoId,
+        };
+        memCache.set(cacheKey, { result, expiresAt: Date.now() + CACHE_TTL_MS });
+        return result;
+      }
+    } catch (e: any) {
+      console.warn("[AudioResolver] Albumaty failed:", e.message);
+    }
+  }
+
+  // ── Strategy 3: SoundCloud (Direct progressive streams) ─────────────
   if (title) {
     try {
       const scUrl = await resolveSoundCloudStream(title, artist);
@@ -223,15 +224,14 @@ export async function resolveUniversalAudio(params: {
     }
   }
 
-  // ── Strategy 5: Exact YouTube Video fallback (for Remote Worker tunnel proxy) ──
+  // ── Strategy 4: Exact YouTube Video fallback (for Local yt-dlp or Remote Worker tunnel proxy) ──
   if (videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
-    console.log(`[AudioResolver] Exact YouTube videoId=${videoId} queued for "${title}" by "${artist}"`);
     const result: UniversalAudioResult = {
       streamUrl: `https://www.youtube.com/watch?v=${videoId}`,
       directPlay: false,
       source: "youtube",
-      title: queryTitle || title,
-      artist: queryArtist || artist,
+      title,
+      artist,
       format: "mp4/aac",
       videoId,
     };
