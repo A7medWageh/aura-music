@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { streamAudioFromYouTube, isYtDlpAvailable } from "@apis/yt-dlp";
+import { GET as ytdownloadHandler } from "../ytdownload/route";
 
 export const dynamic = "force-dynamic";
 
@@ -18,21 +19,26 @@ export async function GET(req: NextRequest) {
     const url = targetUrl ? decodeURIComponent(targetUrl) : "";
     const rangeHeader = req.headers.get("Range");
 
-    // If googlevideo URL and videoId available AND yt-dlp is available, stream via yt-dlp
-    if (videoId && (/^[a-zA-Z0-9_-]{11}$/.test(videoId)) && (url.includes("googlevideo.com") || !url) && isYtDlpAvailable()) {
-      const { stream, mimeType } = streamAudioFromYouTube(videoId);
-      const safeFilename = encodeURIComponent(title.replace(/[\/\\?%*:|"<>]/g, "_")) + ".mp3";
-      const headers = new Headers();
-      headers.set("Content-Type", mimeType || "audio/mp4");
-      headers.set("Access-Control-Allow-Origin", "*");
-      headers.set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges, Content-Disposition");
-      headers.set("Accept-Ranges", "bytes");
+    // 1. If target is a YouTube watch URL or videoId is provided, delegate to ytdownloadHandler!
+    const ytMatch = url.match(/[?&]v=([a-zA-Z0-9_-]{11})/) || url.match(/youtu\.be\/([a-zA-Z0-9_-]{11})/);
+    const targetVid = (videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId)) ? videoId : (ytMatch ? ytMatch[1] : undefined);
+
+    if (targetVid && (url.includes("youtube.com") || url.includes("youtu.be") || !url || url.includes("googlevideo.com"))) {
+      const ytdownloadUrl = new URL(req.url);
+      ytdownloadUrl.pathname = "/api/ytdownload";
+      ytdownloadUrl.searchParams.set("videoId", targetVid);
+      ytdownloadUrl.searchParams.set("title", title);
       if (isDownload) {
-        headers.set("Content-Disposition", `attachment; filename="${safeFilename}"; filename*=UTF-8''${safeFilename}`);
+        ytdownloadUrl.searchParams.set("download", "true");
+        ytdownloadUrl.searchParams.set("attachment", "true");
       } else {
-        headers.set("Content-Disposition", "inline");
+        ytdownloadUrl.searchParams.set("proxy", "true");
       }
-      return new NextResponse(stream as any, { status: 200, headers });
+      const modReq = new NextRequest(ytdownloadUrl.toString(), {
+        headers: req.headers,
+        signal: req.signal,
+      });
+      return ytdownloadHandler(modReq);
     }
 
     const requestHeaders: Record<string, string> = {

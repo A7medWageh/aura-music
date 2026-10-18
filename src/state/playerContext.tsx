@@ -502,12 +502,23 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         if (cancelled) return;
 
         // If directPlay is true and host allows CORS (like JioSaavn CDN), stream directly.
-        // If host blocks CORS (like Albumaty) or requires custom headers (googlevideo), proxy via /api/stream-proxy to inject CORS headers
+        // If host blocks CORS (like Albumaty) or requires custom headers, proxy via /api/stream-proxy
         const hasDirectCors = data.url.includes("saavncdn.com") || data.url.includes("sndcdn.com");
         const isDirect = Boolean(data.directPlay && hasDirectCors && !data.url.includes("googlevideo.com") && !data.url.includes("albumaty.com"));
-        const playUrl = isDirect ? data.url : `/api/stream-proxy?url=${encodeURIComponent(data.url)}&title=${encodeURIComponent(song.title)}`;
+        
+        let playUrl: string;
+        if (data.source === "youtube" || data.url.includes("youtube.com") || data.url.includes("youtu.be")) {
+          const targetVid = vid || song.youtubeVideoId || song.songId || "";
+          playUrl = `/api/ytdownload?videoId=${encodeURIComponent(targetVid)}&title=${encodeURIComponent(song.title)}&artist=${encodeURIComponent(song.artist || "")}&proxy=true`;
+        } else if (isDirect) {
+          playUrl = data.url;
+        } else if (data.url.startsWith("/api/ytdownload")) {
+          playUrl = data.url;
+        } else {
+          playUrl = `/api/stream-proxy?url=${encodeURIComponent(data.url)}&title=${encodeURIComponent(song.title)}&videoId=${encodeURIComponent(vid)}`;
+        }
 
-        console.log(`[Player] Streaming "${song.title}" via ${data.source || "direct"}...`);
+        console.log(`[Player] Streaming "${song.title}" via ${data.source || "direct"} (url=${playUrl})...`);
         player.src = playUrl;
         player.preload = "auto";
         player.load();

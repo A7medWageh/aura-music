@@ -129,14 +129,25 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const resolved = await resolveUniversalAudio({ videoId, title, artist, forDownload: isDownload });
+    const targetVideoId = await getFallbackVideoId(videoId, title, artist);
+    const resolved = await resolveUniversalAudio({ videoId: targetVideoId || videoId, title, artist, forDownload: isDownload });
 
     // Mode 1: Resolve only (for online player)
     if (resolveOnly) {
+      let streamUrl = resolved.streamUrl;
+      let directPlay = resolved.directPlay;
+
+      // If YouTube, point directly to this /api/ytdownload endpoint which streams the actual audio
+      if (resolved.source === "youtube" || streamUrl.includes("youtube.com") || streamUrl.includes("youtu.be")) {
+        const vid = targetVideoId || videoId || resolved.videoId || "";
+        streamUrl = `/api/ytdownload?videoId=${encodeURIComponent(vid)}&title=${encodeURIComponent(title || "")}&artist=${encodeURIComponent(artist || "")}&proxy=true`;
+        directPlay = true;
+      }
+
       return NextResponse.json(
         {
-          url: resolved.streamUrl,
-          directPlay: resolved.directPlay,
+          url: streamUrl,
+          directPlay,
           source: resolved.source,
           durationSec: resolved.durationSec,
         },
@@ -156,12 +167,12 @@ export async function GET(req: NextRequest) {
     // Mode 2: If resolved source is YouTube or raw googlevideo URL
     const isGoogleVideo = resolved.streamUrl.includes("googlevideo.com") || resolved.source === "youtube";
     if (isGoogleVideo) {
-      const targetVideoId = await getFallbackVideoId(videoId || resolved.videoId, title, artist);
-      if (targetVideoId) {
+      const activeVid = targetVideoId || videoId || resolved.videoId;
+      if (activeVid) {
         // If local yt-dlp is available (local machine), stream via yt-dlp
         if (isYtDlpAvailable()) {
-          console.log(`[ytdownload] Direct yt-dlp audio stream for videoId=${targetVideoId}`);
-          const { stream, mimeType } = streamAudioFromYouTube(targetVideoId);
+          console.log(`[ytdownload] Direct yt-dlp audio stream for videoId=${activeVid}`);
+          const { stream, mimeType } = streamAudioFromYouTube(activeVid);
 
           const responseHeaders = new Headers(NO_CACHE_HEADERS);
           responseHeaders.set("Content-Type", mimeType || "audio/mp4");
@@ -181,17 +192,25 @@ export async function GET(req: NextRequest) {
         if (workerUrl) {
           console.log(`[ytdownload] Proxying audio from active remote worker: ${workerUrl}`);
           const workerParams = new URLSearchParams();
-          workerParams.set("videoId", targetVideoId);
+          workerParams.set("videoId", activeVid);
           if (title) workerParams.set("title", title);
           if (artist) workerParams.set("artist", artist);
-          workerParams.set("download", "true");
+          if (isDownload) workerParams.set("download", "true");
           workerParams.set("proxy", "true");
 
+          const forwardHeaders: Record<string, string> = {
+            "User-Agent": "AuraMusic/1.0",
+          };
+          const clientRange = req.headers.get("Range");
+          if (clientRange) {
+            forwardHeaders["Range"] = clientRange;
+          }
+
           const workerRes = await fetch(`${workerUrl}/api/ytdownload?${workerParams.toString()}`, {
-            headers: { "User-Agent": "AuraMusic/1.0" },
+            headers: forwardHeaders,
             signal: req.signal,
           });
-          if (workerRes.ok && workerRes.body) {
+          if (workerRes.ok || workerRes.status === 206) {
             const workerHeaders = new Headers(NO_CACHE_HEADERS);
             workerHeaders.set("Content-Type", workerRes.headers.get("content-type") || "audio/mp4");
             workerHeaders.set("Access-Control-Allow-Origin", "*");
@@ -199,13 +218,16 @@ export async function GET(req: NextRequest) {
             workerHeaders.set("Accept-Ranges", "bytes");
             workerHeaders.set("Content-Disposition", isAttachment ? `attachment; filename="${safeFilename}"; filename*=UTF-8''${safeFilename}` : "inline");
 
+            const cr = workerRes.headers.get("content-range");
+            if (cr) workerHeaders.set("Content-Range", cr);
+
             const cl = workerRes.headers.get("content-length") || workerRes.headers.get("x-original-content-length");
             if (cl) {
               workerHeaders.set("Content-Length", cl);
               workerHeaders.set("X-Original-Content-Length", cl);
             }
 
-            return new NextResponse(workerRes.body as any, { status: 200, headers: workerHeaders });
+            return new NextResponse(workerRes.body as any, { status: workerRes.status, headers: workerHeaders });
           }
         }
       }
