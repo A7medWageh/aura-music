@@ -19,11 +19,12 @@ import axios from "axios";
 import { resolveSaavnSong } from "./jiosaavn";
 import { resolveAlbumatyStream } from "../scrapers/albumaty";
 import { resolveSoundCloudStream } from "../scrapers/soundcloud";
+import { getCachedTelegramTrack, uploadAudioUrlToTelegram } from "../telegram/telegramStorage";
 
 export interface UniversalAudioResult {
   streamUrl: string;
   directPlay: boolean;
-  source: "jiosaavn" | "albumaty" | "soundcloud" | "youtube" | "piped";
+  source: "telegram" | "jiosaavn" | "albumaty" | "soundcloud" | "youtube" | "piped";
   title?: string;
   artist?: string;
   durationSec?: number;
@@ -142,14 +143,52 @@ export async function resolveUniversalAudio(params: {
     return cached.result;
   }
 
-  console.log(`[AudioResolver] Resolving stream for title="${title}" artist="${artist}" videoId="${videoId || ""}"`);
+  const cacheAndReturn = (result: UniversalAudioResult): UniversalAudioResult => {
+    memCache.set(cacheKey, { result, expiresAt: Date.now() + CACHE_TTL_MS });
+
+    // Asynchronously cache external streams into Telegram Cloud database for permanent instant reuse
+    if (result.streamUrl && result.source !== "telegram" && result.streamUrl.startsWith("http") && !result.streamUrl.includes("youtube.com")) {
+      uploadAudioUrlToTelegram({
+        audioUrl: result.streamUrl,
+        title: result.title || title,
+        artist: result.artist || artist,
+        duration: result.durationSec,
+        videoId,
+      }).catch((tgErr: any) => console.warn("[AudioResolver] Background Telegram cache notice:", tgErr.message));
+    }
+
+    return result;
+  };
+
+  // ── Strategy 0: Telegram Cloud Storage Cache (Unbannable, Instant Range 206) ──
+  try {
+    const tgCached = await getCachedTelegramTrack({ videoId, title, artist });
+    if (tgCached && tgCached.tgFileId) {
+      console.log(`[AudioResolver] ⚡ Telegram Cloud Cache HIT: "${tgCached.title}" (${tgCached.tgFileId})`);
+      const result: UniversalAudioResult = {
+        streamUrl: `/api/telegram/stream?fileId=${encodeURIComponent(tgCached.tgFileId)}&title=${encodeURIComponent(tgCached.title || title)}`,
+        directPlay: false,
+        source: "telegram",
+        title: tgCached.title || title,
+        artist: tgCached.artist || artist,
+        durationSec: tgCached.durationSec,
+        bitrate: "320kbps",
+        format: "mp3",
+        videoId: tgCached.videoId || videoId,
+      };
+      memCache.set(cacheKey, { result, expiresAt: Date.now() + CACHE_TTL_MS });
+      return result;
+    }
+  } catch (tgErr: any) {
+    console.warn("[AudioResolver] Telegram cache lookup failed:", tgErr.message);
+  }
 
   // ── Strategy 1: JioSaavn (320kbps Cloudflare CDN streams - strict title & artist match) ──
   if (title) {
     try {
       const saavnTrack = await resolveSaavnSong(title, artist);
       if (saavnTrack && saavnTrack.streamUrl) {
-        const result: UniversalAudioResult = {
+        return cacheAndReturn({
           streamUrl: saavnTrack.streamUrl,
           directPlay: true,
           source: "jiosaavn",
@@ -159,9 +198,7 @@ export async function resolveUniversalAudio(params: {
           bitrate: saavnTrack.bitrate,
           format: "mp4/aac",
           videoId,
-        };
-        memCache.set(cacheKey, { result, expiresAt: Date.now() + CACHE_TTL_MS });
-        return result;
+        });
       }
     } catch (e: any) {
       console.warn("[AudioResolver] JioSaavn failed:", e.message);
@@ -179,7 +216,7 @@ export async function resolveUniversalAudio(params: {
         albumatyUrl = await resolveAlbumatyStream(originalCleanTitle, artist);
       }
       if (albumatyUrl) {
-        const result: UniversalAudioResult = {
+        return cacheAndReturn({
           streamUrl: albumatyUrl,
           directPlay: true,
           source: "albumaty",
@@ -188,9 +225,7 @@ export async function resolveUniversalAudio(params: {
           format: "mp3",
           bitrate: "320kbps",
           videoId,
-        };
-        memCache.set(cacheKey, { result, expiresAt: Date.now() + CACHE_TTL_MS });
-        return result;
+        });
       }
     } catch (e: any) {
       console.warn("[AudioResolver] Albumaty failed:", e.message);
@@ -202,16 +237,14 @@ export async function resolveUniversalAudio(params: {
     try {
       const scUrl = await resolveSoundCloudStream(title, artist);
       if (scUrl && !scUrl.includes(".m3u8") && !scUrl.includes("playlist.m3u8")) {
-        const result: UniversalAudioResult = {
+        return cacheAndReturn({
           streamUrl: scUrl,
           directPlay: true,
           source: "soundcloud",
           title,
           artist,
           videoId,
-        };
-        memCache.set(cacheKey, { result, expiresAt: Date.now() + CACHE_TTL_MS });
-        return result;
+        });
       }
     } catch (e: any) {
       console.warn("[AudioResolver] SoundCloud failed:", e.message);

@@ -341,7 +341,11 @@ export async function GET(req: NextRequest) {
       upstreamHeaders["Range"] = clientRange;
     }
 
-    let upstreamRes = await fetch(resolved.streamUrl, {
+    const targetStreamUrl = resolved.streamUrl.startsWith("/")
+      ? new URL(resolved.streamUrl, req.url).toString()
+      : resolved.streamUrl;
+
+    let upstreamRes = await fetch(targetStreamUrl, {
       cache: "no-store",
       headers: upstreamHeaders,
       signal: req.signal,

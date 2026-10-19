@@ -561,7 +561,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           playUrl = toAbsoluteApiUrl(`/api/ytdownload?videoId=${encodeURIComponent(targetVid)}&title=${encodeURIComponent(song.title)}&artist=${encodeURIComponent(song.artist || "")}&proxy=true`);
         } else if (isDirect) {
           playUrl = data.url;
-        } else if (data.url.startsWith("/api/ytdownload")) {
+        } else if (data.url.startsWith("/api/ytdownload") || data.url.startsWith("/api/telegram")) {
           playUrl = toAbsoluteApiUrl(data.url);
         } else {
           playUrl = toAbsoluteApiUrl(`/api/stream-proxy?url=${encodeURIComponent(data.url)}&title=${encodeURIComponent(song.title)}&videoId=${encodeURIComponent(vid)}`);

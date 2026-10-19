@@ -59,7 +59,12 @@ export async function GET(req: NextRequest) {
       requestHeaders["Range"] = rangeHeader;
     }
 
-    let res = await fetch(url, {
+    let fetchUrl = url;
+    if (fetchUrl.startsWith("/")) {
+      fetchUrl = new URL(fetchUrl, req.url).toString();
+    }
+
+    let res = await fetch(fetchUrl, {
       cache: "no-store",
       headers: requestHeaders,
       signal: req.signal,
