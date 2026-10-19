@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { resolveUniversalAudio } from "@/services/music/universalAudioResolver";
 import { streamAudioFromYouTube, isYtDlpAvailable } from "@apis/yt-dlp";
+import { findBestOfficialVideo } from "@/services/music/artistMatcher";
 
 export const dynamic = "force-dynamic";
 
@@ -111,36 +112,36 @@ function normalizeText(text: string): string {
 
 async function getFallbackVideoId(videoId?: string, title?: string, artist?: string): Promise<string | null> {
   if (videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId)) return videoId;
-  const q = `${title || ""} ${artist || ""}`.trim();
+  const q = `${artist || ""} ${title || ""}`.trim();
   if (!q) return null;
   try {
     const { searchYouTube } = await import("@apis/youtubei.js");
-    const res = await searchYouTube(q);
-    const songs = res.songs || (res as any).videos || [];
-    if (songs.length === 0) return null;
+    const [resOfficial, resStandard] = await Promise.all([
+      searchYouTube(`${q} Official`).catch(() => null),
+      searchYouTube(q).catch(() => null),
+    ]);
 
-    const normTitle = normalizeText(title || "");
-    const normArtist = normalizeText(artist || "");
-    const titleWords = normTitle.split(" ").filter((w: string) => w.length > 1);
-    const artistWords = normArtist.split(" ").filter((w: string) => w.length > 1);
-
-    for (const item of songs) {
-      const vid = item?.youtubeVideoId || item?.videoId || item?.id;
-      if (!vid || !/^[a-zA-Z0-9_-]{11}$/.test(vid)) continue;
-
-      const fullText = normalizeText(`${item.title || ""} ${item.artist || item.author?.name || ""}`);
-
-      // Must match title words if title was provided
-      if (titleWords.length > 0 && !titleWords.every((w: string) => fullText.includes(w))) {
-        continue;
+    const candidates: any[] = [];
+    for (const res of [resOfficial, resStandard]) {
+      const songs = res?.songs || (res as any)?.videos || [];
+      for (const item of songs) {
+        const vid = item?.youtubeVideoId || item?.videoId || item?.id;
+        if (vid && /^[a-zA-Z0-9_-]{11}$/.test(vid)) {
+          candidates.push({
+            youtubeVideoId: vid,
+            title: item.title || "",
+            artist: item.artist || item.author?.name || "",
+            channel: item.author?.name || item.channel || "",
+            durationSec: item.duration?.seconds || item.durationSec,
+          });
+        }
       }
+    }
 
-      // Must match artist words if artist was provided
-      if (artistWords.length > 0 && !artistWords.some((w: string) => fullText.includes(w))) {
-        continue;
-      }
-
-      return vid;
+    const bestVid = findBestOfficialVideo(candidates, title || "", artist || "");
+    if (bestVid) {
+      console.log(`[getFallbackVideoId] 🎯 Selected official videoId=${bestVid} for "${title}" - "${artist}"`);
+      return bestVid;
     }
   } catch (e: any) {
     console.warn("[getFallbackVideoId] YouTube search failed:", e.message);

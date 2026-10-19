@@ -20,6 +20,7 @@ import { resolveSaavnSong } from "./jiosaavn";
 import { resolveAlbumatyStream } from "../scrapers/albumaty";
 import { resolveSoundCloudStream } from "../scrapers/soundcloud";
 import { getCachedTelegramTrack, uploadAudioUrlToTelegram } from "../telegram/telegramStorage";
+import { findBestOfficialVideo } from "./artistMatcher";
 
 export interface UniversalAudioResult {
   streamUrl: string;
@@ -183,30 +184,14 @@ export async function resolveUniversalAudio(params: {
     console.warn("[AudioResolver] Telegram cache lookup failed:", tgErr.message);
   }
 
-  // ── Strategy 1: JioSaavn (320kbps Cloudflare CDN streams - strict title & artist match) ──
-  if (title) {
-    try {
-      const saavnTrack = await resolveSaavnSong(title, artist);
-      if (saavnTrack && saavnTrack.streamUrl) {
-        return cacheAndReturn({
-          streamUrl: saavnTrack.streamUrl,
-          directPlay: true,
-          source: "jiosaavn",
-          title: saavnTrack.title,
-          artist: saavnTrack.artist || artist,
-          durationSec: saavnTrack.durationSec,
-          bitrate: saavnTrack.bitrate,
-          format: "mp4/aac",
-          videoId,
-        });
-      }
-    } catch (e: any) {
-      console.warn("[AudioResolver] JioSaavn failed:", e.message);
-    }
-  }
+  const isArabicSong =
+    /[\u0600-\u06FF]/.test(title) ||
+    /[\u0600-\u06FF]/.test(artist) ||
+    Boolean(oembedArabicTitle) ||
+    /amr diab|tamer hosny|hamaki|sherine|angham|bahaa sultan|wegz|marwan pablo|cairokee|hamza namira|ahmed saad|elissa|nancy ajram|george wassouf|tul8te|rubi|ruby|ashour|mounir|hakim|assala|fairuz|fayrouz|kalthoum|abdel halim/i.test(`${title} ${artist}`);
 
-  // ── Strategy 2: Albumaty (Direct Arabic MP3 files - strict title & artist match) ──────
-  if (title || oembedArabicTitle) {
+  // ── Strategy 1: Albumaty First for Arabic Music (Authentic Studio-Master 320kbps MP3) ──────
+  if (isArabicSong && (title || oembedArabicTitle)) {
     try {
       let albumatyUrl = await resolveAlbumatyStream(title, artist);
       if (!albumatyUrl && oembedArabicTitle) {
@@ -232,6 +217,49 @@ export async function resolveUniversalAudio(params: {
     }
   }
 
+  // ── Strategy 2: JioSaavn (320kbps Cloudflare CDN streams - strict title & artist match) ──
+  if (title) {
+    try {
+      const saavnTrack = await resolveSaavnSong(title, artist);
+      if (saavnTrack && saavnTrack.streamUrl) {
+        return cacheAndReturn({
+          streamUrl: saavnTrack.streamUrl,
+          directPlay: true,
+          source: "jiosaavn",
+          title: saavnTrack.title,
+          artist: saavnTrack.artist || artist,
+          durationSec: saavnTrack.durationSec,
+          bitrate: saavnTrack.bitrate,
+          format: "mp4/aac",
+          videoId,
+        });
+      }
+    } catch (e: any) {
+      console.warn("[AudioResolver] JioSaavn failed:", e.message);
+    }
+  }
+
+  // ── Strategy 2.5: Albumaty Fallback for non-Arabic designated queries ──────
+  if (!isArabicSong && (title || oembedArabicTitle)) {
+    try {
+      let albumatyUrl = await resolveAlbumatyStream(title, artist);
+      if (albumatyUrl) {
+        return cacheAndReturn({
+          streamUrl: albumatyUrl,
+          directPlay: true,
+          source: "albumaty",
+          title,
+          artist,
+          format: "mp3",
+          bitrate: "320kbps",
+          videoId,
+        });
+      }
+    } catch (e: any) {
+      console.warn("[AudioResolver] Albumaty secondary failed:", e.message);
+    }
+  }
+
   // ── Strategy 3: SoundCloud (Direct progressive streams) ─────────────
   if (title) {
     try {
@@ -251,44 +279,42 @@ export async function resolveUniversalAudio(params: {
     }
   }
 
-  // Fallback YouTube videoId Resolution (Only if direct CDNs were not found)
+  // ── Strategy 3.5: Deep Official YouTube Video Resolution ───────────────────
   if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
-    const q = `${title} ${artist}`.trim();
-    if (q) {
-      try {
-        const { searchYouTube } = await import("@apis/youtubei.js");
-        const ytRes = await Promise.race([
-          searchYouTube(q),
-          new Promise<any>((_, reject) => setTimeout(() => reject(new Error("search timeout")), 2500)),
-        ]);
-        const songs = ytRes?.songs || [];
-        if (title && songs.length > 0) {
-          const normTitle = normalizeText(title);
-          const normArtist = normalizeText(artist);
-          const titleWords = normTitle.split(" ").filter((w: string) => w.length > 1);
-          const artistWords = normArtist.split(" ").filter((w: string) => w.length > 1);
+    try {
+      const { searchYouTube } = await import("@apis/youtubei.js");
+      const officialQ = `${artist} ${title} Official`.trim();
+      const standardQ = `${title} ${artist}`.trim();
 
-          for (const s of songs) {
-            if (!s?.youtubeVideoId || !/^[a-zA-Z0-9_-]{11}$/.test(s.youtubeVideoId)) continue;
-            const fullSongText = normalizeText(`${s.title || ""} ${s.artist || ""}`);
+      const [res1, res2] = await Promise.all([
+        searchYouTube(officialQ).catch(() => null),
+        searchYouTube(standardQ).catch(() => null),
+      ]);
 
-            // Strict check: title words must match
-            const titleMatches = titleWords.length > 0 && titleWords.every((w: string) => fullSongText.includes(w));
-            if (!titleMatches) continue;
-
-            // Strict check: if artist is provided, artist words must match
-            if (artistWords.length > 0) {
-              const artistMatches = artistWords.some((w: string) => fullSongText.includes(w));
-              if (!artistMatches) continue;
-            }
-
-            videoId = s.youtubeVideoId;
-            break;
+      const candidates: any[] = [];
+      for (const res of [res1, res2]) {
+        const list = res?.songs || (res as any)?.videos || [];
+        for (const item of list) {
+          const v = item?.youtubeVideoId || item?.videoId || item?.id;
+          if (v && /^[a-zA-Z0-9_-]{11}$/.test(v)) {
+            candidates.push({
+              youtubeVideoId: v,
+              title: item.title || "",
+              artist: item.artist || item.author?.name || "",
+              channel: item.author?.name || item.channel || "",
+              durationSec: item.duration?.seconds || item.durationSec,
+            });
           }
         }
-      } catch (e: any) {
-        console.warn("[AudioResolver] Fallback YouTube search failed:", e.message);
       }
+
+      const bestOfficialVid = findBestOfficialVideo(candidates, title, artist);
+      if (bestOfficialVid) {
+        console.log(`[AudioResolver] 🎯 Deep YouTube Search locked official video: ${bestOfficialVid} for "${title}" - "${artist}"`);
+        videoId = bestOfficialVid;
+      }
+    } catch (e: any) {
+      console.warn("[AudioResolver] Deep YouTube search failed:", e.message);
     }
   }
 
@@ -406,29 +432,15 @@ export async function resolveUniversalAudio(params: {
         new Promise<any>((_, reject) => setTimeout(() => reject(new Error("search timeout")), 3000)),
       ]);
       const songs = searchRes?.songs || [];
-      let candidate: any = null;
-
-      if (songs.length > 0) {
-        const normTitle = normalizeText(title);
-        const normArtist = normalizeText(artist);
-        const titleWords = normTitle.split(" ").filter((w: string) => w.length > 1);
-        const artistWords = normArtist.split(" ").filter((w: string) => w.length > 1);
-
-        for (const s of songs) {
-          const fullSongText = normalizeText(`${s.title || ""} ${s.artist || ""}`);
-          const titleMatches = titleWords.length > 0 && titleWords.every((w: string) => fullSongText.includes(w));
-          if (!titleMatches) continue;
-
-          if (artistWords.length > 0) {
-            const artistMatches = artistWords.some((w: string) => fullSongText.includes(w));
-            if (!artistMatches) continue;
-          }
-
-          candidate = s;
-          break;
-        }
-      }
-      const fallbackVid = candidate?.youtubeVideoId || candidate?.songId;
+      const candidates = songs.map((s: any) => ({
+        youtubeVideoId: s.youtubeVideoId || s.songId,
+        title: s.title || "",
+        artist: s.artist || s.author?.name || "",
+        channel: s.author?.name || s.channel || "",
+        durationSec: s.duration?.seconds,
+      }));
+      const fallbackVid = findBestOfficialVideo(candidates, title, artist);
+      const candidate = songs.find((s: any) => (s.youtubeVideoId || s.songId) === fallbackVid) || songs[0];
 
       if (fallbackVid && fallbackVid !== videoId) {
         // 7a. If candidate revealed Arabic title, check Albumaty first for 320kbps MP3

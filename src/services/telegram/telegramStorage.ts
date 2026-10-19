@@ -12,6 +12,7 @@
  */
 
 import { query } from "@apis/neon";
+import { isStrictArtistMatch, hasUnwantedTags } from "../music/artistMatcher";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "8831422517:AAEXQFzQxzcyIKWI1WtfVh2XGzguGXAnCak";
 const PRIMARY_CHANNEL_ID = process.env.TELEGRAM_CHANNEL_ID || "-1004310944763";
@@ -125,35 +126,28 @@ export async function getCachedTelegramTrack(params: {
       );
 
       for (const row of res.rows) {
-        if (!normArtist) {
-          return {
-            id: row.id,
-            videoId: row.video_id,
-            songId: row.song_id,
-            title: row.title,
-            artist: row.artist,
-            tgFileId: row.tg_file_id,
-            tgMessageId: row.tg_message_id ? Number(row.tg_message_id) : undefined,
-            durationSec: row.duration_sec,
-            fileSize: row.file_size ? Number(row.file_size) : undefined,
-            mimeType: row.mime_type,
-          };
+        // 1. Reject cached tracks that have unwanted tags (remix, cover, etc.) unless requested
+        if (hasUnwantedTags(row.title, title)) {
+          continue;
         }
-        const rowArtist = normalizeText(row.artist || "");
-        if (rowArtist && (rowArtist.includes(normArtist) || normArtist.includes(rowArtist))) {
-          return {
-            id: row.id,
-            videoId: row.video_id,
-            songId: row.song_id,
-            title: row.title,
-            artist: row.artist,
-            tgFileId: row.tg_file_id,
-            tgMessageId: row.tg_message_id ? Number(row.tg_message_id) : undefined,
-            durationSec: row.duration_sec,
-            fileSize: row.file_size ? Number(row.file_size) : undefined,
-            mimeType: row.mime_type,
-          };
+
+        // 2. Strict artist check: if artist is provided, row must match requested artist!
+        if (artist && !isStrictArtistMatch(artist, row.artist || "")) {
+          continue;
         }
+
+        return {
+          id: row.id,
+          videoId: row.video_id,
+          songId: row.song_id,
+          title: row.title,
+          artist: row.artist,
+          tgFileId: row.tg_file_id,
+          tgMessageId: row.tg_message_id ? Number(row.tg_message_id) : undefined,
+          durationSec: row.duration_sec,
+          fileSize: row.file_size ? Number(row.file_size) : undefined,
+          mimeType: row.mime_type,
+        };
       }
     }
   } catch (err: any) {

@@ -1,4 +1,5 @@
 import axios from "axios";
+import { isStrictArtistMatch, hasUnwantedTags } from "./artistMatcher";
 
 const JIOSAAVN_API = "https://www.jiosaavn.com/api.php";
 
@@ -82,23 +83,31 @@ export async function resolveSaavnSong(query: string, artistFilter?: string): Pr
 
     // Find the first candidate that actually matches the query
     const validCandidate = songs.find((s: any) => {
-      const cNorm = norm(s.title || "");
+      const candTitle = s.title || "";
+      const candArtist = s.artist || s.more_info?.singers || s.more_info?.music || s.description || "";
+      const cNorm = norm(candTitle);
       if (!cNorm || !qNorm) return false;
 
-      // 1. If cleanArt is provided, verify artist match!
+      // 1. Reject covers, remasters, remixes, and fan edits unless specifically queried
+      if (hasUnwantedTags(candTitle, cleanQ)) {
+        return false;
+      }
+
+      // 2. Strict artist verification (bilingual Arabic <-> English)
       if (cleanArt) {
-        const aNorm = norm(cleanArt);
-        const cArtist = norm(s.artist || s.more_info?.singers || s.more_info?.music || s.description || "");
-        if (aNorm.length >= 3) {
-          const aWords = cleanArt.toLowerCase().split(/\s+/).filter(w => w.length > 2);
-          const hasArtistWord = aWords.some(w => cArtist.includes(norm(w)));
-          if (!hasArtistWord && !cArtist.includes(aNorm) && !aNorm.includes(cArtist)) {
-            return false; // Reject candidate from wrong artist!
-          }
+        if (!isStrictArtistMatch(cleanArt, candArtist)) {
+          return false; // Reject candidate from wrong or unverified artist!
         }
       }
 
-      // 2. Title must match query strictly
+      // 3. If query contains Arabic, reject candidates with zero Arabic relevance
+      if (/[\u0600-\u06FF]/.test(cleanQ) && !/[\u0600-\u06FF]/.test(`${candTitle} ${candArtist}`)) {
+        if (!cleanArt || !isStrictArtistMatch(cleanArt, candArtist)) {
+          return false;
+        }
+      }
+
+      // 4. Title must match query strictly
       if (cNorm === qNorm) return true;
       if (qNorm.length >= 4 && (cNorm.startsWith(qNorm) || qNorm.startsWith(cNorm))) {
         const diff = Math.abs(cNorm.length - qNorm.length);
@@ -107,7 +116,7 @@ export async function resolveSaavnSong(query: string, artistFilter?: string): Pr
 
       // Word match only if all words match and artist also matched
       const qWords = cleanQ.toLowerCase().split(/\s+/).filter(w => w.length > 2);
-      const cWords = (s.title || "").toLowerCase().split(/\s+/).filter((w: string) => w.length > 2);
+      const cWords = candTitle.toLowerCase().split(/\s+/).filter((w: string) => w.length > 2);
       if (qWords.length >= 2 && qWords.every(w => cWords.includes(w))) {
         return true;
       }
