@@ -111,6 +111,25 @@ export async function GET(req: NextRequest) {
       responseHeaders.set("Content-Disposition", `attachment; filename="${safeFilename}"; filename*=UTF-8''${safeFilename}`);
     }
 
+    // Special safeguard for Safari / iOS Range probe (bytes=0-1):
+    // If upstream returns 200 instead of 206, synthesize 206 for the 2-byte probe to prevent Safari stall
+    if (rangeHeader === "bytes=0-1" && res.status === 200 && res.body) {
+      try {
+        const reader = res.body.getReader();
+        const { value } = await reader.read();
+        reader.cancel().catch(() => {});
+        if (value && value.length >= 2) {
+          const probeSlice = value.slice(0, 2);
+          responseHeaders.set("Content-Range", `bytes 0-1/${responseHeaders.get("content-length") || value.length}`);
+          responseHeaders.set("Content-Length", "2");
+          return new NextResponse(probeSlice, {
+            status: 206,
+            headers: responseHeaders,
+          });
+        }
+      } catch {}
+    }
+
     return new NextResponse(res.body, {
       status: res.status,
       headers: responseHeaders,

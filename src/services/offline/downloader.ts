@@ -1,5 +1,6 @@
 import { saveSongMeta, storeAudioBlob, storeLyrics, getAudioBlob, getAllOfflineSongs } from "@/offline/indexedDbCache";
 import { startJob, updateJob, finishJob, setJobController, isJobPaused } from "@/state/downloadStore";
+import { toAbsoluteApiUrl } from "@/utils/apiBase";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type SongMeta = {
@@ -179,7 +180,7 @@ async function downloadAudioBlob(
       params.set("download", "true");
       params.set("t", Date.now().toString());
 
-      const apiUrl = `/api/ytdownload?${params.toString()}`;
+      const apiUrl = toAbsoluteApiUrl(`/api/ytdownload?${params.toString()}`);
       const res = await fetch(apiUrl, {
         cache: "no-store",
         signal,
@@ -198,43 +199,59 @@ async function downloadAudioBlob(
       if (contentLength === 0) contentLength = 3.5 * 1024 * 1024;
       updateJob(jobId, { totalBytes: contentLength, progressBytes: 1 });
 
-      const reader = res.body?.getReader();
-      if (!reader) throw new Error("Body is null");
-
-      const chunks: Uint8Array[] = [];
-      let receivedBytes = 0;
-      let lastReport = Date.now();
-
-      while (true) {
-        // Pause support
-        while (isJobPaused(jobId)) {
-          if (signal?.aborted) return false;
-          await new Promise(r => setTimeout(r, 400));
+      let blob: Blob;
+      let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+      try {
+        if (res.body && typeof res.body.getReader === "function") {
+          reader = res.body.getReader();
         }
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (signal?.aborted) return false;
-
-        chunks.push(value);
-        const delta = value.length;
-        receivedBytes += delta;
-
-        const now = Date.now();
-        // Update at least every 80ms or on completion for butter-smooth UI counters
-        if (now - lastReport > 80 || receivedBytes >= contentLength) {
-          lastReport = now;
-          const currentTotal = Math.max(contentLength, receivedBytes);
-          if (onProgress) onProgress(receivedBytes, currentTotal, delta);
-          updateJob(jobId, { progressBytes: receivedBytes, totalBytes: currentTotal });
-        }
+      } catch {
+        reader = null;
       }
 
-      if (receivedBytes < 1000) throw new Error("الملف الصوتي فارغ أو تم رفض الوصول");
+      if (reader) {
+        const chunks: Uint8Array[] = [];
+        let receivedBytes = 0;
+        let lastReport = Date.now();
 
-      updateJob(jobId, { progressBytes: receivedBytes, totalBytes: receivedBytes });
+        while (true) {
+          // Pause support
+          while (isJobPaused(jobId)) {
+            if (signal?.aborted) return false;
+            await new Promise(r => setTimeout(r, 400));
+          }
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (signal?.aborted) return false;
 
-      const mimeType = res.headers.get("content-type") || "audio/mpeg";
-      const blob = new Blob(chunks as any, { type: mimeType });
+          chunks.push(value);
+          const delta = value.length;
+          receivedBytes += delta;
+
+          const now = Date.now();
+          // Update at least every 80ms or on completion for butter-smooth UI counters
+          if (now - lastReport > 80 || receivedBytes >= contentLength) {
+            lastReport = now;
+            const currentTotal = Math.max(contentLength, receivedBytes);
+            if (onProgress) onProgress(receivedBytes, currentTotal, delta);
+            updateJob(jobId, { progressBytes: receivedBytes, totalBytes: currentTotal });
+          }
+        }
+
+        if (receivedBytes < 1000) throw new Error("الملف الصوتي فارغ أو تم رفض الوصول");
+
+        updateJob(jobId, { progressBytes: receivedBytes, totalBytes: receivedBytes });
+
+        const mimeType = res.headers.get("content-type") || "audio/mpeg";
+        blob = new Blob(chunks as any, { type: mimeType });
+      } else {
+        // Fallback for iOS / Safari / CapacitorHttp where body.getReader() is not available
+        blob = await res.blob();
+        if (blob.size < 1000) throw new Error("الملف الصوتي فارغ أو تم رفض الوصول");
+        updateJob(jobId, { progressBytes: blob.size, totalBytes: blob.size });
+        if (onProgress) onProgress(blob.size, blob.size, blob.size);
+      }
+
       await storeAudioBlob(songId, blob);
       return true;
     } catch (err: any) {

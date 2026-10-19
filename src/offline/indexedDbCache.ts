@@ -98,9 +98,25 @@ async function markAudioReady(songId: string): Promise<void> {
 /** Store audio blob after background download */
 export async function storeAudioBlob(songId: string, blob: Blob): Promise<void> {
   const db = await openOfflineDb();
+  let buffer: ArrayBuffer | null = null;
+  try {
+    buffer = await blob.arrayBuffer();
+  } catch {}
+
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(AUDIO_STORE, "readwrite");
-    tx.objectStore(AUDIO_STORE).put({ songId, blob, savedAt: Date.now() });
+    if (buffer) {
+      // Storing ArrayBuffer prevents WebKit DataCloneError on iOS Safari & WKWebView
+      tx.objectStore(AUDIO_STORE).put({
+        songId,
+        buffer,
+        mimeType: blob.type || "audio/mpeg",
+        size: blob.size,
+        savedAt: Date.now()
+      });
+    } else {
+      tx.objectStore(AUDIO_STORE).put({ songId, blob, savedAt: Date.now() });
+    }
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
@@ -116,7 +132,12 @@ export async function getAudioBlob(songId: string): Promise<Blob | null> {
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
-  return record?.blob || null;
+  if (!record) return null;
+  if (record.blob instanceof Blob) return record.blob;
+  if (record.buffer instanceof ArrayBuffer) {
+    return new Blob([record.buffer], { type: record.mimeType || "audio/mpeg" });
+  }
+  return null;
 }
 
 export async function storeLyrics(songId: string, lyrics: any): Promise<void> {

@@ -337,7 +337,7 @@ export async function GET(req: NextRequest) {
     }
 
     const clientRange = req.headers.get("Range");
-    if (clientRange && !useProxy) {
+    if (clientRange && !isDownload) {
       upstreamHeaders["Range"] = clientRange;
     }
 
@@ -420,6 +420,25 @@ export async function GET(req: NextRequest) {
     const cLen = responseHeaders.get("content-length");
     if (cLen) {
       responseHeaders.set("X-Original-Content-Length", cLen);
+    }
+
+    // Special safeguard for Safari / iOS Range probe (bytes=0-1):
+    // If upstream returns 200 instead of 206, synthesize 206 for the 2-byte probe to prevent Safari stall
+    if (clientRange === "bytes=0-1" && upstreamRes.status === 200 && upstreamRes.body) {
+      try {
+        const reader = upstreamRes.body.getReader();
+        const { value } = await reader.read();
+        reader.cancel().catch(() => {});
+        if (value && value.length >= 2) {
+          const probeSlice = value.slice(0, 2);
+          responseHeaders.set("Content-Range", `bytes 0-1/${cLen || value.length}`);
+          responseHeaders.set("Content-Length", "2");
+          return new NextResponse(probeSlice, {
+            status: 206,
+            headers: responseHeaders,
+          });
+        }
+      } catch {}
     }
 
     return new NextResponse(upstreamRes.body, {

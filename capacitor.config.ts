@@ -7,7 +7,7 @@ const config: CapacitorConfig = {
   bundledWebRuntime: false,
   plugins: {
     CapacitorHttp: {
-      enabled: true,
+      enabled: false,
     },
   },
   server: {
@@ -28,7 +28,7 @@ const config: CapacitorConfig = {
   ios: {
     contentInset: "always",
     preferredContentMode: "mobile",
-    scheme: "Aura Music",
+    scheme: "auramusic",
   },
 };
 

@@ -5,6 +5,7 @@ import { initialPlayerState, PlayerState, QueueSong, RepeatMode } from "@/state/
 import { getAudioBlob } from "@/offline/indexedDbCache";
 import { downloadSong } from "@/services/offline/downloader";
 import { useToastStore } from "@/state/toastStore";
+import { toAbsoluteApiUrl } from "@/utils/apiBase";
 
 type PlayerContextValue = {
   state: PlayerState;
@@ -84,7 +85,20 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     });
   };
 
+  // Synchronously prime the audio element inside user gestures for iOS WebKit
+  const primeAudioElement = () => {
+    const player = audioRef.current;
+    if (!player) return;
+    try {
+      const p = player.play();
+      if (p !== undefined) {
+        p.catch(() => {});
+      }
+    } catch {}
+  };
+
   const playNow = async (song: QueueSong) => {
+    primeAudioElement();
     if (typeof window !== "undefined") {
       import("@/services/user/listeningHistory").then(({ trackPlay }) => trackPlay(song)).catch(() => {});
     }
@@ -105,10 +119,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   };
 
   const playSongById = async (songId: string) => {
+    primeAudioElement();
     setState((prev) => ({ ...prev, currentSongId: songId, isPlaying: true }));
   };
 
   const next = () => {
+    primeAudioElement();
     setState((prev) => {
       if (!prev.queue.length || !prev.currentSongId) return prev;
       const index = prev.queue.findIndex((song) => song.songId === prev.currentSongId);
@@ -128,6 +144,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   };
 
   const prev = () => {
+    primeAudioElement();
     setState((prevState) => {
       if (!prevState.queue.length || !prevState.currentSongId) return prevState;
       const index = prevState.queue.findIndex((song) => song.songId === prevState.currentSongId);
@@ -143,7 +160,26 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   };
 
   const togglePlay = () => {
-    setState((prev) => ({ ...prev, isPlaying: !prev.isPlaying }));
+    const player = audioRef.current;
+    if (player) {
+      if (state.isPlaying) {
+        player.pause();
+        setState((prev) => ({ ...prev, isPlaying: false }));
+      } else {
+        const p = player.play();
+        if (p !== undefined) {
+          p.then(() => {
+            setState((prev) => ({ ...prev, isPlaying: true }));
+          }).catch((err) => {
+            console.warn("[Player] Direct play() rejected:", err);
+          });
+        } else {
+          setState((prev) => ({ ...prev, isPlaying: true }));
+        }
+      }
+    } else {
+      setState((prev) => ({ ...prev, isPlaying: !prev.isPlaying }));
+    }
   };
 
   const cycleRepeat = () => {
@@ -305,6 +341,16 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const player = audioRef.current;
     if (!player || typeof window === "undefined" || audioCtxRef.current) return;
 
+    // Detect iOS / iPhone / iPad / WKWebView
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (typeof navigator.platform === "string" && navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
+    if (isIOS) {
+      // In iOS WebKit, createMediaElementSource causes silent audio, freezes playback at 0:00,
+      // and fails due to WebKit bug 205847 / CORS issues. iOS has native high-quality AVPlayer.
+      return;
+    }
+
     const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
     if (!AudioCtx) return;
 
@@ -460,7 +506,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
 
     player.pause();
-    player.removeAttribute("src");
+    // Do NOT call player.removeAttribute("src") on iOS as it revokes user gesture activation!
     setState((prev) => ({ ...prev, isBuffering: true, error: null, streamUrl: null }));
 
     (async () => {
@@ -473,7 +519,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           setState((prev) => ({ ...prev, isBuffering: false, streamUrl: blobUrl }));
           player.src = blobUrl;
           player.load();
-          if (isPlayingRef.current) player.play().catch(console.error);
+          if (isPlayingRef.current) {
+            const p = player.play();
+            if (p !== undefined) p.catch(() => {});
+          }
           return;
         }
 
@@ -490,7 +539,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         if (song.artist) params.set("artist", song.artist);
         params.set("resolveOnly", "true");
 
-        const resolveRes = await fetch(`/api/ytdownload?${params.toString()}`);
+        const resolveRes = await fetch(toAbsoluteApiUrl(`/api/ytdownload?${params.toString()}`));
         if (!resolveRes.ok) {
           const errData = await resolveRes.json().catch(() => ({}));
           console.error(`[Player] ytdownload error for "${song.title}":`, errData);
@@ -509,19 +558,21 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         let playUrl: string;
         if (data.source === "youtube" || data.url.includes("youtube.com") || data.url.includes("youtu.be")) {
           const targetVid = vid || song.youtubeVideoId || song.songId || "";
-          playUrl = `/api/ytdownload?videoId=${encodeURIComponent(targetVid)}&title=${encodeURIComponent(song.title)}&artist=${encodeURIComponent(song.artist || "")}&proxy=true`;
+          playUrl = toAbsoluteApiUrl(`/api/ytdownload?videoId=${encodeURIComponent(targetVid)}&title=${encodeURIComponent(song.title)}&artist=${encodeURIComponent(song.artist || "")}&proxy=true`);
         } else if (isDirect) {
           playUrl = data.url;
         } else if (data.url.startsWith("/api/ytdownload")) {
-          playUrl = data.url;
+          playUrl = toAbsoluteApiUrl(data.url);
         } else {
-          playUrl = `/api/stream-proxy?url=${encodeURIComponent(data.url)}&title=${encodeURIComponent(song.title)}&videoId=${encodeURIComponent(vid)}`;
+          playUrl = toAbsoluteApiUrl(`/api/stream-proxy?url=${encodeURIComponent(data.url)}&title=${encodeURIComponent(song.title)}&videoId=${encodeURIComponent(vid)}`);
         }
 
         console.log(`[Player] Streaming "${song.title}" via ${data.source || "direct"} (url=${playUrl})...`);
-        player.src = playUrl;
-        player.preload = "auto";
-        player.load();
+        if (player.src !== playUrl) {
+          player.src = playUrl;
+          player.preload = "auto";
+          player.load();
+        }
 
         setState((prev) => ({
           ...prev,
@@ -531,7 +582,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         }));
 
         if (isPlayingRef.current) {
-          player.play().catch(console.error);
+          const playPromise = player.play();
+          if (playPromise !== undefined) {
+            playPromise.catch((err) => {
+              console.warn("[Player] Autoplay play() was deferred:", err);
+            });
+          }
         }
       } catch (error) {
         if (!cancelled) {
@@ -573,14 +629,48 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const onTimeUpdate = () => {
     const player = audioRef.current;
     if (player) {
-      if (typeof document !== "undefined" && document.hidden) return;
       const now = performance.now();
-      if (now - lastTimeUpdateRef.current >= 400 || player.currentTime === 0) {
+      if (now - lastTimeUpdateRef.current >= 300 || player.currentTime === 0) {
         lastTimeUpdateRef.current = now;
         setState((prev) => ({ ...prev, currentTime: player.currentTime || 0 }));
       }
     }
   };
+
+  // Sync currentTime when returning from background lock screen
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const handleVisibility = () => {
+      const player = audioRef.current;
+      if (player && !document.hidden) {
+        setState((prev) => ({ ...prev, currentTime: player.currentTime || 0 }));
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, []);
+
+  // Unlock iOS WebKit audio on first touch
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const unlock = () => {
+      const player = audioRef.current;
+      if (player && player.paused && !player.src) {
+        player.load();
+      }
+      if (audioCtxRef.current && audioCtxRef.current.state === "suspended") {
+        audioCtxRef.current.resume().catch(() => {});
+      }
+      window.removeEventListener("touchstart", unlock);
+      window.removeEventListener("click", unlock);
+    };
+    window.addEventListener("touchstart", unlock, { passive: true });
+    window.addEventListener("click", unlock, { passive: true });
+    return () => {
+      window.removeEventListener("touchstart", unlock);
+      window.removeEventListener("click", unlock);
+    };
+  }, []);
 
   const onLoadedMetadata = () => {
     const player = audioRef.current;
@@ -719,7 +809,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       {children}
       <audio
         ref={audioRef}
-        crossOrigin="anonymous"
+        playsInline
         preload="auto"
         onTimeUpdate={onTimeUpdate}
         onLoadedMetadata={onLoadedMetadata}
