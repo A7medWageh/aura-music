@@ -6,12 +6,11 @@
  * Architecture:
  *  ┌─────────────────────────────────────────────────┐
  *  │  resolveViaMoonBot()                            │
- *  │    1. Send "بحث يوتيوب صوت" (bot menu action)  │
- *  │    2. Send "{title} {artist}" plain message     │
- *  │    3. Poll Neon DB (moonbot_pending table)       │
+ *  │    1. Send "تنزيل {title} {artist}" message    │
+ *  │    2. Poll Neon DB (moonbot_pending table)       │
  *  │       ↑ populated by /api/telegram/webhook      │
  *  │       ↑ which receives @L_10_BOT audio posts    │
- *  │    4. Return /api/telegram/stream URL            │
+ *  │    3. Return /api/telegram/stream URL            │
  *  └─────────────────────────────────────────────────┘
  *
  * Why DB polling instead of getUpdates?
@@ -190,12 +189,11 @@ async function ensureWebhookRegistered(): Promise<void> {
 /**
  * Main export: resolve a song via @L_10_BOT → Telegram CDN.
  *
- * Flow (same as manually using the bot's buttons):
+ * Flow:
  *   1. Ensure webhook is registered (Vercel receives all channel posts)
- *   2. Send "بحث يوتيوب صوت" — the bot's YouTube-audio-search menu action
- *   3. Send "{title} {artist}" as a plain message (no "تنزيل" prefix)
- *   4. Poll Neon DB until webhook delivers the audio (max 60s)
- *   5. Save to main cache → return stream URL
+ *   2. Send "تنزيل {title} {artist}" to the channel
+ *   3. Poll Neon DB until webhook delivers @L_10_BOT's audio (max 90s)
+ *   4. Save to main cache → return stream URL
  */
 export async function resolveViaMoonBot(params: {
   title: string;
@@ -215,31 +213,22 @@ export async function resolveViaMoonBot(params: {
   // Ensure DB table exists
   await ensurePendingTable();
 
-  // Step 1: Open the bot's YouTube audio search mode (button-equivalent)
-  const triggerMsgId = await sendMsg("بحث يوتيوب صوت");
-  if (!triggerMsgId) return null;
-
-  // Brief pause for bot to process the menu action
-  await new Promise((r) => setTimeout(r, 500));
-
-  // Step 2: Send "song name singer name" as a plain message
-  const searchMsgId = await sendMsg(`${title}${artist ? ` ${artist}` : ""}`);
-  if (!searchMsgId) {
-    deleteMsg(triggerMsgId).catch(() => {});
-    return null;
-  }
+  // Single-message flow (no buttons): send "تنزيل {title} {artist}"
+  // and wait for @L_10_BOT's audio reply via the webhook.
+  const queryText = `تنزيل ${title}${artist ? ` ${artist}` : ""}`;
+  const searchMsgId = await sendMsg(queryText);
+  if (!searchMsgId) return null;
 
   console.log(`[L10Bot] Waiting for webhook to deliver audio for "${title}"...`);
 
   // Step 3: Poll DB for audio (populated by /api/telegram/webhook)
-  const pending = await pollDbForAudio(searchMsgId, 60000);
+  const pending = await pollDbForAudio(searchMsgId, 90000);
 
-  // Cleanup our messages
-  deleteMsg(triggerMsgId).catch(() => {});
+  // Cleanup our message
   deleteMsg(searchMsgId).catch(() => {});
 
   if (!pending) {
-    console.warn(`[L10Bot] No audio received for "${title}" within 60s`);
+    console.warn(`[L10Bot] No audio received for "${title}" within 90s`);
     return null;
   }
 

@@ -184,7 +184,7 @@ async function trySoundCloud(
 
 /**
  * Strategy 0.5: @L_10_BOT — Primary Telegram music bot
- * Selects "بحث يوتيوب صوت" then sends "{title} {artist}" and waits for audio.
+ * Sends "تنزيل {title} {artist}" and waits for the bot's audio reply.
  * Returns Telegram stream URL ready for the player.
  */
 async function tryMoonBot(
@@ -416,7 +416,7 @@ export async function resolveUniversalAudio(params: {
 
     // All three run in parallel — whoever finds the song first wins instantly
     winner = await raceFirst([
-      tryMoonBot(albumatyTitle, albumatyArtist, videoId, 40000),
+      tryMoonBot(albumatyTitle, albumatyArtist, videoId, 90000),
       tryAlbumaty(albumatyTitle, albumatyArtist, videoId, 8000),
       tryJioSaavn(title, effectiveArtist, videoId, 6000),
     ]);
