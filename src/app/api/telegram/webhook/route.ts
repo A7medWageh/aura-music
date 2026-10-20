@@ -40,6 +40,25 @@ export async function POST(req: NextRequest) {
 
     const audio = message.audio;
     const doc = message.document;
+
+    // @L_10_BOT only accepts song queries AFTER a human presses its
+    // "بحث اليوتوب صوت" button (callback is private to that bot).
+    // The press edits the bot's menu into "ارسل لى اسم الاغنية...".
+    // Record that moment: resolveViaMoonBot then fires its "تنزيل ..."
+    // query inside the short window where the bot actually answers.
+    if (update.edited_channel_post && /ارسل لـ?ى اسم الاغني?ه/.test(message.text || "")) {
+      try {
+        await query(`CREATE TABLE IF NOT EXISTS moonbot_mode (id SMALLINT PRIMARY KEY, active_until TIMESTAMPTZ)`);
+        await query(
+          `INSERT INTO moonbot_mode (id, active_until) VALUES (1, NOW() + INTERVAL '120 seconds')
+           ON CONFLICT (id) DO UPDATE SET active_until = EXCLUDED.active_until`
+        );
+        console.log("[TelegramWebhook] L_10_BOT button pressed — search window open 120s");
+      } catch (e: any) {
+        console.warn("[TelegramWebhook] moonbot_mode upsert error:", e.message);
+      }
+    }
+
     const isAudioDoc =
       doc?.mime_type?.startsWith("audio/") ||
       doc?.file_name?.match(/\.(mp3|m4a|ogg|flac)$/i);
@@ -104,6 +123,9 @@ export async function POST(req: NextRequest) {
           console.warn("[TelegramWebhook] moonbot_pending insert error:", dbErr.message);
         }
       }
+
+      // Bot exits search mode after each download — close the window.
+      query("UPDATE moonbot_mode SET active_until = NOW() WHERE id = 1").catch(() => {});
 
       // 2. Also index in main cache
       await saveTelegramCacheRecord({

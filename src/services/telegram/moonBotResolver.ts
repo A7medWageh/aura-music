@@ -6,11 +6,14 @@
  * Architecture:
  *  ┌─────────────────────────────────────────────────┐
  *  │  resolveViaMoonBot()                            │
- *  │    1. Send "تنزيل {title} {artist}" message    │
- *  │    2. Poll Neon DB (moonbot_pending table)       │
+ *  │    1. Send "يوتيوب" → bot posts menu in channel │
+ *  │    2. Wait for human press of "بحث اليوتوب صوت"│
+ *  │       ↑ detected via webhook (moonbot_mode)     │
+ *  │    3. Send "تنزيل {title} {artist}" message    │
+ *  │    4. Poll Neon DB (moonbot_pending table)       │
  *  │       ↑ populated by /api/telegram/webhook      │
  *  │       ↑ which receives @L_10_BOT audio posts    │
- *  │    3. Return /api/telegram/stream URL            │
+ *  │    5. Return /api/telegram/stream URL            │
  *  └─────────────────────────────────────────────────┘
  *
  * Why DB polling instead of getUpdates?
@@ -89,7 +92,33 @@ async function ensurePendingTable(): Promise<void> {
         received_at TIMESTAMPTZ DEFAULT NOW()
       )
     `);
+    await query(`
+      CREATE TABLE IF NOT EXISTS moonbot_mode (
+        id SMALLINT PRIMARY KEY,
+        active_until TIMESTAMPTZ
+      )
+    `);
   } catch {}
+}
+
+/** True when a human pressed @L_10_BOT's audio-search button recently. */
+async function isSearchModeActive(): Promise<boolean> {
+  try {
+    const res = await query("SELECT 1 FROM moonbot_mode WHERE id = 1 AND active_until > NOW()");
+    return res.rows.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** Wait until the webhook records a button press, or timeout. */
+async function waitForSearchMode(maxWaitMs: number): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < maxWaitMs) {
+    if (await isSearchModeActive()) return true;
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  return false;
 }
 
 /**
@@ -191,9 +220,12 @@ async function ensureWebhookRegistered(): Promise<void> {
  *
  * Flow:
  *   1. Ensure webhook is registered (Vercel receives all channel posts)
- *   2. Send "تنزيل {title} {artist}" to the channel
- *   3. Poll Neon DB until webhook delivers @L_10_BOT's audio (max 90s)
- *   4. Save to main cache → return stream URL
+ *   2. Send "يوتيوب" — bot posts its download menu in the channel
+ *   3. Wait (≤40s) for a human to press "بحث اليوتوب صوت" (webhook
+ *      marks the window in moonbot_mode when the menu is edited)
+ *   4. Send "تنزيل {title} {artist}" — answered only inside that window
+ *   5. Poll Neon DB until webhook delivers the audio (max 90s)
+ *   6. Save to main cache → return stream URL
  */
 export async function resolveViaMoonBot(params: {
   title: string;
@@ -210,22 +242,41 @@ export async function resolveViaMoonBot(params: {
   // Register webhook if needed (fast no-op after first call)
   await ensureWebhookRegistered();
 
-  // Ensure DB table exists
+  // Ensure DB tables exist
   await ensurePendingTable();
 
-  // Single-message flow (no buttons): send "تنزيل {title} {artist}"
-  // and wait for @L_10_BOT's audio reply via the webhook.
+  // The bot only answers song queries in the short window after a HUMAN
+  // presses its "بحث اليوتوب صوت" button. Post "يوتيوب" to bring the menu
+  // up, then wait for the press (recorded by the webhook).
+  let modeOpen = await isSearchModeActive();
+  let triggerMsgId: number | null = null;
+  if (!modeOpen) {
+    triggerMsgId = await sendMsg("يوتيوب");
+    if (!triggerMsgId) return null;
+    console.log(`[L10Bot] Menu posted — waiting for audio-search button press for "${title}"...`);
+    modeOpen = await waitForSearchMode(40000);
+  }
+  if (!modeOpen) {
+    console.warn(`[L10Bot] No button press within 40s; bot ignores text-only queries — giving up "${title}"`);
+    if (triggerMsgId) deleteMsg(triggerMsgId).catch(() => {});
+    return null;
+  }
+
   const queryText = `تنزيل ${title}${artist ? ` ${artist}` : ""}`;
   const searchMsgId = await sendMsg(queryText);
-  if (!searchMsgId) return null;
+  if (!searchMsgId) {
+    if (triggerMsgId) deleteMsg(triggerMsgId).catch(() => {});
+    return null;
+  }
 
-  console.log(`[L10Bot] Waiting for webhook to deliver audio for "${title}"...`);
+  console.log(`[L10Bot] Search window open, query sent — waiting for webhook audio for "${title}"...`);
 
-  // Step 3: Poll DB for audio (populated by /api/telegram/webhook)
+  // Poll DB for audio (populated by /api/telegram/webhook)
   const pending = await pollDbForAudio(searchMsgId, 90000);
 
-  // Cleanup our message
+  // Cleanup our messages
   deleteMsg(searchMsgId).catch(() => {});
+  if (triggerMsgId) deleteMsg(triggerMsgId).catch(() => {});
 
   if (!pending) {
     console.warn(`[L10Bot] No audio received for "${title}" within 90s`);
