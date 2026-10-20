@@ -1,27 +1,32 @@
 /**
  * universalAudioResolver.ts
  * ─────────────────────────
- * Universal Audio Extraction Engine — Vercel-Optimized Parallel Race
+ * Universal Audio Extraction Engine — Telegram-First Strategy
  *
- * Strategy Order (parallel where possible):
- *   0. Telegram Cloud Storage Cache (Neon DB, <10ms if cached)
- *   1. JioSaavn 320kbps  +
- *   2. Albumaty 320kbps  - Race in parallel, first win returns
- *   3. SoundCloud (fallback)
- *   4. Telegram CDN upload completes before any stream URL is returned
+ * Strategy Order:
+ *   0.  Telegram Cloud Storage Cache (Neon DB, <10ms if cached)
+ *   0.5 moon6_bot (@moon6_bot) — primary download source via Telegram bot
+ *       Runs in parallel with scrapers so we don't lose time.
+ *   1.  JioSaavn 320kbps  +
+ *   2.  Albumaty 320kbps  - Race in parallel, first win returns
+ *   3.  SoundCloud (fallback)
+ *   4.  Piped / youtubei.js
+ *   5.  yt-dlp Worker (last resort)
  *
- * External source lookups are time-limited; playback waits for Telegram ingestion.
+ * moon6_bot is the fastest path: the bot downloads from YouTube/SoundCloud
+ * and stores the file in Telegram CDN — instant 206 streaming afterward.
  */
 
 import { resolveSaavnSong } from "./jiosaavn";
 import { resolveAlbumatyStream } from "../scrapers/albumaty";
 import { getCachedTelegramTrack, getTelegramDirectUrl, uploadAudioUrlToTelegram } from "../telegram/telegramStorage";
+import { resolveViaMoonBot } from "../telegram/moonBotResolver";
 import { findBestOfficialVideo } from "./artistMatcher";
 
 export interface UniversalAudioResult {
   streamUrl: string;
   directPlay: boolean;
-  source: "telegram" | "jiosaavn" | "albumaty" | "soundcloud" | "youtube" | "piped";
+  source: "telegram" | "moonbot" | "jiosaavn" | "albumaty" | "soundcloud" | "youtube" | "piped";
   title?: string;
   artist?: string;
   durationSec?: number;
@@ -152,6 +157,41 @@ async function trySoundCloud(
     }
   } catch (e: any) {
     console.warn("[AudioResolver] SoundCloud failed:", e.message);
+  }
+  return null;
+}
+
+/**
+ * Strategy 0.5: moon6_bot — Primary Telegram music bot
+ * Sends "تحميل {title} {artist}" and waits for audio reply.
+ * Returns Telegram stream URL ready for the player.
+ */
+async function tryMoonBot(
+  title: string,
+  artist: string | undefined,
+  videoId: string | undefined,
+  timeoutMs = 45000
+): Promise<UniversalAudioResult | null> {
+  try {
+    const moonResult = await withTimeout(
+      resolveViaMoonBot({ title, artist, videoId }),
+      timeoutMs
+    );
+    if (moonResult?.streamUrl) {
+      return {
+        streamUrl: moonResult.streamUrl,
+        directPlay: false,
+        source: "moonbot",
+        title: moonResult.title || title,
+        artist: moonResult.artist || artist,
+        durationSec: moonResult.durationSec,
+        format: "mp3",
+        mimeType: moonResult.mimeType || "audio/mpeg",
+        videoId,
+      };
+    }
+  } catch (e: any) {
+    console.warn("[AudioResolver] MoonBot failed:", e.message);
   }
   return null;
 }
@@ -341,29 +381,43 @@ export async function resolveUniversalAudio(params: {
     }
   }
 
-  // Strategy 1+2: Parallel race
+  // ─────────────────────────────────────────────────────────────────
+  // Strategy 0.5+1+2: moon6_bot + scrapers in parallel
+  // moon6_bot is the primary source (direct Telegram MP3 CDN).
+  // JioSaavn + Albumaty run in parallel so we don't lose time.
+  // First winner is used.
+  // ─────────────────────────────────────────────────────────────────
   let winner: UniversalAudioResult | null = null;
 
   if (isArabicSong) {
     const albumatyTitle = arabicResolvedTitle || oembedArabicTitle || title;
     const albumatyArtist = arabicResolvedArtist || effectiveArtist;
-    const [albumatyRes, saavnRes] = await Promise.all([
+
+    // All three run in parallel — moonbot usually wins in ~5-20s for popular songs
+    const [moonRes, albumatyRes, saavnRes] = await Promise.all([
+      tryMoonBot(albumatyTitle, albumatyArtist, videoId, 40000),
       tryAlbumaty(albumatyTitle, albumatyArtist, videoId, 8000),
       tryJioSaavn(title, effectiveArtist, videoId, 6000),
     ]);
-    winner = albumatyRes || saavnRes;
+    winner = moonRes || albumatyRes || saavnRes;
+
+    // Retry Albumaty with English title if Arabic one failed
     if (!winner && albumatyTitle !== title) {
       winner = await tryAlbumaty(title, effectiveArtist, videoId, 5000);
     }
   } else {
-    const [saavnRes, albumatyRes] = await Promise.all([
+    // Non-Arabic: JioSaavn + Albumaty first (fast), moonbot as parallel backup
+    const [saavnRes, albumatyRes, moonRes] = await Promise.all([
       tryJioSaavn(title, effectiveArtist, videoId, 6000),
       tryAlbumaty(title, effectiveArtist, videoId, 8000),
+      tryMoonBot(title, effectiveArtist, videoId, 40000),
     ]);
-    winner = saavnRes || albumatyRes;
+    winner = saavnRes || albumatyRes || moonRes;
   }
 
   if (winner) {
+    // moonbot results are already in Telegram — skip re-upload
+    if (winner.source === "moonbot") return winner;
     return await ingestToTelegram(winner, cacheKey, title, effectiveArtist, videoId);
   }
 
@@ -372,6 +426,7 @@ export async function resolveUniversalAudio(params: {
   if (scResult) {
     return await ingestToTelegram(scResult, cacheKey, title, effectiveArtist, videoId);
   }
+
 
   // Strategy 4: Deep YouTube search then retry Albumaty/Saavn with Arabic title
   try {

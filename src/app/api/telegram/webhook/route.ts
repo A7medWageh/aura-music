@@ -1,43 +1,99 @@
 import { NextRequest, NextResponse } from "next/server";
 import { saveTelegramCacheRecord } from "@/services/telegram/telegramStorage";
+import { query } from "@apis/neon";
 
 export const dynamic = "force-dynamic";
 
 /**
  * Telegram Webhook Handler
  * ────────────────────────
- * Allows anyone/admin to drop MP3 files directly into the Telegram channel or forward to the bot.
- * The webhook instantly parses the ID3 tags, records the file_id, and indexes the track in Neon DB.
+ * Receives ALL channel posts from Telegram (registered via setWebhook).
+ *
+ * Handles two cases:
+ * 1. Audio/document from @L_10_BOT (or any bot) → saves to moonbot_pending + telegram_audio_cache
+ * 2. Direct MP3 drops by admins → indexes in telegram_audio_cache
  */
 export async function POST(req: NextRequest) {
   try {
     const update = await req.json();
 
-    const message = update.message || update.channel_post || update.edited_channel_post;
+    const message =
+      update.message ||
+      update.channel_post ||
+      update.edited_channel_post;
+
     if (!message) {
       return NextResponse.json({ ok: true, ignored: "no message payload" });
     }
 
     const audio = message.audio;
     const doc = message.document;
+    const isAudioDoc =
+      doc?.mime_type?.startsWith("audio/") ||
+      doc?.file_name?.match(/\.(mp3|m4a|ogg|flac)$/i);
+    const media = audio || (isAudioDoc ? doc : null);
 
-    // Check if the message contains audio or an audio document
-    if (audio || (doc && doc.mime_type && doc.mime_type.startsWith("audio/"))) {
-      const media = audio || doc;
-      const fileId = media.file_id;
-      const rawTitle = audio?.title || doc?.file_name?.replace(/\.[^/.]+$/, "") || message.caption || "Aura Track";
-      const artist = audio?.performer || "Aura Music";
-      const durationSec = audio?.duration || 0;
-      const fileSize = media.file_size || 0;
-      const mimeType = media.mime_type || "audio/mpeg";
+    if (media?.file_id) {
+      const fileId: string = media.file_id;
+      const rawTitle: string =
+        audio?.title ||
+        doc?.file_name?.replace(/\.[^/.]+$/, "") ||
+        message.caption ||
+        "Aura Track";
+      const artist: string = audio?.performer || "Aura Music";
+      const durationSec: number = audio?.duration || 0;
+      const fileSize: number = media.file_size || 0;
+      const mimeType: string = media.mime_type || "audio/mpeg";
+      const msgId: number = message.message_id;
+      const replyToMsgId: number | null =
+        message.reply_to_message?.message_id ?? null;
 
-      console.log(`[TelegramWebhook] Auto-indexing dropped track: "${rawTitle}" by "${artist}" (file_id=${fileId})`);
+      console.log(
+        `[TelegramWebhook] Audio received: "${rawTitle}" by "${artist}" (file_id=${fileId}, replyTo=${replyToMsgId})`
+      );
 
+      // 1. Save to moonbot_pending for resolveViaMoonBot polling
+      try {
+        await query(
+          `INSERT INTO moonbot_pending (tg_file_id, tg_message_id, reply_to_message_id, title, artist, duration_sec, file_size, mime_type, received_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+           ON CONFLICT (tg_file_id) DO NOTHING`,
+          [fileId, msgId, replyToMsgId, rawTitle, artist, durationSec, fileSize, mimeType]
+        );
+      } catch (dbErr: any) {
+        // Table might not exist yet — try to create it
+        if (dbErr.message?.includes("does not exist")) {
+          await query(`
+            CREATE TABLE IF NOT EXISTS moonbot_pending (
+              id SERIAL PRIMARY KEY,
+              tg_file_id TEXT UNIQUE NOT NULL,
+              tg_message_id BIGINT,
+              reply_to_message_id BIGINT,
+              title TEXT,
+              artist TEXT,
+              duration_sec INT,
+              file_size BIGINT,
+              mime_type TEXT DEFAULT 'audio/mpeg',
+              received_at TIMESTAMPTZ DEFAULT NOW()
+            )
+          `);
+          await query(
+            `INSERT INTO moonbot_pending (tg_file_id, tg_message_id, reply_to_message_id, title, artist, duration_sec, file_size, mime_type)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             ON CONFLICT (tg_file_id) DO NOTHING`,
+            [fileId, msgId, replyToMsgId, rawTitle, artist, durationSec, fileSize, mimeType]
+          );
+        } else {
+          console.warn("[TelegramWebhook] moonbot_pending insert error:", dbErr.message);
+        }
+      }
+
+      // 2. Also index in main cache
       await saveTelegramCacheRecord({
         title: rawTitle,
         artist,
         tgFileId: fileId,
-        tgMessageId: message.message_id,
+        tgMessageId: msgId,
         durationSec,
         fileSize,
         mimeType,
@@ -45,17 +101,13 @@ export async function POST(req: NextRequest) {
 
       return NextResponse.json({
         ok: true,
-        indexed: {
-          title: rawTitle,
-          artist,
-          fileId,
-        },
+        indexed: { title: rawTitle, artist, fileId, replyToMsgId },
       });
     }
 
     return NextResponse.json({ ok: true, status: "non-audio update ignored" });
   } catch (err: any) {
-    console.error("[TelegramWebhook] Error processing update:", err.message);
+    console.error("[TelegramWebhook] Error:", err.message);
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }
@@ -63,7 +115,7 @@ export async function POST(req: NextRequest) {
 export async function GET() {
   return NextResponse.json({
     status: "active",
-    service: "Aura Music Telegram Ingestion Webhook",
+    service: "Aura Music Telegram Webhook",
     timestamp: new Date().toISOString(),
   });
 }

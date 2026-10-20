@@ -336,6 +336,22 @@ export async function GET(req: NextRequest) {
       let streamUrl = resolved.streamUrl;
       let directPlay = resolved.directPlay;
 
+      // Telegram / MoonBot sources: already a proper /api/telegram/stream URL
+      if (resolved.source === "telegram" || resolved.source === "moonbot") {
+        // Return as-is — the player will call /api/telegram/stream which handles 206 streaming
+        return NextResponse.json(
+          {
+            url: streamUrl,
+            directPlay: false,
+            source: resolved.source,
+            durationSec: resolved.durationSec,
+            title: resolved.title,
+            artist: resolved.artist,
+          },
+          { headers: { ...NO_CACHE_HEADERS, "Access-Control-Allow-Origin": "*" } }
+        );
+      }
+
       // If YouTube, point directly to this /api/ytdownload endpoint which streams the actual audio
       if (resolved.source === "youtube" || streamUrl.includes("youtube.com") || streamUrl.includes("youtu.be")) {
         const vid = targetVideoId || videoId || resolved.videoId || "";
@@ -349,6 +365,8 @@ export async function GET(req: NextRequest) {
           directPlay,
           source: resolved.source,
           durationSec: resolved.durationSec,
+          title: resolved.title,
+          artist: resolved.artist,
         },
         {
           headers: {
@@ -358,6 +376,7 @@ export async function GET(req: NextRequest) {
         }
       );
     }
+
 
     const isAttachment = searchParams.get("attachment") === "true" || isDownload;
     const trackName = title || resolved.title || "song";
