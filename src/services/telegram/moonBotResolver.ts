@@ -146,11 +146,10 @@ let webhookRegistered = false;
 async function ensureWebhookRegistered(): Promise<void> {
   if (webhookRegistered) return;
 
+  // Must be the PRODUCTION domain — VERCEL_URL points at per-deployment
+  // preview hosts which are auth-protected (Telegram gets 401 and queues updates).
   const vercelUrl =
-    process.env.NEXT_PUBLIC_APP_URL ||
-    process.env.VERCEL_URL
-      ? `https://${process.env.VERCEL_URL}`
-      : "https://aura-musiic.vercel.app";
+    process.env.NEXT_PUBLIC_APP_URL || "https://aura-musiic.vercel.app";
 
   const webhookUrl = `${vercelUrl}/api/telegram/webhook`;
 
