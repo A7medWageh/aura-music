@@ -5,7 +5,7 @@
  *
  * Strategy Order:
  *   0.  Telegram Cloud Storage Cache (Neon DB, <10ms if cached)
- *   0.5 moon6_bot (@moon6_bot) — primary download source via Telegram bot
+ *   0.5 @L_10_BOT — primary download source via Telegram bot
  *       Runs in parallel with scrapers so we don't lose time.
  *   1.  JioSaavn 320kbps  +
  *   2.  Albumaty 320kbps  - Race in parallel, first win returns
@@ -13,8 +13,8 @@
  *   4.  Piped / youtubei.js
  *   5.  yt-dlp Worker (last resort)
  *
- * moon6_bot is the fastest path: the bot downloads from YouTube/SoundCloud
- * and stores the file in Telegram CDN — instant 206 streaming afterward.
+ * @L_10_BOT is the fastest path: the bot searches YouTube and delivers
+ * the MP3 directly into the channel — instant 206 streaming afterward.
  */
 
 import { resolveSaavnSong } from "./jiosaavn";
@@ -162,8 +162,8 @@ async function trySoundCloud(
 }
 
 /**
- * Strategy 0.5: moon6_bot — Primary Telegram music bot
- * Sends "تحميل {title} {artist}" and waits for audio reply.
+ * Strategy 0.5: @L_10_BOT — Primary Telegram music bot
+ * Selects "بحث يوتيوب صوت" then sends "{title} {artist}" and waits for audio.
  * Returns Telegram stream URL ready for the player.
  */
 async function tryMoonBot(
@@ -382,8 +382,8 @@ export async function resolveUniversalAudio(params: {
   }
 
   // ─────────────────────────────────────────────────────────────────
-  // Strategy 0.5+1+2: moon6_bot + scrapers in parallel
-  // moon6_bot is the primary source (direct Telegram MP3 CDN).
+  // Strategy 0.5+1+2: @L_10_BOT + scrapers in parallel
+  // @L_10_BOT is the primary source (direct Telegram MP3 CDN).
   // JioSaavn + Albumaty run in parallel so we don't lose time.
   // First winner is used.
   // ─────────────────────────────────────────────────────────────────

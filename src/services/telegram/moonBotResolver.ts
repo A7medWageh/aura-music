@@ -6,8 +6,8 @@
  * Architecture:
  *  ┌─────────────────────────────────────────────────┐
  *  │  resolveViaMoonBot()                            │
- *  │    1. Send "يوتيوب" to channel                  │
- *  │    2. Send "تنزيل {title} {artist}" to channel  │
+ *  │    1. Send "بحث يوتيوب صوت" (bot menu action)  │
+ *  │    2. Send "{title} {artist}" plain message     │
  *  │    3. Poll Neon DB (moonbot_pending table)       │
  *  │       ↑ populated by /api/telegram/webhook      │
  *  │       ↑ which receives @L_10_BOT audio posts    │
@@ -103,17 +103,17 @@ async function pollDbForAudio(
   maxWaitMs = 60000
 ): Promise<any | null> {
   const start = Date.now();
-  const pollIntervalMs = 1500;
+  const pollIntervalMs = 800;
 
   while (Date.now() - start < maxWaitMs) {
-    await new Promise((r) => setTimeout(r, pollIntervalMs));
-
     try {
+      // Prefer an audio that is a direct reply to our search message,
+      // otherwise take the first audio posted after it.
       const res = await query<any>(
         `SELECT tg_file_id, tg_message_id, title, artist, duration_sec, file_size, mime_type
          FROM moonbot_pending
          WHERE tg_message_id > $1
-         ORDER BY tg_message_id ASC
+         ORDER BY (reply_to_message_id = $1) DESC NULLS LAST, tg_message_id ASC
          LIMIT 1`,
         [afterMsgId]
       );
@@ -131,6 +131,8 @@ async function pollDbForAudio(
         console.warn("[L10Bot] DB poll error:", err.message);
       }
     }
+
+    await new Promise((r) => setTimeout(r, pollIntervalMs));
   }
 
   return null;
@@ -189,10 +191,10 @@ async function ensureWebhookRegistered(): Promise<void> {
 /**
  * Main export: resolve a song via @L_10_BOT → Telegram CDN.
  *
- * Flow:
+ * Flow (same as manually using the bot's buttons):
  *   1. Ensure webhook is registered (Vercel receives all channel posts)
- *   2. Send "يوتيوب" to trigger the bot
- *   3. Send "تنزيل {title} {artist}" to request the song
+ *   2. Send "بحث يوتيوب صوت" — the bot's YouTube-audio-search menu action
+ *   3. Send "{title} {artist}" as a plain message (no "تنزيل" prefix)
  *   4. Poll Neon DB until webhook delivers the audio (max 60s)
  *   5. Save to main cache → return stream URL
  */
@@ -214,17 +216,16 @@ export async function resolveViaMoonBot(params: {
   // Ensure DB table exists
   await ensurePendingTable();
 
-  // Step 1: Trigger bot with "يوتيوب"
-  const triggerMsgId = await sendMsg("يوتيوب");
+  // Step 1: Open the bot's YouTube audio search mode (button-equivalent)
+  const triggerMsgId = await sendMsg("بحث يوتيوب صوت");
   if (!triggerMsgId) return null;
 
-  // Brief pause for bot to process trigger
-  await new Promise((r) => setTimeout(r, 600));
+  // Brief pause for bot to process the menu action
+  await new Promise((r) => setTimeout(r, 500));
 
-  // Step 2: Send download request
-  const dlText = `تنزيل ${title}${artist ? ` ${artist}` : ""}`;
-  const dlMsgId = await sendMsg(dlText);
-  if (!dlMsgId) {
+  // Step 2: Send "song name singer name" as a plain message
+  const searchMsgId = await sendMsg(`${title}${artist ? ` ${artist}` : ""}`);
+  if (!searchMsgId) {
     deleteMsg(triggerMsgId).catch(() => {});
     return null;
   }
@@ -232,11 +233,11 @@ export async function resolveViaMoonBot(params: {
   console.log(`[L10Bot] Waiting for webhook to deliver audio for "${title}"...`);
 
   // Step 3: Poll DB for audio (populated by /api/telegram/webhook)
-  const pending = await pollDbForAudio(triggerMsgId, 60000);
+  const pending = await pollDbForAudio(searchMsgId, 60000);
 
   // Cleanup our messages
   deleteMsg(triggerMsgId).catch(() => {});
-  deleteMsg(dlMsgId).catch(() => {});
+  deleteMsg(searchMsgId).catch(() => {});
 
   if (!pending) {
     console.warn(`[L10Bot] No audio received for "${title}" within 60s`);
