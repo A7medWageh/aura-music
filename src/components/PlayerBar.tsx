@@ -23,9 +23,9 @@ function fmtTime(s: number) {
   return `${m}:${Math.floor(s % 60).toString().padStart(2, "0")}`;
 }
 
-// ─── Dynamic Color Extractor from album art ───────────────────────────
+// ─── Dynamic Color Extractor from album art (Strict Obsidian Dark Theme) ─
 function useDominantColor(imageUrl: string | undefined) {
-  const [colors, setColors] = useState({ bg1: "#1a1035", bg2: "#0f0a20", accent: "#6366f1" });
+  const [colors, setColors] = useState({ bg1: "#0b0d13", bg2: "#050608", accent: "#00e5ff" });
 
   useEffect(() => {
     if (!imageUrl) return;
@@ -43,7 +43,6 @@ function useDominantColor(imageUrl: string | undefined) {
 
         let r = 0, g = 0, b = 0, count = 0;
         for (let i = 0; i < data.length; i += 16) {
-          // Skip near-white and near-black pixels
           const rv = data[i], gv = data[i + 1], bv = data[i + 2];
           const brightness = (rv + gv + bv) / 3;
           if (brightness > 30 && brightness < 220) {
@@ -54,16 +53,19 @@ function useDominantColor(imageUrl: string | undefined) {
           r = Math.round(r / count);
           g = Math.round(g / count);
           b = Math.round(b / count);
-          // Darken slightly for background but keep the hue visible
-          const bg1 = `rgb(${Math.round(r * 0.6)}, ${Math.round(g * 0.6)}, ${Math.round(b * 0.6)})`;
-          const bg2 = `rgb(${Math.round(r * 0.4)}, ${Math.round(g * 0.4)}, ${Math.round(b * 0.4)})`;
-          // Accent: brighter version
-          const max = Math.max(r, g, b);
-          const scale = max > 0 ? 220 / max : 1;
-          const accent = `rgb(${Math.min(255, Math.round(r * scale))}, ${Math.min(255, Math.round(g * scale))}, ${Math.min(255, Math.round(b * scale))})`;
+          // Dark obsidian black palette with zero purple hue
+          const bg1 = "#090b10";
+          const bg2 = "#040507";
+          const isPurpleOrViolet = b > 115 && r > 85 && g < 115;
+          let accent = "#00e5ff";
+          if (!isPurpleOrViolet) {
+            const max = Math.max(r, g, b);
+            const scale = max > 0 ? 220 / max : 1;
+            accent = `rgb(${Math.min(255, Math.round(r * scale))}, ${Math.min(255, Math.round(g * scale))}, ${Math.min(255, Math.round(b * scale))})`;
+          }
           setColors({ bg1, bg2, accent });
         }
-      } catch { /* canvas tainted — ignore */ }
+      } catch { /* ignore */ }
     };
     img.src = imageUrl;
   }, [imageUrl]);
@@ -71,36 +73,36 @@ function useDominantColor(imageUrl: string | undefined) {
   return colors;
 }
 
-// ─── Pulsing Waveform Visualizer ─────────────────────────────────────
+// ─── Compact Pulsing Waveform Visualizer ─────────────────────────────
 function WaveformVisualizer({ isPlaying, accent }: { isPlaying: boolean; accent: string }) {
-  const bars = Array.from({ length: 28 });
+  const bars = Array.from({ length: 24 });
   return (
-    <div className="flex items-end justify-center gap-[3px] h-16 w-full px-4">
+    <div className="flex items-end justify-center gap-[3px] h-8 w-full px-4">
       {bars.map((_, i) => {
-        const baseH = 6 + Math.sin(i * 0.7) * 14 + Math.random() * 6;
+        const baseH = 4 + Math.sin(i * 0.7) * 8 + (i % 3) * 2;
         return (
           <motion.div
             key={i}
-            className="rounded-full w-[5px] shrink-0"
-            style={{ background: accent, opacity: 0.6, height: "4px" }}
+            className="rounded-full w-[3.5px] shrink-0"
+            style={{ background: accent, opacity: 0.65, height: "3px" }}
             animate={
               isPlaying
                 ? {
                     height: [
                       `${baseH}px`,
-                      `${Math.max(4, baseH + (Math.random() - 0.5) * 28)}px`,
-                      `${Math.max(4, baseH + (Math.random() - 0.5) * 20)}px`,
+                      `${Math.max(3, baseH + (Math.random() - 0.5) * 16)}px`,
+                      `${Math.max(3, baseH + (Math.random() - 0.5) * 12)}px`,
                       `${baseH}px`,
                     ],
-                    opacity: [0.5, 0.9, 0.7, 0.5],
+                    opacity: [0.5, 0.95, 0.7, 0.5],
                   }
-                : { height: "4px", opacity: 0.3 }
+                : { height: "3px", opacity: 0.25 }
             }
             transition={{
-              duration: 0.7 + Math.random() * 0.6,
+              duration: 0.6 + Math.random() * 0.5,
               repeat: Infinity,
               ease: "easeInOut",
-              delay: i * 0.04,
+              delay: i * 0.03,
             }}
           />
         );
@@ -358,7 +360,7 @@ function FullPlayer({
       className="fixed inset-0 z-50 flex flex-col overflow-hidden"
       style={{
         pointerEvents: isOpen ? "auto" : "none",
-        background: `linear-gradient(180deg, ${bg1} 0%, ${bg2} 100%)`,
+        background: "#08090d",
         willChange: "transform",
         transform: "translateZ(0)",
         height: "100dvh",
@@ -368,35 +370,35 @@ function FullPlayer({
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
     >
-      {/* ── Blurred album art background ── */}
+      {/* ── Dark Obsidian ambient background with zero purple tint ── */}
       <div className="absolute inset-0 overflow-hidden" style={{ willChange: "transform", transform: "translateZ(0)" }}>
         <img
           src={proxyArt}
           alt=""
-          className="w-full h-full object-cover scale-125"
-          style={{ filter: "blur(40px) brightness(0.6) saturate(1.5)", willChange: "transform", transform: "translateZ(0)" }}
+          className="w-full h-full object-cover scale-125 opacity-20"
+          style={{ filter: "blur(60px) brightness(0.25) saturate(1.1)", willChange: "transform", transform: "translateZ(0)" }}
         />
-        <div className="absolute inset-0" style={{ background: `linear-gradient(180deg, ${bg1}aa 0%, ${bg2}dd 60%, ${bg2}fa 100%)` }} />
+        <div className="absolute inset-0 bg-gradient-to-b from-[#090b10]/95 via-[#06070a]/98 to-[#040507]" />
       </div>
 
       {/* ── Content ── */}
       <div className="relative z-10 flex flex-col h-full w-full max-w-sm mx-auto overflow-hidden">
 
         {/* Top drag indicator */}
-        <div className="flex justify-center pt-2.5 pb-1 shrink-0">
+        <div className="flex justify-center pt-3 pb-1 shrink-0">
           <div className="w-10 h-1 rounded-full bg-white/20" />
         </div>
 
         {/* Top Bar */}
-        <div className="flex items-center justify-between px-5 pt-1 pb-1 shrink-0">
+        <div className="flex items-center justify-between px-5 py-1.5 shrink-0">
           <button onClick={onClose} className="p-2 rounded-full hover:bg-white/10 transition active:scale-90">
-            <ChevronDown className="w-7 h-7 text-white" />
+            <ChevronDown className="w-6 h-6 text-white" />
           </button>
           <div className="flex flex-col items-center">
             <p className="text-white/50 text-[11px] font-bold uppercase tracking-widest">يعزف الآن</p>
             {state.isHighQuality && (
-              <span className="text-[10px] font-black text-amber-300 flex items-center gap-1 bg-amber-400/15 px-2 py-0.5 rounded-full border border-amber-400/30 shadow-[0_0_10px_rgba(251,191,36,0.2)]">
-                استوديو HQ 320k 🎧
+              <span className="text-[10px] font-black text-cyan-300 flex items-center gap-1 bg-cyan-400/10 px-2.5 py-0.5 rounded-full border border-cyan-400/30 shadow-[0_0_12px_rgba(0,229,255,0.2)]">
+                استوديو Master HQ 🎧
               </span>
             )}
           </div>
@@ -405,7 +407,7 @@ function FullPlayer({
               if (!isPremium) { setPremiumFeatureName("ميكس AI (الدي جي الذكي)"); setIsPremiumModalOpen(true); }
               else { setIsAiMix(!state.isAiMix); showToast(!state.isAiMix ? "تم تفعيل ميكس AI 🤖✨" : "تم إيقاف ميكس AI"); }
             }}
-            className={`px-3 py-1.5 rounded-full text-xs font-black transition-all ${state.isAiMix ? "bg-white text-black" : "bg-white/10 text-white/70"}`}
+            className={`px-3 py-1.5 rounded-full text-xs font-black transition-all border ${state.isAiMix ? "bg-white text-black border-white" : "bg-white/5 text-white/70 border-white/10"}`}
           >
             {!isPremium && <Crown className="w-3 h-3 text-amber-400 inline ml-1" />}
             ميكس AI
@@ -414,128 +416,108 @@ function FullPlayer({
 
         {/* ═══════════ NOW PLAYING TAB ═══════════ */}
         {activeTab === "now" && (
-          <div className="flex-1 flex flex-col items-center justify-between px-5 pb-1 pt-0 overflow-hidden min-h-0">
+          <div className="flex-1 flex flex-col items-center justify-between px-5 pb-2 pt-1 overflow-hidden min-h-0 w-full">
 
-            {/* Responsive Scaled Album Art that dynamically fits available height */}
-            <div className="flex-1 min-h-0 w-full flex items-center justify-center py-2 shrink">
+            {/* Album Art Container with harmonious spacing */}
+            <div className="w-full flex-1 flex items-center justify-center my-auto min-h-0 py-2 shrink">
               <motion.div
                 key={currentSong?.songId}
-                initial={{ scale: 0.9, opacity: 0 }}
+                initial={{ scale: 0.92, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
-                transition={{ type: "spring", stiffness: 220, damping: 24 }}
-                className="relative h-full max-h-[min(30dvh,215px)] aspect-square flex items-center justify-center mx-auto"
+                transition={{ type: "spring", stiffness: 240, damping: 25 }}
+                className="relative max-h-[min(34vh,230px)] w-[min(65vw,230px)] aspect-square flex items-center justify-center mx-auto"
               >
                 <div
-                  className="w-full h-full rounded-2xl sm:rounded-3xl overflow-hidden shadow-2xl relative"
-                  style={{ boxShadow: `0 14px 44px ${accent}44, 0 8px 24px rgba(0,0,0,0.6)` }}
+                  className="w-full h-full rounded-3xl overflow-hidden relative border border-white/10 shadow-[0_22px_60px_rgba(0,0,0,0.9)]"
                 >
                   <img src={proxyArt} alt={currentSong?.title} className="w-full h-full object-cover" />
-                  {/* Spinning vinyl ring when playing */}
                   {state.isPlaying && (
                     <motion.div
                       animate={{ rotate: 360 }}
-                      transition={{ duration: 8, repeat: Infinity, ease: "linear" }}
-                      className="absolute inset-[-4px] rounded-[24px] sm:rounded-[32px] border-2 border-dashed pointer-events-none"
-                      style={{ borderColor: `${accent}40` }}
+                      transition={{ duration: 10, repeat: Infinity, ease: "linear" }}
+                      className="absolute inset-[-4px] rounded-[32px] border-2 border-dashed border-cyan-400/30 pointer-events-none"
                     />
                   )}
                 </div>
               </motion.div>
             </div>
 
-            {/* Song Info + Like */}
-            <div className="w-full flex items-center justify-between px-1 mb-1 shrink-0">
-              <button onClick={onLike} className="p-2 active:scale-90 transition-transform">
+            {/* Song Meta (Title + Artist + Heart + Download) */}
+            <div className="w-full flex items-center justify-between px-2 pt-1.5 pb-1 shrink-0">
+              <button onClick={onLike} className="p-2.5 rounded-full hover:bg-white/5 active:scale-90 transition-transform">
                 <Heart
-                  className={`w-6 h-6 transition-all ${isLiked ? "fill-current text-pink-400 scale-110" : "text-white/40"}`}
-                  style={isLiked ? { filter: `drop-shadow(0 0 8px ${accent})` } : {}}
+                  className={`w-6 h-6 transition-all ${isLiked ? "fill-current text-pink-400 scale-110 drop-shadow-[0_0_8px_rgba(244,114,182,0.6)]" : "text-neutral-500 hover:text-white"}`}
                 />
               </button>
-              <div className="flex-1 text-center px-2">
-                <AnimatePresence mode="wait">
-                  <motion.div
-                    key={currentSong?.songId}
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -10 }}
-                    transition={{ duration: 0.3 }}
-                  >
-                    <h2 className="text-white font-black text-base sm:text-lg leading-tight truncate">{currentSong?.title || "—"}</h2>
-                    <p className="text-white/55 text-xs sm:text-sm font-medium mt-0.5 truncate">{currentSong?.artist || "فنان"}</p>
-                  </motion.div>
-                </AnimatePresence>
+              <div className="flex-1 text-center px-3 min-w-0">
+                <h2 className="text-white font-black text-lg sm:text-xl leading-tight truncate">{currentSong?.title || "—"}</h2>
+                <p className="text-neutral-400 text-xs sm:text-sm font-medium mt-1 truncate">{currentSong?.artist || "فنان"}</p>
               </div>
-              <button onClick={onDownload} className="p-2 active:scale-90 transition-transform">
-                <DownloadCloud className="w-6 h-6 text-white/40 hover:text-white transition-colors" />
+              <button onClick={onDownload} className="p-2.5 rounded-full hover:bg-white/5 active:scale-90 transition-transform">
+                <DownloadCloud className="w-6 h-6 text-neutral-500 hover:text-white transition-colors" />
               </button>
             </div>
 
-            {/* Waveform Visualizer */}
-            <div className="w-full mb-1 shrink-0">
-              <WaveformVisualizer isPlaying={state.isPlaying} accent={accent} />
+            {/* Sleek Compact Waveform Visualizer */}
+            <div className="w-full my-1 shrink-0">
+              <WaveformVisualizer isPlaying={state.isPlaying} accent="#00e5ff" />
             </div>
 
-            {/* Seek Bar */}
-            <div className="w-full px-1 mb-1 shrink-0">
+            {/* Seek Bar + Times */}
+            <div className="w-full px-2 mb-2 shrink-0">
               <SeekBar
                 progress={state.currentTime}
                 duration={state.duration}
                 onSeek={seekTo}
                 height="h-1.5"
                 rtl={false}
-                accent={accent}
+                accent="#00e5ff"
                 isPremium={isPremium}
                 onPremiumClick={() => { setPremiumFeatureName("تقديم وتأخير الأغنية"); setIsPremiumModalOpen(true); }}
               />
-              <div className="flex justify-between mt-1 text-[11px] font-bold text-white/40 tabular-nums" dir="ltr">
+              <div className="flex justify-between mt-1 text-[11px] font-bold text-neutral-400 tabular-nums" dir="ltr">
                 <span>{fmtTime(state.currentTime)}</span>
-                <span>-{fmtTime(state.duration - state.currentTime)}</span>
+                <span>-{fmtTime(Math.max(0, state.duration - state.currentTime))}</span>
               </div>
             </div>
 
-            {/* Main Controls */}
-            <div className="flex items-center justify-between w-full px-3 mb-2 shrink-0">
+            {/* Playback Controls (Coordinated Ergonomic Spacing) */}
+            <div className="flex items-center justify-between w-full max-w-[330px] mx-auto px-2 pb-2 shrink-0">
               <button
                 onClick={() => setShuffle(!state.shuffle)}
-                className={`p-2 transition-colors active:scale-90 ${state.shuffle ? "text-white" : "text-white/30"}`}
-                style={state.shuffle ? { filter: `drop-shadow(0 0 6px ${accent})` } : {}}
+                className={`p-2.5 rounded-full transition-colors active:scale-90 ${state.shuffle ? "text-cyan-400 drop-shadow-[0_0_8px_rgba(0,242,254,0.6)]" : "text-neutral-500 hover:text-white"}`}
               >
                 <Shuffle className="w-5 h-5" />
               </button>
 
-              <button onClick={prev} className="active:scale-90 transition-transform p-2">
-                <SkipBack className="text-white w-8 h-8 fill-current" />
+              <button onClick={prev} className="active:scale-90 transition-transform p-2.5 text-white hover:text-neutral-200">
+                <SkipBack className="w-7 h-7 fill-current" />
               </button>
 
               <button
                 onClick={togglePlay}
-                className="w-16 h-16 rounded-full flex items-center justify-center shadow-2xl active:scale-95 transition-transform shrink-0"
-                style={{
-                  background: "white",
-                  boxShadow: `0 8px 30px ${accent}66, 0 4px 16px rgba(0,0,0,0.4)`
-                }}
+                className="w-16 h-16 sm:w-18 sm:h-18 rounded-full flex items-center justify-center bg-white text-black shadow-[0_8px_30px_rgba(255,255,255,0.25),0_4px_16px_rgba(0,0,0,0.8)] active:scale-95 transition-transform shrink-0"
               >
                 {state.isBuffering ? (
-                  <div className="w-7 h-7 border-4 border-black/10 border-t-black rounded-full animate-spin" />
+                  <div className="w-7 h-7 border-3 border-neutral-300 border-t-black rounded-full animate-spin" />
                 ) : state.isPlaying ? (
-                  <Pause className="w-8 h-8 fill-current" style={{ color: bg2 }} />
+                  <Pause className="w-7 h-7 fill-current text-black" />
                 ) : (
-                  <Play className="w-8 h-8 fill-current ml-1" style={{ color: bg2 }} />
+                  <Play className="w-7 h-7 fill-current text-black ml-0.5" />
                 )}
               </button>
 
-              <button onClick={next} className="active:scale-90 transition-transform p-2">
-                <SkipForward className="text-white w-8 h-8 fill-current" />
+              <button onClick={next} className="active:scale-90 transition-transform p-2.5 text-white hover:text-neutral-200">
+                <SkipForward className="w-7 h-7 fill-current" />
               </button>
 
               <button
                 onClick={cycleRepeat}
-                className={`relative p-2 transition-colors active:scale-90 ${state.repeat !== "off" ? "text-white" : "text-white/30"}`}
-                style={state.repeat !== "off" ? { filter: `drop-shadow(0 0 6px ${accent})` } : {}}
+                className={`relative p-2.5 rounded-full transition-colors active:scale-90 ${state.repeat !== "off" ? "text-cyan-400 drop-shadow-[0_0_8px_rgba(0,242,254,0.6)]" : "text-neutral-500 hover:text-white"}`}
               >
                 <Repeat className="w-5 h-5" />
                 {state.repeat === "one" && (
-                  <span className="absolute top-0.5 right-0.5 text-[8px] font-black leading-none">1</span>
+                  <span className="absolute top-1 right-1 text-[8px] font-black leading-none bg-cyan-400 text-black px-1 rounded-full">1</span>
                 )}
               </button>
             </div>
@@ -657,23 +639,18 @@ function FullPlayer({
             <div className="space-y-3">
               <button
                 onClick={() => {
-                  if (!isPremium) {
-                    setPremiumFeatureName("نقاء وجودة الصوت الخارقة (Aura Studio Master)");
-                    setIsPremiumModalOpen(true);
-                  } else {
-                    const newVal = !state.isHighQuality;
-                    setHighQuality(newVal);
-                    showToast(newVal ? "تم تفعيل نقاء الصوت الفائق (Master Studio) 🎧✨" : "تم إيقاف معالجة نقاء الصوت", "hq");
-                  }
+                  const newVal = !state.isHighQuality;
+                  setHighQuality(newVal);
+                  showToast(newVal ? "تم تفعيل نقاء الصوت الفائق (Master Studio) 🎧✨" : "تم إيقاف معالجة نقاء الصوت", "hq");
                 }}
                 className={`w-full py-4 px-5 rounded-2xl flex items-center justify-between font-black text-lg transition-all ${
                   state.isHighQuality
                     ? "text-black shadow-2xl"
-                    : "bg-white/10 text-white/80 hover:bg-white/15 border border-white/10"
+                    : "bg-white/[0.05] text-white/80 hover:bg-white/[0.08] border border-white/10"
                 }`}
                 style={state.isHighQuality ? {
-                  background: `linear-gradient(135deg, #f59e0b, #ef4444)`,
-                  boxShadow: `0 0 35px rgba(245,158,11,0.45)`
+                  background: `linear-gradient(135deg, #00f2fe, #4facfe)`,
+                  boxShadow: `0 0 35px rgba(0,242,254,0.35)`
                 } : {}}
               >
                 <div className="flex items-center gap-3">
@@ -681,15 +658,14 @@ function FullPlayer({
                   <div className="text-right">
                     <div className="flex items-center gap-2">
                       <span>نقاء الصوت الفائق (Studio Master)</span>
-                      {!isPremium && <Crown className="w-4 h-4 text-amber-400" />}
                     </div>
-                    <p className={`text-xs font-medium ${state.isHighQuality ? "text-black/80" : "text-white/50"}`}>
-                      معالجة احترافية 32-bit مثل سبوتيفاي وأنغامي Hi-Fi
+                    <p className={`text-xs font-medium ${state.isHighQuality ? "text-black/85" : "text-white/50"}`}>
+                      معالجة احترافية 32-bit مثل سبوتيفاي Hi-Fi مع عزل وضخامة ثلاثية الأبعاد
                     </p>
                   </div>
                 </div>
-                <span className={`text-xs font-black px-2.5 py-1 rounded-full border ${state.isHighQuality ? "border-black/30 bg-black/10" : "border-amber-400/40 text-amber-400 bg-amber-400/10"}`}>
-                  {state.isHighQuality ? "مُفعّل" : "HQ 320k"}
+                <span className={`text-xs font-black px-2.5 py-1 rounded-full border ${state.isHighQuality ? "border-black/30 bg-black/10 text-black" : "border-cyan-400/40 text-cyan-400 bg-cyan-400/10"}`}>
+                  {state.isHighQuality ? "مُفعّل" : "320k HQ"}
                 </span>
               </button>
             </div>
@@ -699,19 +675,20 @@ function FullPlayer({
               <motion.div
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="space-y-3 bg-white/5 p-4 rounded-2xl border border-white/10"
+                className="space-y-3 bg-white/[0.04] p-4 rounded-2xl border border-white/10"
               >
-                <div className="flex items-center gap-2 text-white/80 font-bold text-sm">
-                  <Sliders className="w-4 h-4 text-amber-400" />
+                <div className="flex items-center gap-2 text-white/90 font-bold text-sm">
+                  <Sliders className="w-4 h-4 text-cyan-400" />
                   <span>طابع ونمط نقاء الصوت:</span>
                 </div>
 
                 <div className="grid grid-cols-2 gap-2.5">
                   {[
                     { id: "crystal", label: "نقاء فائق (Studio)", icon: "🎧", desc: "وضوح فائق وتفاصيل ناعمة" },
+                    { id: "spatial", label: "صوت محيطي 3D", icon: "🌌", desc: "مسرح صوتي مجسم 360°" },
+                    { id: "noise_cancel", label: "عزل الضوضاء الفائق", icon: "🛡️", desc: "تنقية الاستوديو وعزل الهمس" },
                     { id: "bass", label: "بيس ونقاء عميق", icon: "🔊", desc: "تضخيم عميق بدون كتم" },
                     { id: "vocal", label: "صوت غنائي (Vocal)", icon: "🎙️", desc: "إبراز صوت المطرب بوضوح" },
-                    { id: "spatial", label: "محيطي ثلاثي الأبعاد", icon: "🌌", desc: "مسرح صوتي واسع 3D" },
                   ].map((p) => {
                     const isSelected = (soundPreset || "crystal") === p.id;
                     return (
@@ -723,16 +700,16 @@ function FullPlayer({
                         }}
                         className={`p-3 rounded-xl text-right transition-all flex flex-col justify-between ${
                           isSelected
-                            ? "bg-amber-400 text-black shadow-lg shadow-amber-400/20 font-bold"
-                            : "bg-white/5 text-white/70 hover:bg-white/10 border border-white/5"
+                            ? "bg-gradient-to-r from-cyan-400 to-sky-400 text-black shadow-lg shadow-cyan-400/25 font-bold"
+                            : "bg-white/[0.04] text-white/70 hover:bg-white/[0.08] border border-white/5"
                         }`}
                       >
                         <div className="flex items-center justify-between mb-1">
                           <span className="text-base">{p.icon}</span>
-                          {isSelected && <span className="text-[10px] bg-black/20 px-1.5 py-0.5 rounded-full font-black">نشط</span>}
+                          {isSelected && <span className="text-[10px] bg-black/20 px-1.5 py-0.5 rounded-full font-black text-black">نشط ⚡</span>}
                         </div>
                         <p className="text-xs font-bold">{p.label}</p>
-                        <p className={`text-[10px] mt-0.5 ${isSelected ? "text-black/80" : "text-white/40"}`}>{p.desc}</p>
+                        <p className={`text-[10px] mt-0.5 ${isSelected ? "text-black/85" : "text-white/40"}`}>{p.desc}</p>
                       </button>
                     );
                   })}
@@ -742,75 +719,58 @@ function FullPlayer({
           </div>
         )}
 
-        {/* ═══════════ PREMIUM TAB ═══════════ */}
+        {/* ═══════════ BACKGROUND & BLUETOOTH TAB ═══════════ */}
         {activeTab === "premium" && (
-          <div className="flex-1 flex flex-col justify-center items-center p-8 space-y-8" dir="rtl">
-            <div className="w-20 h-20 rounded-full flex items-center justify-center shadow-2xl" style={{ background: `linear-gradient(135deg, ${accent}, ${bg1})`, boxShadow: `0 0 40px ${accent}55` }}>
-              <Crown className="w-10 h-10 text-white" />
+          <div className="flex-1 flex flex-col justify-center items-center p-6 space-y-6" dir="rtl">
+            <div className="w-16 h-16 rounded-2xl flex items-center justify-center shadow-2xl bg-gradient-to-br from-cyan-400/20 via-sky-500/20 to-blue-600/30 border border-cyan-400/30">
+              <Sparkles className="w-8 h-8 text-cyan-400 animate-pulse" />
             </div>
-            <div className="space-y-2 text-center">
-              <h3 className="text-2xl font-black text-white">التشغيل في الخلفية</h3>
-              <p className="text-white/60 text-sm px-4 leading-relaxed">
-                استمتع بالموسيقى بدون توقف حتى لو أغلقت الشاشة أو خرجت من التطبيق.
+            <div className="space-y-2 text-center max-w-xs">
+              <h3 className="text-xl font-black text-white">التشغيل في الخلفية وسماعات البلوتوث</h3>
+              <p className="text-neutral-400 text-xs leading-relaxed">
+                ميزة التشغيل المستمر تعمل تلقائياً حتى عند قفل شاشة الآيفون، أو استخدام سماعات الهاند فري والبلوتوث في السيارة.
               </p>
             </div>
-            <button
-              onClick={() => {
-                if (!isPremium) { setPremiumFeatureName("التشغيل المفتوح في الخلفية"); setIsPremiumModalOpen(true); }
-                else { setIsBgPlayEnabled(v => !v); showToast(!isBgPlayEnabled ? "تم تفعيل التشغيل في الخلفية 🚀" : "تم إيقاف التشغيل في الخلفية"); }
-              }}
-              className={`w-full py-4 rounded-2xl flex items-center justify-center gap-3 font-black text-lg transition-all border ${
-                isBgPlayEnabled && isPremium
-                  ? "bg-white text-indigo-900 border-white"
-                  : "bg-white/5 text-white border-white/20 hover:bg-white/10"
-              }`}
-            >
-              <div className="w-4 h-4 rounded-full border-2 border-current flex items-center justify-center">
-                {isBgPlayEnabled && isPremium && <div className="w-2 h-2 bg-current rounded-full" />}
+            <div className="w-full max-w-xs p-4 rounded-2xl bg-white/[0.04] border border-white/10 space-y-3">
+              <div className="flex items-center justify-between text-xs text-neutral-300 font-bold">
+                <span>قفل شاشة الآيفون</span>
+                <span className="text-emerald-400 flex items-center gap-1 font-black">نشط ومباشر ✓</span>
               </div>
-              {isBgPlayEnabled && isPremium ? "مفعل — يعمل في الخلفية" : "تفعيل الميزة"}
-              {!isPremium && <Crown className="w-5 h-5 text-amber-400 drop-shadow-md ml-auto mr-[-10px]" />}
-            </button>
+              <div className="flex items-center justify-between text-xs text-neutral-300 font-bold">
+                <span>سماعات البلوتوث والهاند فري</span>
+                <span className="text-emerald-400 flex items-center gap-1 font-black">مدعوم بالكامل ✓</span>
+              </div>
+              <div className="flex items-center justify-between text-xs text-neutral-300 font-bold">
+                <span>أزرار التحكم بالسماعة</span>
+                <span className="text-emerald-400 flex items-center gap-1 font-black">شغال فعلياً ✓</span>
+              </div>
+            </div>
           </div>
         )}
 
         {/* ─── Bottom Tab Navigation ─── */}
         <div
-          className="flex items-center justify-around px-2 py-2 border-t mt-auto shrink-0 bg-black/30 backdrop-blur-md"
-          style={{ borderColor: "rgba(255,255,255,0.08)", paddingBottom: "max(10px, env(safe-area-inset-bottom, 10px))" }}
+          className="flex items-center justify-around px-2 py-2 border-t mt-auto shrink-0 bg-[#07080b]/90 backdrop-blur-xl"
+          style={{ borderColor: "rgba(255,255,255,0.06)", paddingBottom: "max(12px, env(safe-area-inset-bottom, 12px))" }}
         >
           {[
             { id: "now", icon: Music2, label: "يعزف" },
             { id: "lyrics", icon: FileText, label: "كلمات" },
             { id: "queue", icon: ListMusic, label: "قائمة" },
-            { id: "audio", icon: Settings, label: "الصوت" },
+            { id: "audio", icon: Settings, label: "نقاء الصوت" },
+            { id: "premium", icon: Sparkles, label: "الخلفية" },
           ].map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`flex flex-col items-center gap-1 px-4 py-1.5 rounded-2xl transition-all font-bold text-xs ${
-                activeTab === tab.id ? "text-white" : "text-white/30"
+              className={`flex flex-col items-center gap-1 px-3.5 py-1.5 rounded-2xl transition-all font-bold text-xs ${
+                activeTab === tab.id ? "text-white bg-white/10" : "text-neutral-500 hover:text-neutral-300"
               }`}
-              style={activeTab === tab.id ? { background: `${accent}22` } : {}}
             >
               <tab.icon className="w-5 h-5" />
               <span>{tab.label}</span>
             </button>
           ))}
-          <button
-            onClick={() => {
-              if (!isPremium) { setPremiumFeatureName("التشغيل في الخلفية والميزات الحصرية"); setIsPremiumModalOpen(true); return; }
-              setActiveTab("premium");
-            }}
-            className={`relative flex flex-col items-center gap-1 px-4 py-1.5 rounded-2xl transition-all font-bold text-xs ${
-              activeTab === "premium" ? "text-white" : "text-amber-400/60"
-            }`}
-            style={activeTab === "premium" ? { background: `${accent}22` } : {}}
-          >
-            <Crown className="w-5 h-5" />
-            <span>حصرية</span>
-            {!isPremium && <div className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-amber-400 rounded-full" />}
-          </button>
         </div>
 
       </div>
@@ -919,45 +879,45 @@ export function PlayerBar() {
           />
         </div>
 
-        <div className="glass-dark border-t border-white/5 px-4 py-3 flex items-center gap-4">
+        <div className="bg-[#090b10]/95 backdrop-blur-2xl border-t border-white/10 px-4 py-3 flex items-center gap-4 shadow-2xl">
           {/* Art + Info */}
           <div className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer group" onClick={() => setFullOpen(true)}>
-            <div className="relative w-12 h-12 rounded-xl overflow-hidden shrink-0 shadow-lg">
+            <div className="relative w-12 h-12 rounded-xl overflow-hidden shrink-0 shadow-lg border border-white/10">
               <img src={getProxyUrl(art)} alt={currentSong.title} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
-              {state.isPlaying && <div className="absolute inset-0 rounded-xl border-2 border-indigo-500/60 animate-pulse" />}
+              {state.isPlaying && <div className="absolute inset-0 rounded-xl border border-cyan-400/60 animate-pulse" />}
             </div>
             <div className="min-w-0">
-              <p className="text-sm font-bold truncate text-white group-hover:text-indigo-300 transition-colors">
+              <p className="text-sm font-bold truncate text-white group-hover:text-cyan-300 transition-colors">
                 {state.isBuffering && state.currentTime === 0 ? "جاري التجهيز..." : currentSong.title}
               </p>
-              <p className="text-xs text-gray-400 truncate">
+              <p className="text-xs text-neutral-400 truncate">
                 {state.isBuffering && state.currentTime === 0 ? "يتم جلب أفضل جودة" : (currentSong.artist || "فنان")}
               </p>
             </div>
-            <Maximize2 className="w-4 h-4 text-gray-600 group-hover:text-indigo-400 transition-colors shrink-0 ml-1" />
+            <Maximize2 className="w-4 h-4 text-neutral-500 group-hover:text-cyan-400 transition-colors shrink-0 ml-1" />
           </div>
 
           {/* Controls */}
           <div className="flex items-center gap-3 shrink-0">
-            <button onClick={() => setShuffle(!state.shuffle)} className={`hidden md:block transition-colors ${state.shuffle ? "text-indigo-400" : "text-gray-500 hover:text-white"}`}>
+            <button onClick={() => setShuffle(!state.shuffle)} className={`hidden md:block transition-colors ${state.shuffle ? "text-cyan-400" : "text-neutral-500 hover:text-white"}`}>
               <Shuffle className="w-4 h-4" />
             </button>
-            <button onClick={prev} className="text-gray-300 hover:text-white transition-colors active:scale-90">
+            <button onClick={prev} className="text-neutral-300 hover:text-white transition-colors active:scale-90">
               <SkipBack className="w-5 h-5 fill-current" />
             </button>
-            <button onClick={togglePlay} className="w-10 h-10 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 active:scale-95 transition-transform shadow-lg">
+            <button onClick={togglePlay} className="w-10 h-10 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 active:scale-95 transition-transform shadow-lg shadow-white/20">
               {state.isBuffering ? (
-                <div className="w-5 h-5 border-2 border-indigo-500/30 border-t-indigo-500 rounded-full animate-spin" />
+                <div className="w-5 h-5 border-2 border-neutral-300 border-t-black rounded-full animate-spin" />
               ) : state.isPlaying ? (
                 <Pause className="w-4 h-4 fill-current" />
               ) : (
                 <Play className="w-4 h-4 fill-current ml-0.5" />
               )}
             </button>
-            <button onClick={next} className="text-gray-300 hover:text-white transition-colors active:scale-90">
+            <button onClick={next} className="text-neutral-300 hover:text-white transition-colors active:scale-90">
               <SkipForward className="w-5 h-5 fill-current" />
             </button>
-            <button onClick={cycleRepeat} className={`hidden md:block relative transition-colors ${state.repeat !== "off" ? "text-indigo-400" : "text-gray-500 hover:text-white"}`}>
+            <button onClick={cycleRepeat} className={`hidden md:block relative transition-colors ${state.repeat !== "off" ? "text-cyan-400" : "text-neutral-500 hover:text-white"}`}>
               <Repeat className="w-4 h-4" />
               {state.repeat === "one" && <span className="absolute -top-1 -right-1 text-[7px] font-black">1</span>}
             </button>
@@ -966,16 +926,16 @@ export function PlayerBar() {
           {/* Right side */}
           <div className="flex items-center gap-2 shrink-0">
             <button onClick={toggleLike}>
-              <Heart className={`w-5 h-5 transition-colors ${isLiked ? "text-pink-500 fill-current" : "text-gray-500 hover:text-white"}`} />
+              <Heart className={`w-5 h-5 transition-colors ${isLiked ? "text-pink-500 fill-current" : "text-neutral-500 hover:text-white"}`} />
             </button>
-            <button onClick={handleDownload} className="text-gray-500 hover:text-indigo-400 transition-colors hidden md:block">
+            <button onClick={handleDownload} className="text-neutral-500 hover:text-cyan-400 transition-colors hidden md:block">
               <DownloadCloud className="w-4 h-4" />
             </button>
             <div className="hidden md:flex items-center gap-1.5">
-              <Volume2 className="w-3.5 h-3.5 text-gray-500" />
+              <Volume2 className="w-3.5 h-3.5 text-neutral-500" />
               <input type="range" min="0" max="1" step="0.01" value={state.volume}
                 onChange={e => setVolume(parseFloat(e.target.value))}
-                className="w-20 accent-indigo-400 h-1 cursor-pointer" />
+                className="w-20 accent-cyan-400 h-1 cursor-pointer" />
             </div>
           </div>
         </div>

@@ -145,48 +145,58 @@ export async function resolveUniversalAudio(params: {
   }
 
   const ingestToTelegramAndReturn = async (result: UniversalAudioResult): Promise<UniversalAudioResult> => {
-    // If the stream is an external direct audio link (Albumaty, JioSaavn, SoundCloud, etc.), ingest synchronously into Telegram Cloud CDN!
+    // Immediately cache the resolved result so concurrent or repeated lookups return in <5ms
+    memCache.set(cacheKey, { result, expiresAt: Date.now() + CACHE_TTL_MS });
+
+    // If the stream is an external direct audio link (Albumaty, JioSaavn, SoundCloud, etc.), ingest into Telegram Cloud CDN
     if (
       result.streamUrl &&
       result.source !== "telegram" &&
       result.streamUrl.startsWith("http") &&
       !result.streamUrl.includes("youtube.com")
     ) {
-      try {
-        console.log(`[AudioResolver] Ingesting "${result.title || title}" into Telegram Cloud CDN...`);
-        const tgUpload = await Promise.race([
-          uploadAudioUrlToTelegram({
-            audioUrl: result.streamUrl,
-            title: result.title || title,
-            artist: result.artist || artist,
-            duration: result.durationSec,
-            videoId,
-          }),
-          new Promise<null>((_, reject) => setTimeout(() => reject(new Error("Telegram ingestion timeout")), 4500)),
-        ]);
+      const uploadPromise = uploadAudioUrlToTelegram({
+        audioUrl: result.streamUrl,
+        title: result.title || title,
+        artist: result.artist || artist,
+        duration: result.durationSec,
+        videoId,
+      })
+        .then((tgUpload) => {
+          if (tgUpload && tgUpload.fileId) {
+            console.log(`[AudioResolver] ⚡ Asynchronously ingested to Telegram CDN: ${tgUpload.fileId}`);
+            const tgResult: UniversalAudioResult = {
+              streamUrl: `/api/telegram/stream?fileId=${encodeURIComponent(tgUpload.fileId)}&title=${encodeURIComponent(result.title || title)}`,
+              directPlay: false,
+              source: "telegram",
+              title: result.title || title,
+              artist: result.artist || artist,
+              durationSec: result.durationSec,
+              bitrate: "320kbps",
+              format: "mp3",
+              videoId: videoId || result.videoId,
+            };
+            memCache.set(cacheKey, { result: tgResult, expiresAt: Date.now() + CACHE_TTL_MS });
+            return tgResult;
+          }
+          return null;
+        })
+        .catch((tgErr: any) => {
+          console.warn("[AudioResolver] Background Telegram upload notice:", tgErr.message);
+          return null;
+        });
 
-        if (tgUpload && tgUpload.fileId) {
-          console.log(`[AudioResolver] ⚡ Successfully ingested to Telegram: ${tgUpload.fileId}`);
-          const tgResult: UniversalAudioResult = {
-            streamUrl: `/api/telegram/stream?fileId=${encodeURIComponent(tgUpload.fileId)}&title=${encodeURIComponent(result.title || title)}`,
-            directPlay: false,
-            source: "telegram",
-            title: result.title || title,
-            artist: result.artist || artist,
-            durationSec: result.durationSec,
-            bitrate: "320kbps",
-            format: "mp3",
-            videoId: videoId || result.videoId,
-          };
-          memCache.set(cacheKey, { result: tgResult, expiresAt: Date.now() + CACHE_TTL_MS });
-          return tgResult;
-        }
-      } catch (tgErr: any) {
-        console.warn("[AudioResolver] Telegram ingestion notice (falling back to direct):", tgErr.message);
-      }
+      // If downloading, allow a short window for Telegram file; for live streaming, respond in <300ms so autoplay succeeds
+      const fastWindowMs = forDownload ? 3000 : 350;
+      try {
+        const fastTg = await Promise.race([
+          uploadPromise,
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), fastWindowMs)),
+        ]);
+        if (fastTg) return fastTg;
+      } catch {}
     }
 
-    memCache.set(cacheKey, { result, expiresAt: Date.now() + CACHE_TTL_MS });
     return result;
   };
 

@@ -25,8 +25,8 @@ type PlayerContextValue = {
   prewarm: (videoId: string) => void;
   setHighQuality: (value: boolean) => void;
   setIsAiMix: (value: boolean) => void;
-  soundPreset: "crystal" | "bass" | "vocal" | "spatial";
-  setSoundPreset: (preset: "crystal" | "bass" | "vocal" | "spatial") => void;
+  soundPreset: "crystal" | "bass" | "vocal" | "spatial" | "noise_cancel";
+  setSoundPreset: (preset: "crystal" | "bass" | "vocal" | "spatial" | "noise_cancel") => void;
 };
 
 const PlayerContext = createContext<PlayerContextValue | null>(null);
@@ -209,9 +209,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     setState((prev) => ({ ...prev, currentTime: player.currentTime }));
   };
 
-  const [soundPreset, setSoundPresetState] = useState<"crystal" | "bass" | "vocal" | "spatial">("crystal");
+  const [soundPreset, setSoundPresetState] = useState<"crystal" | "bass" | "vocal" | "spatial" | "noise_cancel">("crystal");
 
-  const setSoundPreset = (preset: "crystal" | "bass" | "vocal" | "spatial") => {
+  const setSoundPreset = (preset: "crystal" | "bass" | "vocal" | "spatial" | "noise_cancel") => {
     try {
       localStorage.setItem("aura_sound_preset", preset);
     } catch {}
@@ -238,7 +238,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         setState((prev) => ({ ...prev, isHighQuality: true }));
       }
       const savedPreset = localStorage.getItem("aura_sound_preset") as any;
-      if (savedPreset && ["crystal", "bass", "vocal", "spatial"].includes(savedPreset)) {
+      if (savedPreset && ["crystal", "bass", "vocal", "spatial", "noise_cancel"].includes(savedPreset)) {
         setSoundPresetState(savedPreset);
       }
     } catch {}
@@ -288,24 +288,38 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     },
     spatial: {
       bands: [
-        { type: "lowshelf" as BiquadFilterType, freq: 55, gain: 3.5 },
-        { type: "peaking"  as BiquadFilterType, freq: 220, gain: 2.0, Q: 0.8 },
-        { type: "peaking"  as BiquadFilterType, freq: 450, gain: -2.5, Q: 1.3 },
-        { type: "peaking"  as BiquadFilterType, freq: 3600, gain: 4.5, Q: 0.9 },
-        { type: "highshelf" as BiquadFilterType, freq: 13000, gain: 7.5 }, // Ultra wide spatial top
+        { type: "lowshelf" as BiquadFilterType, freq: 55, gain: 3.8 },
+        { type: "peaking"  as BiquadFilterType, freq: 220, gain: 2.2, Q: 0.8 },
+        { type: "peaking"  as BiquadFilterType, freq: 450, gain: -3.5, Q: 1.4 }, // Center clarity for wide 3D stage
+        { type: "peaking"  as BiquadFilterType, freq: 3800, gain: 6.5, Q: 0.85 }, // Binaural ear pinna HRTF boost
+        { type: "highshelf" as BiquadFilterType, freq: 13500, gain: 8.5 }, // Ultra-wide 3D atmospheric air
       ],
       comp: { threshold: -14, ratio: 2.2, attack: 0.004, release: 0.12 },
-      postGain: 1.28,
+      postGain: 1.30,
+    },
+    noise_cancel: {
+      bands: [
+        { type: "highpass" as BiquadFilterType, freq: 85, gain: 0, Q: 0.8 },      // 85Hz High-pass: Kills mic rumble & wind noise
+        { type: "peaking"  as BiquadFilterType, freq: 55, gain: -16.0, Q: 6.0 },   // Notch: Eliminates 50/60Hz AC electrical hum
+        { type: "peaking"  as BiquadFilterType, freq: 450, gain: -4.5, Q: 1.5 },   // Suppresses background room ambience
+        { type: "peaking"  as BiquadFilterType, freq: 3200, gain: 6.5, Q: 1.1 },  // Vocal purity & studio isolation
+        { type: "highshelf" as BiquadFilterType, freq: 15500, gain: -6.0 },       // Lowers tape hiss & high-frequency static
+      ],
+      comp: { threshold: -24, ratio: 4.8, attack: 0.002, release: 0.08 },         // Downward expander / noise gate
+      postGain: 1.18,
     },
   };
 
-  const applyAudioParameters = (ctx: AudioContext, isHq: boolean, presetKey: "crystal" | "bass" | "vocal" | "spatial") => {
+  const applyAudioParameters = (ctx: AudioContext, isHq: boolean, presetKey: "crystal" | "bass" | "vocal" | "spatial" | "noise_cancel") => {
     const now = ctx.currentTime;
     const t = 0.05; // 50ms smooth transition, zero click/pop
 
     if (!isHq) {
       if (preGainRef.current) preGainRef.current.gain.setTargetAtTime(1.0, now, t);
-      eqNodesRef.current.forEach((n) => n.gain.setTargetAtTime(0, now, t));
+      eqNodesRef.current.forEach((n) => {
+        n.type = "peaking";
+        n.gain.setTargetAtTime(0, now, t);
+      });
       if (compressorRef.current) {
         compressorRef.current.threshold.setTargetAtTime(0, now, t);
         compressorRef.current.ratio.setTargetAtTime(1.0, now, t);
@@ -320,6 +334,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     eqNodesRef.current.forEach((node, i) => {
       const b = cfg.bands[i];
       if (b) {
+        if (node.type !== b.type) node.type = b.type;
         node.frequency.setTargetAtTime(b.freq, now, t);
         node.gain.setTargetAtTime(b.gain, now, t);
         if (b.Q && node.Q) node.Q.setTargetAtTime(b.Q, now, t);
@@ -328,7 +343,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
     if (compressorRef.current) {
       compressorRef.current.threshold.setTargetAtTime(cfg.comp.threshold, now, t);
-      compressorRef.current.knee.setTargetAtTime(12, now, t);
+      compressorRef.current.knee.setTargetAtTime(10, now, t);
       compressorRef.current.ratio.setTargetAtTime(cfg.comp.ratio, now, t);
       compressorRef.current.attack.setTargetAtTime(cfg.comp.attack, now, t);
       compressorRef.current.release.setTargetAtTime(cfg.comp.release, now, t);
@@ -486,9 +501,17 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     navigator.mediaSession.setActionHandler("seekto", (d) => {
       if (d.seekTime != null) seekTo(d.seekTime);
     });
+    navigator.mediaSession.setActionHandler("seekbackward", (details) => {
+      const skipTime = details.seekOffset || 10;
+      if (audioRef.current) seekTo(Math.max(0, audioRef.current.currentTime - skipTime));
+    });
+    navigator.mediaSession.setActionHandler("seekforward", (details) => {
+      const skipTime = details.seekOffset || 10;
+      if (audioRef.current) seekTo(audioRef.current.currentTime + skipTime);
+    });
 
     return () => {
-      (["play","pause","nexttrack","previoustrack","stop","seekto"] as MediaSessionAction[]).forEach(a => {
+      (["play","pause","nexttrack","previoustrack","stop","seekto","seekbackward","seekforward"] as MediaSessionAction[]).forEach(a => {
         try { navigator.mediaSession.setActionHandler(a, null); } catch {}
       });
     };
@@ -586,6 +609,15 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           if (playPromise !== undefined) {
             playPromise.catch((err) => {
               console.warn("[Player] Autoplay play() was deferred:", err);
+              if (err.name === "NotAllowedError") {
+                const resumeOnGesture = () => {
+                  player.play().catch(() => {});
+                  window.removeEventListener("touchstart", resumeOnGesture);
+                  window.removeEventListener("click", resumeOnGesture);
+                };
+                window.addEventListener("touchstart", resumeOnGesture, { once: true, passive: true });
+                window.addEventListener("click", resumeOnGesture, { once: true, passive: true });
+              }
             });
           }
         }
@@ -615,8 +647,17 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       const playPromise = player.play();
       if (playPromise !== undefined) {
         playPromise.catch((err) => {
-          if (err.name !== "AbortError") {
-            setState((prev) => ({ ...prev, isPlaying: false }));
+          if (err.name === "NotAllowedError") {
+            // Keep isPlaying: true so the user is not shown a pause icon!
+            const resumeOnGesture = () => {
+              player.play().catch(() => {});
+              window.removeEventListener("touchstart", resumeOnGesture);
+              window.removeEventListener("click", resumeOnGesture);
+            };
+            window.addEventListener("touchstart", resumeOnGesture, { once: true, passive: true });
+            window.addEventListener("click", resumeOnGesture, { once: true, passive: true });
+          } else if (err.name !== "AbortError") {
+            console.warn("[Player] Playback play() error:", err.message);
           }
         });
       }
@@ -633,6 +674,24 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       if (now - lastTimeUpdateRef.current >= 300 || player.currentTime === 0) {
         lastTimeUpdateRef.current = now;
         setState((prev) => ({ ...prev, currentTime: player.currentTime || 0 }));
+
+        // Real-time lock screen & Bluetooth position sync
+        if (
+          typeof navigator !== "undefined" &&
+          "mediaSession" in navigator &&
+          "setPositionState" in navigator.mediaSession &&
+          player.duration &&
+          !isNaN(player.duration) &&
+          isFinite(player.duration)
+        ) {
+          try {
+            navigator.mediaSession.setPositionState({
+              duration: Math.max(0, player.duration),
+              playbackRate: player.playbackRate || 1,
+              position: Math.max(0, Math.min(player.currentTime || 0, player.duration)),
+            });
+          } catch {}
+        }
       }
     }
   };
