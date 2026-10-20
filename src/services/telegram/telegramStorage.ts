@@ -15,8 +15,14 @@ import { query } from "@apis/neon";
 import { isStrictArtistMatch, hasUnwantedTags } from "../music/artistMatcher";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "8831422517:AAEXQFzQxzcyIKWI1WtfVh2XGzguGXAnCak";
-const PRIMARY_CHANNEL_ID = process.env.TELEGRAM_CHANNEL_ID || "-1004310944763";
+const VERIFIED_STORAGE_CHANNEL = "-1004310944763";
+const PRIMARY_CHANNEL_ID = process.env.TELEGRAM_CHANNEL_ID || VERIFIED_STORAGE_CHANNEL;
 const ALT_CHANNEL_ID = process.env.TELEGRAM_ALT_CHANNEL_ID || "-1003911765672";
+
+function getTargetChannels(): string[] {
+  const list = [VERIFIED_STORAGE_CHANNEL, PRIMARY_CHANNEL_ID, ALT_CHANNEL_ID].filter(Boolean) as string[];
+  return Array.from(new Set(list));
+}
 
 export interface TelegramCachedTrack {
   id: number;
@@ -238,7 +244,7 @@ export async function uploadAudioUrlToTelegram(params: {
   const { audioUrl, title, artist = "Aura Music", duration = 0, videoId, songId } = params;
   if (!BOT_TOKEN) return null;
 
-  const targetChannels = [PRIMARY_CHANNEL_ID, ALT_CHANNEL_ID].filter(Boolean);
+  const targetChannels = getTargetChannels();
 
   for (const channelId of targetChannels) {
     try {
@@ -339,7 +345,7 @@ export async function uploadAudioBufferToTelegram(params: {
   const { buffer, filename, title, artist = "Aura Music", duration = 0, videoId, songId } = params;
   if (!BOT_TOKEN) return null;
 
-  const targetChannels = [PRIMARY_CHANNEL_ID, ALT_CHANNEL_ID].filter(Boolean);
+  const targetChannels = getTargetChannels();
 
   for (const channelId of targetChannels) {
     try {
