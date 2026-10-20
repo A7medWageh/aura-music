@@ -1,7 +1,7 @@
 {
   "regions": ["fra1"],
   "functions": {
-    "src/app/api/ytdownload/route.ts": { "maxDuration": 30 },
+    "src/app/api/ytdownload/route.ts": { "maxDuration": 60 },
     "src/app/api/telegram/stream/route.ts": { "maxDuration": 30 },
     "src/app/api/stream-proxy/route.ts": { "maxDuration": 30 },
     "src/app/api/stream/route.ts": { "maxDuration": 30 }

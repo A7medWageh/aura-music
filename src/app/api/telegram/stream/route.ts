@@ -56,7 +56,10 @@ export async function GET(req: NextRequest) {
       }
     });
 
-    responseHeaders.set("Content-Type", "audio/mpeg");
+    const telegramContentType = responseHeaders.get("content-type");
+    if (!telegramContentType || telegramContentType === "application/octet-stream") {
+      responseHeaders.set("Content-Type", "audio/mpeg");
+    }
     responseHeaders.set("Accept-Ranges", "bytes");
     responseHeaders.set("Access-Control-Allow-Origin", "*");
     responseHeaders.set(

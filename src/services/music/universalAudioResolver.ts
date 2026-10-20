@@ -8,9 +8,9 @@
  *   1. JioSaavn 320kbps  +
  *   2. Albumaty 320kbps  - Race in parallel, first win returns
  *   3. SoundCloud (fallback)
- *   4. Background: Winner URL uploaded to Telegram CDN asynchronously
+ *   4. Telegram CDN upload completes before any stream URL is returned
  *
- * Vercel-safe: All external calls have hard timeouts <=8s
+ * External source lookups are time-limited; playback waits for Telegram ingestion.
  */
 
 import { resolveSaavnSong } from "./jiosaavn";
@@ -27,6 +27,7 @@ export interface UniversalAudioResult {
   durationSec?: number;
   bitrate?: string;
   format?: string;
+  mimeType?: string;
   videoId?: string;
 }
 
@@ -155,65 +156,56 @@ async function trySoundCloud(
   return null;
 }
 
-async function ingestToTelegramBackground(
+async function ingestToTelegram(
   result: UniversalAudioResult,
   cacheKey: string,
   title: string,
   artist: string | undefined,
-  videoId: string | undefined,
-  forDownload: boolean
+  videoId: string | undefined
 ): Promise<UniversalAudioResult> {
-  memCache.set(cacheKey, { result, expiresAt: Date.now() + CACHE_TTL_MS });
-
-  if (
-    result.source === "telegram" ||
-    !result.streamUrl.startsWith("http") ||
-    result.streamUrl.includes("youtube.com")
-  ) {
+  if (result.source === "telegram") {
+    memCache.set(cacheKey, { result, expiresAt: Date.now() + CACHE_TTL_MS });
     return result;
   }
 
-  const uploadPromise = uploadAudioUrlToTelegram({
+  if (!result.streamUrl.startsWith("http")) {
+    throw new Error("Audio source cannot be stored in Telegram");
+  }
+  if (
+    result.source === "youtube" ||
+    result.streamUrl.includes("youtube.com") ||
+    result.streamUrl.includes("youtu.be") ||
+    result.streamUrl.includes("googlevideo.com")
+  ) {
+    throw new Error("YouTube streams must be downloaded by yt-dlp before Telegram storage");
+  }
+
+  const tgUpload = await uploadAudioUrlToTelegram({
     audioUrl: result.streamUrl,
     title: result.title || title,
     artist: result.artist || artist,
     duration: result.durationSec,
     videoId,
-  })
-    .then((tgUpload) => {
-      if (tgUpload?.fileId) {
-        console.log(`[AudioResolver] Telegram CDN ingest: ${tgUpload.fileId}`);
-        const tgResult: UniversalAudioResult = {
-          streamUrl: `/api/telegram/stream?fileId=${encodeURIComponent(tgUpload.fileId)}&title=${encodeURIComponent(result.title || title)}`,
-          directPlay: false,
-          source: "telegram",
-          title: result.title || title,
-          artist: result.artist || artist,
-          durationSec: result.durationSec,
-          bitrate: "320kbps",
-          format: "mp3",
-          videoId: videoId || result.videoId,
-        };
-        memCache.set(cacheKey, { result: tgResult, expiresAt: Date.now() + CACHE_TTL_MS });
-        return tgResult;
-      }
-      return null;
-    })
-    .catch((err: any) => {
-      console.warn("[AudioResolver] Telegram upload error:", err.message);
-      return null;
-    });
-
-  if (forDownload) {
-    const fastTg = await Promise.race([
-      uploadPromise,
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000)),
-    ]);
-    if (fastTg) return fastTg;
+  });
+  if (!tgUpload?.fileId) {
+    throw new Error("Telegram storage upload failed; playback is blocked until the track is stored");
   }
 
-  uploadPromise.catch(() => {});
-  return result;
+  const tgResult: UniversalAudioResult = {
+    streamUrl: `/api/telegram/stream?fileId=${encodeURIComponent(tgUpload.fileId)}&title=${encodeURIComponent(result.title || title)}`,
+    directPlay: false,
+    source: "telegram",
+    title: result.title || title,
+    artist: result.artist || artist,
+    durationSec: result.durationSec,
+    bitrate: result.bitrate || "320kbps",
+    format: result.format || "mp3",
+    mimeType: tgUpload.mimeType,
+    videoId: videoId || result.videoId,
+  };
+  memCache.set(cacheKey, { result: tgResult, expiresAt: Date.now() + CACHE_TTL_MS });
+  console.log(`[AudioResolver] Telegram CDN ingest complete for "${tgResult.title}"`);
+  return tgResult;
 }
 
 export async function resolveUniversalAudio(params: {
@@ -222,7 +214,7 @@ export async function resolveUniversalAudio(params: {
   artist?: string;
   forDownload?: boolean;
 }): Promise<UniversalAudioResult> {
-  let { videoId, title = "", artist = "", forDownload = false } = params;
+  let { videoId, title = "", artist = "" } = params;
 
   title = cleanTitle(title);
   artist = cleanArtist(artist);
@@ -277,6 +269,7 @@ export async function resolveUniversalAudio(params: {
         durationSec: tgCached.durationSec,
         bitrate: "320kbps",
         format: "mp3",
+        mimeType: tgCached.mimeType,
         videoId: tgCached.videoId || videoId,
       };
       memCache.set(cacheKey, { result, expiresAt: Date.now() + CACHE_TTL_MS });
@@ -316,13 +309,13 @@ export async function resolveUniversalAudio(params: {
   }
 
   if (winner) {
-    return await ingestToTelegramBackground(winner, cacheKey, title, effectiveArtist, videoId, forDownload);
+    return await ingestToTelegram(winner, cacheKey, title, effectiveArtist, videoId);
   }
 
   // Strategy 3: SoundCloud fallback
   const scResult = await trySoundCloud(title, effectiveArtist, videoId, 6000);
   if (scResult) {
-    return await ingestToTelegramBackground(scResult, cacheKey, title, effectiveArtist, videoId, forDownload);
+    return await ingestToTelegram(scResult, cacheKey, title, effectiveArtist, videoId);
   }
 
   // Strategy 4: Deep YouTube search then retry Albumaty/Saavn with Arabic title
@@ -350,7 +343,7 @@ export async function resolveUniversalAudio(params: {
         ]);
         winner = a2 || s2;
         if (winner) {
-          return await ingestToTelegramBackground(winner, cacheKey, title, effectiveArtist, videoId, forDownload);
+          return await ingestToTelegram(winner, cacheKey, title, effectiveArtist, videoId);
         }
       }
     }
@@ -386,8 +379,7 @@ export async function resolveUniversalAudio(params: {
           durationSec: pipedData.duration,
           videoId,
         };
-        memCache.set(cacheKey, { result: pipedResult, expiresAt: Date.now() + CACHE_TTL_MS });
-        return pipedResult;
+        return await ingestToTelegram(pipedResult, cacheKey, title, effectiveArtist, videoId);
       }
     } catch {}
 
@@ -403,8 +395,7 @@ export async function resolveUniversalAudio(params: {
           artist,
           videoId,
         };
-        memCache.set(cacheKey, { result: ytResult, expiresAt: Date.now() + CACHE_TTL_MS });
-        return ytResult;
+        return await ingestToTelegram(ytResult, cacheKey, title, effectiveArtist, videoId);
       }
     } catch {}
   }

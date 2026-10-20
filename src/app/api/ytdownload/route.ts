@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { resolveUniversalAudio } from "@/services/music/universalAudioResolver";
+import { resolveUniversalAudio, type UniversalAudioResult } from "@/services/music/universalAudioResolver";
 import { streamAudioFromYouTube, isYtDlpAvailable } from "@apis/yt-dlp";
 import { findBestOfficialVideo } from "@/services/music/artistMatcher";
+import { uploadAudioBufferToTelegram } from "@/services/telegram/telegramStorage";
 
 export const dynamic = "force-dynamic";
 
@@ -98,6 +99,99 @@ const NO_CACHE_HEADERS = {
   "Surrogate-Control": "no-store",
 };
 
+const MAX_TELEGRAM_AUDIO_BYTES = 50 * 1024 * 1024;
+
+async function readAudioBuffer(body: ReadableStream<Uint8Array> | null): Promise<Buffer> {
+  if (!body) throw new Error("Audio source returned an empty response");
+
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+
+      totalBytes += value.byteLength;
+      if (totalBytes > MAX_TELEGRAM_AUDIO_BYTES) {
+        await reader.cancel();
+        throw new Error("Audio exceeds Telegram's 50 MB bot upload limit");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  if (!totalBytes) throw new Error("Audio source returned an empty file");
+  return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)), totalBytes);
+}
+
+async function ingestYouTubeFallback(params: {
+  videoId: string;
+  title: string;
+  artist?: string;
+}): Promise<UniversalAudioResult> {
+  const { videoId, title, artist } = params;
+  let audioBody: ReadableStream<Uint8Array> | null = null;
+  let contentType = "audio/mp4";
+
+  if (isYtDlpAvailable()) {
+    const localAudio = streamAudioFromYouTube(videoId);
+    audioBody = localAudio.stream;
+    contentType = localAudio.mimeType || contentType;
+  } else {
+    const workerUrl = await getRemoteWorkerUrl();
+    if (!workerUrl) {
+      throw new Error("YouTube audio extraction is unavailable: no yt-dlp worker is connected");
+    }
+
+    const workerParams = new URLSearchParams({
+      videoId,
+      title,
+      proxy: "true",
+      download: "true",
+      forceYtDlp: "true",
+    });
+    if (artist) workerParams.set("artist", artist);
+
+    const workerRes = await fetch(
+      `${workerUrl.replace(/\/$/, "")}/api/ytdownload?${workerParams.toString()}`,
+      { headers: { "User-Agent": "AuraMusic/1.0" }, signal: AbortSignal.timeout(20000) }
+    );
+    if (!workerRes.ok) {
+      throw new Error(`yt-dlp worker returned HTTP ${workerRes.status}`);
+    }
+    audioBody = workerRes.body;
+    contentType = workerRes.headers.get("content-type") || contentType;
+  }
+
+  const buffer = await readAudioBuffer(audioBody);
+  const extension = contentType.includes("mpeg") ? "mp3" : "m4a";
+  const uploaded = await uploadAudioBufferToTelegram({
+    buffer,
+    filename: `${title.replace(/[\/\\?%*:|"<>]/g, "_") || "song"}.${extension}`,
+    title: title || "song",
+    mimeType: contentType,
+    artist,
+    videoId,
+  });
+  if (!uploaded?.fileId) {
+    throw new Error("Telegram storage upload failed; playback is blocked until the track is stored");
+  }
+
+  return {
+    streamUrl: `/api/telegram/stream?fileId=${encodeURIComponent(uploaded.fileId)}&title=${encodeURIComponent(title || "song")}`,
+    directPlay: false,
+    source: "telegram",
+    title: title || "song",
+    artist,
+    format: extension,
+    mimeType: uploaded.mimeType || contentType,
+  };
+}
+
 function normalizeText(text: string): string {
   if (!text) return "";
   return text
@@ -157,6 +251,7 @@ export async function GET(req: NextRequest) {
   const useProxy = searchParams.get("proxy") === "true";
   const resolveOnly = searchParams.get("resolveOnly") === "true";
   const isDownload = searchParams.get("download") === "true";
+  const forceYtDlp = searchParams.get("forceYtDlp") === "true";
 
   // Clean generic placeholders
   if (title === "أغنية محفوظة" || title === "song") title = undefined;
@@ -167,6 +262,23 @@ export async function GET(req: NextRequest) {
     artist?.toLowerCase().includes("unknown")
   ) {
     artist = undefined;
+  }
+
+  if (forceYtDlp) {
+    if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+      return NextResponse.json({ error: "A valid videoId is required for yt-dlp" }, { status: 400 });
+    }
+    if (!isYtDlpAvailable()) {
+      return NextResponse.json({ error: "yt-dlp is unavailable on this worker" }, { status: 503 });
+    }
+
+    const { stream, mimeType } = streamAudioFromYouTube(videoId);
+    const headers = new Headers(NO_CACHE_HEADERS);
+    headers.set("Content-Type", mimeType || "audio/mp4");
+    headers.set("Accept-Ranges", "bytes");
+    headers.set("Content-Disposition", "inline");
+    headers.set("Access-Control-Allow-Origin", "*");
+    return new NextResponse(stream, { status: 200, headers });
   }
 
   // If title has "Artist - Song", extract both
@@ -184,7 +296,26 @@ export async function GET(req: NextRequest) {
 
   try {
     const targetVideoId = await getFallbackVideoId(videoId, title, artist);
-    const resolved = await resolveUniversalAudio({ videoId: targetVideoId || videoId, title, artist, forDownload: isDownload });
+    let resolved: UniversalAudioResult;
+    try {
+      resolved = await resolveUniversalAudio({
+        videoId: targetVideoId || videoId,
+        title,
+        artist,
+        forDownload: isDownload,
+      });
+    } catch (resolveError) {
+      const fallbackVideoId = targetVideoId || videoId;
+      if (!fallbackVideoId || !/^[a-zA-Z0-9_-]{11}$/.test(fallbackVideoId)) throw resolveError;
+      console.warn(
+        `[ytdownload] Audio providers failed for "${title || fallbackVideoId}"; trying yt-dlp Telegram ingestion`
+      );
+      resolved = await ingestYouTubeFallback({
+        videoId: fallbackVideoId,
+        title: title || "song",
+        artist,
+      });
+    }
 
     // Mode 1: Resolve only (for online player)
     if (resolveOnly) {
@@ -243,7 +374,13 @@ export async function GET(req: NextRequest) {
                 respHeaders.set(key, val);
               }
             });
-            respHeaders.set("Content-Type", "audio/mpeg");
+            const telegramContentType = resolved.mimeType || tgRes.headers.get("content-type");
+            respHeaders.set(
+              "Content-Type",
+              telegramContentType && telegramContentType !== "application/octet-stream"
+                ? telegramContentType
+                : "audio/mpeg"
+            );
             respHeaders.set("Accept-Ranges", "bytes");
             respHeaders.set("Access-Control-Allow-Origin", "*");
             respHeaders.set(
@@ -483,7 +620,7 @@ export async function GET(req: NextRequest) {
     }
 
     if (!responseHeaders.get("content-type") || responseHeaders.get("content-type") === "application/octet-stream") {
-      responseHeaders.set("content-type", "audio/mpeg");
+      responseHeaders.set("content-type", resolved.mimeType || "audio/mpeg");
     }
 
     const cLen = responseHeaders.get("content-length");

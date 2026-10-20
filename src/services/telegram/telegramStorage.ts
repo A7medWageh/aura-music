@@ -7,14 +7,14 @@
  * - Uses a Telegram Channel as an infinite, unbannable, lightning-fast MP3 database.
  * - Stores files permanently in Telegram's global CDN.
  * - Fast path: checks Neon PostgreSQL cache index first (<10ms).
- * - Fallback / ingestion: uploads newly resolved songs to the Telegram channel asynchronously.
+ * - Fallback / ingestion: uploads resolved songs to the Telegram channel before playback.
  * - Full Range 206 streaming support for instant seek on iPhone / Safari / Web.
  */
 
 import { query } from "@apis/neon";
 import { isStrictArtistMatch, hasUnwantedTags } from "../music/artistMatcher";
 
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "8831422517:AAEXQFzQxzcyIKWI1WtfVh2XGzguGXAnCak";
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const VERIFIED_STORAGE_CHANNEL = "-1004310944763";
 const PRIMARY_CHANNEL_ID = process.env.TELEGRAM_CHANNEL_ID || VERIFIED_STORAGE_CHANNEL;
 const ALT_CHANNEL_ID = process.env.TELEGRAM_ALT_CHANNEL_ID || "-1003911765672";
@@ -240,7 +240,7 @@ export async function uploadAudioUrlToTelegram(params: {
   videoId?: string;
   songId?: string;
   thumbnailUrl?: string;
-}): Promise<{ fileId: string; messageId: number; streamUrl: string } | null> {
+}): Promise<{ fileId: string; messageId: number; streamUrl: string; mimeType?: string } | null> {
   const { audioUrl, title, artist = "Aura Music", duration = 0, videoId, songId } = params;
   if (!BOT_TOKEN) return null;
 
@@ -288,6 +288,7 @@ export async function uploadAudioUrlToTelegram(params: {
           fileId,
           messageId,
           streamUrl: directUrl || audioUrl,
+          mimeType: media.mime_type || undefined,
         };
       } else {
         console.warn(`[TelegramStorage] Direct URL upload failed for channel ${channelId}:`, data.description);
@@ -303,13 +304,16 @@ export async function uploadAudioUrlToTelegram(params: {
 
             const audioRes = await fetch(audioUrl, { headers: fetchHeaders, signal: AbortSignal.timeout(15000) });
             if (audioRes.ok) {
+              const contentType = audioRes.headers.get("content-type") || "audio/mpeg";
               const arrayBuf = await audioRes.arrayBuffer();
               const buffer = Buffer.from(arrayBuf);
               if (buffer.length > 1000) {
+                const extension = contentType.includes("mp4") ? "m4a" : "mp3";
                 return await uploadAudioBufferToTelegram({
                   buffer,
-                  filename: `${title.replace(/[\/\\?%*:|"<>]/g, "_")}.mp3`,
+                  filename: `${title.replace(/[\/\\?%*:|"<>]/g, "_")}.${extension}`,
                   title,
+                  mimeType: contentType.startsWith("audio/") ? contentType : "audio/mpeg",
                   artist,
                   duration,
                   videoId,
@@ -337,12 +341,13 @@ export async function uploadAudioBufferToTelegram(params: {
   buffer: Buffer;
   filename: string;
   title: string;
+  mimeType?: string;
   artist?: string;
   duration?: number;
   videoId?: string;
   songId?: string;
-}): Promise<{ fileId: string; messageId: number; streamUrl: string } | null> {
-  const { buffer, filename, title, artist = "Aura Music", duration = 0, videoId, songId } = params;
+}): Promise<{ fileId: string; messageId: number; streamUrl: string; mimeType?: string } | null> {
+  const { buffer, filename, title, mimeType = "audio/mpeg", artist = "Aura Music", duration = 0, videoId, songId } = params;
   if (!BOT_TOKEN) return null;
 
   const targetChannels = getTargetChannels();
@@ -355,7 +360,7 @@ export async function uploadAudioBufferToTelegram(params: {
       formData.set("performer", artist);
       if (duration > 0) formData.set("duration", Math.round(duration).toString());
 
-      const blob = new Blob([new Uint8Array(buffer)], { type: "audio/mpeg" });
+      const blob = new Blob([new Uint8Array(buffer)], { type: mimeType });
       formData.set("audio", blob, filename.endsWith(".mp3") ? filename : `${filename}.mp3`);
 
       const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendAudio`, {
@@ -387,6 +392,7 @@ export async function uploadAudioBufferToTelegram(params: {
           fileId,
           messageId,
           streamUrl: directUrl || "",
+          mimeType: media.mime_type || mimeType,
         };
       }
     } catch (err: any) {

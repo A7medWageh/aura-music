@@ -1,4 +1,4 @@
-import { spawn } from "child_process";
+import { spawn, spawnSync } from "child_process";
 import path from "path";
 import fs from "fs";
 
@@ -27,7 +27,7 @@ export function isYtDlpAvailable(): boolean {
     const localCmd = path.join(process.cwd(), "yt-dlp-master", "yt-dlp.cmd");
     if (fs.existsSync(localCmd)) return true;
   }
-  return false;
+  return spawnSync(getYtDlpBinary(), ["--version"], { stdio: "ignore" }).status === 0;
 }
 
 /**
