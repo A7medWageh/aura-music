@@ -15,7 +15,7 @@
 
 import { resolveSaavnSong } from "./jiosaavn";
 import { resolveAlbumatyStream } from "../scrapers/albumaty";
-import { getCachedTelegramTrack, uploadAudioUrlToTelegram } from "../telegram/telegramStorage";
+import { getCachedTelegramTrack, getTelegramDirectUrl, uploadAudioUrlToTelegram } from "../telegram/telegramStorage";
 import { findBestOfficialVideo } from "./artistMatcher";
 
 export interface UniversalAudioResult {
@@ -172,12 +172,10 @@ async function ingestToTelegram(
     throw new Error("Audio source cannot be stored in Telegram");
   }
   if (
-    result.source === "youtube" ||
     result.streamUrl.includes("youtube.com") ||
-    result.streamUrl.includes("youtu.be") ||
-    result.streamUrl.includes("googlevideo.com")
+    result.streamUrl.includes("youtu.be")
   ) {
-    throw new Error("YouTube streams must be downloaded by yt-dlp before Telegram storage");
+    throw new Error("YouTube watch pages cannot be stored as audio");
   }
 
   const tgUpload = await uploadAudioUrlToTelegram({
@@ -259,21 +257,25 @@ export async function resolveUniversalAudio(params: {
       5000
     );
     if (tgCached?.tgFileId) {
-      console.log(`[AudioResolver] Telegram DB HIT: "${tgCached.title}"`);
-      const result: UniversalAudioResult = {
-        streamUrl: `/api/telegram/stream?fileId=${encodeURIComponent(tgCached.tgFileId)}&title=${encodeURIComponent(tgCached.title || title)}`,
-        directPlay: false,
-        source: "telegram",
-        title: tgCached.title || title,
-        artist: tgCached.artist || artist,
-        durationSec: tgCached.durationSec,
-        bitrate: "320kbps",
-        format: "mp3",
-        mimeType: tgCached.mimeType,
-        videoId: tgCached.videoId || videoId,
-      };
-      memCache.set(cacheKey, { result, expiresAt: Date.now() + CACHE_TTL_MS });
-      return result;
+      const telegramUrl = await getTelegramDirectUrl(tgCached.tgFileId);
+      if (telegramUrl) {
+        console.log(`[AudioResolver] Telegram DB HIT: "${tgCached.title}"`);
+        const result: UniversalAudioResult = {
+          streamUrl: `/api/telegram/stream?fileId=${encodeURIComponent(tgCached.tgFileId)}&title=${encodeURIComponent(tgCached.title || title)}`,
+          directPlay: false,
+          source: "telegram",
+          title: tgCached.title || title,
+          artist: tgCached.artist || artist,
+          durationSec: tgCached.durationSec,
+          bitrate: "320kbps",
+          format: "mp3",
+          mimeType: tgCached.mimeType,
+          videoId: tgCached.videoId || videoId,
+        };
+        memCache.set(cacheKey, { result, expiresAt: Date.now() + CACHE_TTL_MS });
+        return result;
+      }
+      console.warn(`[AudioResolver] Ignoring unavailable Telegram cache entry for "${title}"`);
     }
   } catch (err: any) {
     console.warn("[AudioResolver] Telegram DB lookup failed:", err.message);

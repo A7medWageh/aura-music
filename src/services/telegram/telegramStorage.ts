@@ -15,13 +15,14 @@ import { query } from "@apis/neon";
 import { isStrictArtistMatch, hasUnwantedTags } from "../music/artistMatcher";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
-const VERIFIED_STORAGE_CHANNEL = "-1004310944763";
-const PRIMARY_CHANNEL_ID = process.env.TELEGRAM_CHANNEL_ID || VERIFIED_STORAGE_CHANNEL;
-const ALT_CHANNEL_ID = process.env.TELEGRAM_ALT_CHANNEL_ID || "-1003911765672";
-
 function getTargetChannels(): string[] {
-  const list = [VERIFIED_STORAGE_CHANNEL, PRIMARY_CHANNEL_ID, ALT_CHANNEL_ID].filter(Boolean) as string[];
-  return Array.from(new Set(list));
+  return Array.from(
+    new Set(
+      [process.env.TELEGRAM_CHANNEL_ID, process.env.TELEGRAM_ALT_CHANNEL_ID]
+        .map((channelId) => channelId?.trim())
+        .filter((channelId): channelId is string => Boolean(channelId))
+    )
+  );
 }
 
 export interface TelegramCachedTrack {
@@ -176,13 +177,13 @@ export async function getTelegramDirectUrl(fileId: string): Promise<string | nul
     const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${encodeURIComponent(fileId)}`, {
       signal: AbortSignal.timeout(5000),
     });
-    if (!res.ok) return null;
     const data = await res.json();
     if (data.ok && data.result?.file_path) {
       const filePath = data.result.file_path;
       filePathCache.set(fileId, { path: filePath, expiresAt: Date.now() + CACHE_TTL_MS });
       return `https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`;
     }
+    console.warn("[TelegramStorage] Telegram getFile rejected the file:", data.description || `HTTP ${res.status}`);
   } catch (err: any) {
     console.error("[TelegramStorage] getFile failed:", err.message);
   }
@@ -242,9 +243,11 @@ export async function uploadAudioUrlToTelegram(params: {
   thumbnailUrl?: string;
 }): Promise<{ fileId: string; messageId: number; streamUrl: string; mimeType?: string } | null> {
   const { audioUrl, title, artist = "Aura Music", duration = 0, videoId, songId } = params;
-  if (!BOT_TOKEN) return null;
-
   const targetChannels = getTargetChannels();
+  if (!BOT_TOKEN || targetChannels.length === 0) {
+    console.error("[TelegramStorage] Upload requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHANNEL_ID");
+    return null;
+  }
 
   for (const channelId of targetChannels) {
     try {
@@ -302,11 +305,20 @@ export async function uploadAudioUrlToTelegram(params: {
             };
             if (audioUrl.includes("albumaty.com")) fetchHeaders["Referer"] = "https://www.albumaty.com/";
 
-            const audioRes = await fetch(audioUrl, { headers: fetchHeaders, signal: AbortSignal.timeout(15000) });
+            const audioRes = await fetch(audioUrl, { headers: fetchHeaders, signal: AbortSignal.timeout(45000) });
             if (audioRes.ok) {
               const contentType = audioRes.headers.get("content-type") || "audio/mpeg";
+              const contentLength = Number(audioRes.headers.get("content-length") || 0);
+              if (contentLength > 50 * 1024 * 1024) {
+                console.warn("[TelegramStorage] Audio exceeds Telegram's 50 MB bot upload limit");
+                continue;
+              }
               const arrayBuf = await audioRes.arrayBuffer();
               const buffer = Buffer.from(arrayBuf);
+              if (buffer.length > 50 * 1024 * 1024) {
+                console.warn("[TelegramStorage] Audio exceeds Telegram's 50 MB bot upload limit");
+                continue;
+              }
               if (buffer.length > 1000) {
                 const extension = contentType.includes("mp4") ? "m4a" : "mp3";
                 return await uploadAudioBufferToTelegram({
@@ -348,9 +360,15 @@ export async function uploadAudioBufferToTelegram(params: {
   songId?: string;
 }): Promise<{ fileId: string; messageId: number; streamUrl: string; mimeType?: string } | null> {
   const { buffer, filename, title, mimeType = "audio/mpeg", artist = "Aura Music", duration = 0, videoId, songId } = params;
-  if (!BOT_TOKEN) return null;
-
   const targetChannels = getTargetChannels();
+  if (!BOT_TOKEN || targetChannels.length === 0) {
+    console.error("[TelegramStorage] Upload requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHANNEL_ID");
+    return null;
+  }
+  if (buffer.length === 0 || buffer.length > 50 * 1024 * 1024) {
+    console.error(`[TelegramStorage] Invalid Telegram audio size: ${buffer.length} bytes`);
+    return null;
+  }
 
   for (const channelId of targetChannels) {
     try {
@@ -361,7 +379,10 @@ export async function uploadAudioBufferToTelegram(params: {
       if (duration > 0) formData.set("duration", Math.round(duration).toString());
 
       const blob = new Blob([new Uint8Array(buffer)], { type: mimeType });
-      formData.set("audio", blob, filename.endsWith(".mp3") ? filename : `${filename}.mp3`);
+      const audioFilename = /\.(mp3|m4a|aac|ogg|wav|flac)$/i.test(filename)
+        ? filename
+        : `${filename}.mp3`;
+      formData.set("audio", blob, audioFilename);
 
       const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendAudio`, {
         method: "POST",

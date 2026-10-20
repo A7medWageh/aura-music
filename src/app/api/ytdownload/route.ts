@@ -26,17 +26,21 @@ async function getRemoteWorkerUrl(): Promise<string | null> {
     return lastKnownWorkerUrl;
   }
 
-  // 1. Check environment variable
+  // A configured worker can be asleep on free hosting; let the audio request wake it.
   if (process.env.REMOTE_STREAM_WORKER) {
-    const isOk = await checkWorkerHealth(process.env.REMOTE_STREAM_WORKER);
-    if (isOk) {
-      lastKnownWorkerUrl = process.env.REMOTE_STREAM_WORKER;
-      lastWorkerCheck = Date.now();
-      return lastKnownWorkerUrl;
+    try {
+      const configuredUrl = new URL(process.env.REMOTE_STREAM_WORKER);
+      if (configuredUrl.protocol === "https:" || configuredUrl.protocol === "http:") {
+        lastKnownWorkerUrl = configuredUrl.toString().replace(/\/$/, "");
+        lastWorkerCheck = Date.now();
+        return lastKnownWorkerUrl;
+      }
+    } catch {
+      console.error("[ytdownload] REMOTE_STREAM_WORKER must be a valid HTTP(S) URL");
     }
   }
 
-  // 2. Check Neon Database system_config table (where auto-start.js records active tunnel)
+  // Check Neon Database system_config table (where auto-start.js records active tunnel)
   try {
     const { query } = await import("@apis/neon");
     const dbRes = await query<{ value: string }>(
@@ -146,6 +150,10 @@ async function ingestYouTubeFallback(params: {
     if (!workerUrl) {
       throw new Error("YouTube audio extraction is unavailable: no yt-dlp worker is connected");
     }
+    const workerToken = process.env.REMOTE_STREAM_WORKER_TOKEN;
+    if (!workerToken) {
+      throw new Error("YouTube audio extraction is unavailable: REMOTE_STREAM_WORKER_TOKEN is not configured");
+    }
 
     const workerParams = new URLSearchParams({
       videoId,
@@ -158,7 +166,13 @@ async function ingestYouTubeFallback(params: {
 
     const workerRes = await fetch(
       `${workerUrl.replace(/\/$/, "")}/api/ytdownload?${workerParams.toString()}`,
-      { headers: { "User-Agent": "AuraMusic/1.0" }, signal: AbortSignal.timeout(20000) }
+      {
+        headers: {
+          "User-Agent": "AuraMusic/1.0",
+          Authorization: `Bearer ${workerToken}`,
+        },
+        signal: AbortSignal.timeout(45000),
+      }
     );
     if (!workerRes.ok) {
       throw new Error(`yt-dlp worker returned HTTP ${workerRes.status}`);
@@ -347,7 +361,14 @@ export async function GET(req: NextRequest) {
 
     const isAttachment = req.nextUrl.searchParams.get("attachment") === "true" || isDownload;
     const trackName = title || resolved.title || "song";
-    const safeFilename = encodeURIComponent(trackName.replace(/[\/\\?%*:|"<>]/g, "_")) + ".mp3";
+    const fileExtension =
+      resolved.format === "m4a" ||
+      resolved.format === "mp4/aac" ||
+      resolved.mimeType?.includes("audio/mp4")
+        ? "m4a"
+        : "mp3";
+    const safeFilename =
+      encodeURIComponent(trackName.replace(/[\/\\?%*:|"<>]/g, "_")) + `.${fileExtension}`;
 
     // Mode 1.5: If resolved source is Telegram Cloud CDN, stream / download directly from Telegram
     if (resolved.source === "telegram" || resolved.streamUrl.includes("/api/telegram/stream")) {

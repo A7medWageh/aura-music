@@ -476,6 +476,15 @@ export async function resolveStream(videoId: string): Promise<string> {
     }
   }
 
+  if (!url) {
+    try {
+      console.log(`[Stream] Trying public Invidious mirrors for ${videoId}...`);
+      url = await withTimeout(resolveWithInvidious(videoId), 8000, "");
+    } catch (e) {
+      console.warn(`[Stream] Invidious fallback failed for ${videoId}:`, e);
+    }
+  }
+
   if (!url) throw new Error("stream_resolve_failed: All resolvers failed");
   return await cacheAndReturn(url);
 }

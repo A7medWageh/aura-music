@@ -68,6 +68,9 @@ const ARTIST_NAME_MAP: Record<string, string> = {
 
 // Common transliterated song titles
 const SONG_TITLE_MAP: Record<string, string> = {
+  "kalam": "كلام",
+  "el kalam": "كلام",
+  "el-kalam": "كلام",
   "ya ta3ebny": "يا تاعبني",
   "ya taabeny": "يا تاعبني",
   "fi eih": "في ايه",
@@ -416,4 +419,3 @@ export async function resolveAlbumatyStream(title: string, artist: string): Prom
     return null;
   }
 }
-

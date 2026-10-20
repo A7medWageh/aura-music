@@ -4,3 +4,15 @@ services:
     env: docker
     plan: free
     autoDeploy: true
+
+  - type: web
+    name: aura-youtube-worker
+    runtime: node
+    rootDir: youtupe-api
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm start
+    autoDeploy: true
+    envVars:
+      - key: REMOTE_STREAM_WORKER_TOKEN
+        sync: false
