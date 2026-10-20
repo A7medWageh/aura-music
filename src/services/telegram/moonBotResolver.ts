@@ -221,7 +221,7 @@ async function ensureWebhookRegistered(): Promise<void> {
  * Flow:
  *   1. Ensure webhook is registered (Vercel receives all channel posts)
  *   2. Send "يوتيوب" — bot posts its download menu in the channel
- *   3. Wait (≤40s) for a human to press "بحث اليوتوب صوت" (webhook
+ *   3. Wait (≤20s) for a human to press "بحث اليوتوب صوت" (webhook
  *      marks the window in moonbot_mode when the menu is edited)
  *   4. Send "تنزيل {title} {artist}" — answered only inside that window
  *   5. Poll Neon DB until webhook delivers the audio (max 90s)
@@ -254,10 +254,10 @@ export async function resolveViaMoonBot(params: {
     triggerMsgId = await sendMsg("يوتيوب");
     if (!triggerMsgId) return null;
     console.log(`[L10Bot] Menu posted — waiting for audio-search button press for "${title}"...`);
-    modeOpen = await waitForSearchMode(40000);
+    modeOpen = await waitForSearchMode(20000);
   }
   if (!modeOpen) {
-    console.warn(`[L10Bot] No button press within 40s; bot ignores text-only queries — giving up "${title}"`);
+    console.warn(`[L10Bot] No button press within 20s; bot ignores text-only queries — giving up "${title}"`);
     if (triggerMsgId) deleteMsg(triggerMsgId).catch(() => {});
     return null;
   }
