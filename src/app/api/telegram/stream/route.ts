@@ -2,13 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { getTelegramDirectUrl } from "@/services/telegram/telegramStorage";
 
 export const dynamic = "force-dynamic";
-
-const NO_CACHE_HEADERS = {
-  "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
-  "CDN-Cache-Control": "no-store",
-  "Vercel-CDN-Cache-Control": "no-store",
-  Pragma: "no-cache",
-  Expires: "0",
+// Allow Vercel CDN & browser to cache audio segments for 1 hour — eliminates re-download latency
+const STREAM_CACHE_HEADERS = {
+  "Cache-Control": "public, max-age=3600, s-maxage=3600, stale-while-revalidate=86400",
+  "CDN-Cache-Control": "public, max-age=3600",
+  "Vercel-CDN-Cache-Control": "public, max-age=3600",
 };
 
 export async function GET(req: NextRequest) {
@@ -49,7 +47,7 @@ export async function GET(req: NextRequest) {
     }
 
     const safeFilename = encodeURIComponent(title.replace(/[\/\\?%*:|"<>]/g, "_")) + ".mp3";
-    const responseHeaders = new Headers(NO_CACHE_HEADERS);
+    const responseHeaders = new Headers(STREAM_CACHE_HEADERS);
 
     upstreamRes.headers.forEach((val, key) => {
       const lower = key.toLowerCase();
@@ -78,24 +76,6 @@ export async function GET(req: NextRequest) {
     const cLen = responseHeaders.get("content-length");
     if (cLen) {
       responseHeaders.set("X-Original-Content-Length", cLen);
-    }
-
-    // iOS / Safari Range: bytes=0-1 probe safeguard
-    if (clientRange === "bytes=0-1" && upstreamRes.status === 200 && upstreamRes.body) {
-      try {
-        const reader = upstreamRes.body.getReader();
-        const { value } = await reader.read();
-        reader.cancel().catch(() => {});
-        if (value && value.length >= 2) {
-          const probeSlice = value.slice(0, 2);
-          responseHeaders.set("Content-Range", `bytes 0-1/${cLen || value.length}`);
-          responseHeaders.set("Content-Length", "2");
-          return new NextResponse(probeSlice, {
-            status: 206,
-            headers: responseHeaders,
-          });
-        }
-      } catch {}
     }
 
     return new NextResponse(upstreamRes.body, {

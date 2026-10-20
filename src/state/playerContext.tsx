@@ -35,6 +35,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<PlayerState>(initialPlayerState);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const isPlayingRef = useRef(state.isPlaying);
+  const isLoadingNewSongRef = useRef(false); // true while fetching stream URL, prevents onPause from clearing isPlaying
 
   const currentSong = useMemo(
     () => state.queue.find((song) => song.songId === state.currentSongId) ?? null,
@@ -529,6 +530,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
 
     player.pause();
+    isLoadingNewSongRef.current = true; // Block onPause from clearing isPlaying while we load
     // Do NOT call player.removeAttribute("src") on iOS as it revokes user gesture activation!
     setState((prev) => ({ ...prev, isBuffering: true, error: null, streamUrl: null }));
 
@@ -597,19 +599,25 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           player.load();
         }
 
+        isLoadingNewSongRef.current = false; // Allow onPause to work normally again
+
         setState((prev) => ({
           ...prev,
-          isBuffering: false,
+          isBuffering: true, // still buffering until canplay fires
+          isPlaying: true,   // FORCE playing=true so UI shows play icon immediately
           streamUrl: playUrl,
           duration: data.durationSec || prev.duration,
         }));
+        isPlayingRef.current = true;
 
-        if (isPlayingRef.current) {
+        // Attempt play immediately — on iOS this may be deferred until canplay
+        const tryPlay = () => {
           const playPromise = player.play();
           if (playPromise !== undefined) {
             playPromise.catch((err) => {
               console.warn("[Player] Autoplay play() was deferred:", err);
               if (err.name === "NotAllowedError") {
+                // Show play icon (not pause), wait for user gesture
                 const resumeOnGesture = () => {
                   player.play().catch(() => {});
                   window.removeEventListener("touchstart", resumeOnGesture);
@@ -620,10 +628,22 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
               }
             });
           }
+        };
+
+        // On iOS, play() before canplay may fail silently; listen for canplay too
+        if (player.readyState >= 3) {
+          tryPlay();
+        } else {
+          const onCanPlay = () => {
+            player.removeEventListener("canplay", onCanPlay);
+            if (!cancelled && isPlayingRef.current) tryPlay();
+          };
+          player.addEventListener("canplay", onCanPlay);
         }
       } catch (error) {
         if (!cancelled) {
           console.error("[Player] Playback error:", error);
+          isLoadingNewSongRef.current = false;
           setState((prev) => ({
             ...prev,
             isBuffering: false,
@@ -633,7 +653,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       }
     })();
 
-    return () => { cancelled = true; };
+    return () => { cancelled = true; isLoadingNewSongRef.current = false; };
   }, [state.currentSongId, state.queue]);
 
 
@@ -757,6 +777,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   };
 
   const onPause = () => {
+    // Do NOT set isPlaying:false if we paused the element ourselves during loading.
+    // This prevents the UI from flashing the pause icon between songs.
+    if (isLoadingNewSongRef.current) return;
     setState((prev) => ({ ...prev, isPlaying: false }));
   };
 
