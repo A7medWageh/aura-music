@@ -75,6 +75,27 @@ function withTimeout<T>(promise: Promise<T | null>, ms: number): Promise<T | nul
   ]);
 }
 
+/** Resolves with the FIRST non-null result; null only after every task has settled. */
+function raceFirst<T>(tasks: Array<Promise<T | null>>): Promise<T | null> {
+  return new Promise((resolve) => {
+    let settled = 0;
+    let winner: T | null = null;
+    tasks.forEach((task) => {
+      task
+        .then((result) => {
+          if (result && !winner) {
+            winner = result;
+            resolve(result);
+          }
+          if (++settled === tasks.length && !winner) resolve(null);
+        })
+        .catch(() => {
+          if (++settled === tasks.length && !winner) resolve(null);
+        });
+    });
+  });
+}
+
 async function fetchYouTubeOEmbed(videoId: string): Promise<{ title: string; author: string } | null> {
   try {
     const res = await fetch(
@@ -393,26 +414,24 @@ export async function resolveUniversalAudio(params: {
     const albumatyTitle = arabicResolvedTitle || oembedArabicTitle || title;
     const albumatyArtist = arabicResolvedArtist || effectiveArtist;
 
-    // All three run in parallel — moonbot usually wins in ~5-20s for popular songs
-    const [moonRes, albumatyRes, saavnRes] = await Promise.all([
+    // All three run in parallel — whoever finds the song first wins instantly
+    winner = await raceFirst([
       tryMoonBot(albumatyTitle, albumatyArtist, videoId, 40000),
       tryAlbumaty(albumatyTitle, albumatyArtist, videoId, 8000),
       tryJioSaavn(title, effectiveArtist, videoId, 6000),
     ]);
-    winner = moonRes || albumatyRes || saavnRes;
 
     // Retry Albumaty with English title if Arabic one failed
     if (!winner && albumatyTitle !== title) {
       winner = await tryAlbumaty(title, effectiveArtist, videoId, 5000);
     }
   } else {
-    // Non-Arabic: JioSaavn + Albumaty first (fast), moonbot as parallel backup
-    const [saavnRes, albumatyRes, moonRes] = await Promise.all([
+    // Non-Arabic: JioSaavn + Albumaty race, moonbot as parallel backup
+    winner = await raceFirst([
       tryJioSaavn(title, effectiveArtist, videoId, 6000),
       tryAlbumaty(title, effectiveArtist, videoId, 8000),
       tryMoonBot(title, effectiveArtist, videoId, 40000),
     ]);
-    winner = saavnRes || albumatyRes || moonRes;
   }
 
   if (winner) {
