@@ -36,6 +36,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const isPlayingRef = useRef(state.isPlaying);
   const isLoadingNewSongRef = useRef(false); // true while fetching stream URL, prevents onPause from clearing isPlaying
+  const gestureResumeCleanupRef = useRef<(() => void) | null>(null); // pending "resume on next gesture" listeners
 
   const currentSong = useMemo(
     () => state.queue.find((song) => song.songId === state.currentSongId) ?? null,
@@ -96,6 +97,23 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         p.catch(() => {});
       }
     } catch {}
+  };
+
+  // Deferred play after an autoplay-policy failure; must be cancelled
+  // when switching songs, otherwise the stale listener resumes the OLD src.
+  const armGestureResume = (player: HTMLAudioElement) => {
+    const resumeOnGesture = () => {
+      cleanupGestureResume();
+      player.play().catch(() => {});
+    };
+    const cleanupGestureResume = () => {
+      window.removeEventListener("touchstart", resumeOnGesture);
+      window.removeEventListener("click", resumeOnGesture);
+      if (gestureResumeCleanupRef.current === cleanupGestureResume) gestureResumeCleanupRef.current = null;
+    };
+    window.addEventListener("touchstart", resumeOnGesture, { once: true, passive: true });
+    window.addEventListener("click", resumeOnGesture, { once: true, passive: true });
+    gestureResumeCleanupRef.current = cleanupGestureResume;
   };
 
   const playNow = async (song: QueueSong) => {
@@ -530,6 +548,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
 
     player.pause();
+    gestureResumeCleanupRef.current?.(); // drop stale gesture-resume from a previous song
     isLoadingNewSongRef.current = true; // Block onPause from clearing isPlaying while we load
     // Do NOT call player.removeAttribute("src") on iOS as it revokes user gesture activation!
     setState((prev) => ({ ...prev, isBuffering: true, error: null, streamUrl: null }));
@@ -616,16 +635,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           if (playPromise !== undefined) {
             playPromise.catch((err) => {
               console.warn("[Player] Autoplay play() was deferred:", err);
-              if (err.name === "NotAllowedError") {
-                // Show play icon (not pause), wait for user gesture
-                const resumeOnGesture = () => {
-                  player.play().catch(() => {});
-                  window.removeEventListener("touchstart", resumeOnGesture);
-                  window.removeEventListener("click", resumeOnGesture);
-                };
-                window.addEventListener("touchstart", resumeOnGesture, { once: true, passive: true });
-                window.addEventListener("click", resumeOnGesture, { once: true, passive: true });
-              }
+              if (err.name === "NotAllowedError") armGestureResume(player);
             });
           }
         };
@@ -660,6 +670,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const player = audioRef.current;
     if (!player || !state.streamUrl) return;
+    // Never auto-resume while a new song is being resolved — otherwise the
+    // previous source (still on the element) starts playing again.
+    if (isLoadingNewSongRef.current) return;
 
     const isActuallyPlaying = !player.paused;
 
@@ -667,16 +680,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       const playPromise = player.play();
       if (playPromise !== undefined) {
         playPromise.catch((err) => {
-          if (err.name === "NotAllowedError") {
-            // Keep isPlaying: true so the user is not shown a pause icon!
-            const resumeOnGesture = () => {
-              player.play().catch(() => {});
-              window.removeEventListener("touchstart", resumeOnGesture);
-              window.removeEventListener("click", resumeOnGesture);
-            };
-            window.addEventListener("touchstart", resumeOnGesture, { once: true, passive: true });
-            window.addEventListener("click", resumeOnGesture, { once: true, passive: true });
-          } else if (err.name !== "AbortError") {
+          if (err.name === "NotAllowedError") armGestureResume(player);
+          else if (err.name !== "AbortError") {
             console.warn("[Player] Playback play() error:", err.message);
           }
         });
