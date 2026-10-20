@@ -144,20 +144,49 @@ export async function resolveUniversalAudio(params: {
     return cached.result;
   }
 
-  const cacheAndReturn = (result: UniversalAudioResult): UniversalAudioResult => {
-    memCache.set(cacheKey, { result, expiresAt: Date.now() + CACHE_TTL_MS });
+  const ingestToTelegramAndReturn = async (result: UniversalAudioResult): Promise<UniversalAudioResult> => {
+    // If the stream is an external direct audio link (Albumaty, JioSaavn, SoundCloud, etc.), ingest synchronously into Telegram Cloud CDN!
+    if (
+      result.streamUrl &&
+      result.source !== "telegram" &&
+      result.streamUrl.startsWith("http") &&
+      !result.streamUrl.includes("youtube.com")
+    ) {
+      try {
+        console.log(`[AudioResolver] Ingesting "${result.title || title}" into Telegram Cloud CDN...`);
+        const tgUpload = await Promise.race([
+          uploadAudioUrlToTelegram({
+            audioUrl: result.streamUrl,
+            title: result.title || title,
+            artist: result.artist || artist,
+            duration: result.durationSec,
+            videoId,
+          }),
+          new Promise<null>((_, reject) => setTimeout(() => reject(new Error("Telegram ingestion timeout")), 4500)),
+        ]);
 
-    // Asynchronously cache external streams into Telegram Cloud database for permanent instant reuse
-    if (result.streamUrl && result.source !== "telegram" && result.streamUrl.startsWith("http") && !result.streamUrl.includes("youtube.com")) {
-      uploadAudioUrlToTelegram({
-        audioUrl: result.streamUrl,
-        title: result.title || title,
-        artist: result.artist || artist,
-        duration: result.durationSec,
-        videoId,
-      }).catch((tgErr: any) => console.warn("[AudioResolver] Background Telegram cache notice:", tgErr.message));
+        if (tgUpload && tgUpload.fileId) {
+          console.log(`[AudioResolver] ⚡ Successfully ingested to Telegram: ${tgUpload.fileId}`);
+          const tgResult: UniversalAudioResult = {
+            streamUrl: `/api/telegram/stream?fileId=${encodeURIComponent(tgUpload.fileId)}&title=${encodeURIComponent(result.title || title)}`,
+            directPlay: false,
+            source: "telegram",
+            title: result.title || title,
+            artist: result.artist || artist,
+            durationSec: result.durationSec,
+            bitrate: "320kbps",
+            format: "mp3",
+            videoId: videoId || result.videoId,
+          };
+          memCache.set(cacheKey, { result: tgResult, expiresAt: Date.now() + CACHE_TTL_MS });
+          return tgResult;
+        }
+      } catch (tgErr: any) {
+        console.warn("[AudioResolver] Telegram ingestion notice (falling back to direct):", tgErr.message);
+      }
     }
 
+    memCache.set(cacheKey, { result, expiresAt: Date.now() + CACHE_TTL_MS });
     return result;
   };
 
@@ -201,7 +230,7 @@ export async function resolveUniversalAudio(params: {
         albumatyUrl = await resolveAlbumatyStream(originalCleanTitle, artist);
       }
       if (albumatyUrl) {
-        return cacheAndReturn({
+        return await ingestToTelegramAndReturn({
           streamUrl: albumatyUrl,
           directPlay: true,
           source: "albumaty",
@@ -222,7 +251,7 @@ export async function resolveUniversalAudio(params: {
     try {
       const saavnTrack = await resolveSaavnSong(title, artist);
       if (saavnTrack && saavnTrack.streamUrl) {
-        return cacheAndReturn({
+        return await ingestToTelegramAndReturn({
           streamUrl: saavnTrack.streamUrl,
           directPlay: true,
           source: "jiosaavn",
@@ -244,7 +273,7 @@ export async function resolveUniversalAudio(params: {
     try {
       let albumatyUrl = await resolveAlbumatyStream(title, artist);
       if (albumatyUrl) {
-        return cacheAndReturn({
+        return await ingestToTelegramAndReturn({
           streamUrl: albumatyUrl,
           directPlay: true,
           source: "albumaty",
@@ -265,7 +294,7 @@ export async function resolveUniversalAudio(params: {
     try {
       const scUrl = await resolveSoundCloudStream(title, artist);
       if (scUrl && !scUrl.includes(".m3u8") && !scUrl.includes("playlist.m3u8")) {
-        return cacheAndReturn({
+        return await ingestToTelegramAndReturn({
           streamUrl: scUrl,
           directPlay: true,
           source: "soundcloud",
@@ -448,7 +477,7 @@ export async function resolveUniversalAudio(params: {
           try {
             const albumatyUrl = await resolveAlbumatyStream(candidate.title, artist);
             if (albumatyUrl) {
-              const result: UniversalAudioResult = {
+              return await ingestToTelegramAndReturn({
                 streamUrl: albumatyUrl,
                 directPlay: true,
                 source: "albumaty",
@@ -456,9 +485,7 @@ export async function resolveUniversalAudio(params: {
                 artist,
                 format: "mp3",
                 bitrate: "320kbps",
-              };
-              memCache.set(cacheKey, { result, expiresAt: Date.now() + CACHE_TTL_MS });
-              return result;
+              });
             }
           } catch {}
         }
@@ -468,7 +495,7 @@ export async function resolveUniversalAudio(params: {
           try {
             const saavnTrack = await resolveSaavnSong(candidate.title, artist);
             if (saavnTrack?.streamUrl) {
-              const result: UniversalAudioResult = {
+              return await ingestToTelegramAndReturn({
                 streamUrl: saavnTrack.streamUrl,
                 directPlay: true,
                 source: "jiosaavn",
@@ -477,9 +504,7 @@ export async function resolveUniversalAudio(params: {
                 durationSec: saavnTrack.durationSec,
                 bitrate: saavnTrack.bitrate,
                 format: "mp4/aac",
-              };
-              memCache.set(cacheKey, { result, expiresAt: Date.now() + CACHE_TTL_MS });
-              return result;
+              });
             }
           } catch {}
         }
@@ -489,15 +514,13 @@ export async function resolveUniversalAudio(params: {
           try {
             const scUrl = await resolveSoundCloudStream(candidate.title, artist);
             if (scUrl && !scUrl.includes(".m3u8") && !scUrl.includes("playlist.m3u8")) {
-              const result: UniversalAudioResult = {
+              return await ingestToTelegramAndReturn({
                 streamUrl: scUrl,
                 directPlay: true,
                 source: "soundcloud",
                 title: candidate.title,
                 artist,
-              };
-              memCache.set(cacheKey, { result, expiresAt: Date.now() + CACHE_TTL_MS });
-              return result;
+              });
             }
           } catch {}
         }

@@ -218,6 +218,70 @@ export async function GET(req: NextRequest) {
     const trackName = title || resolved.title || "song";
     const safeFilename = encodeURIComponent(trackName.replace(/[\/\\?%*:|"<>]/g, "_")) + ".mp3";
 
+    // Mode 1.5: If resolved source is Telegram Cloud CDN, stream / download directly from Telegram
+    if (resolved.source === "telegram" || resolved.streamUrl.includes("/api/telegram/stream")) {
+      const match = resolved.streamUrl.match(/fileId=([^&]+)/);
+      const fileId = match ? decodeURIComponent(match[1]) : null;
+      if (fileId) {
+        const { getTelegramDirectUrl } = await import("@/services/telegram/telegramStorage");
+        const directTgUrl = await getTelegramDirectUrl(fileId);
+        if (directTgUrl) {
+          const upstreamHeaders: Record<string, string> = { "User-Agent": "AuraMusic/1.0" };
+          const clientRange = req.headers.get("Range");
+          if (clientRange && !isDownload) {
+            upstreamHeaders["Range"] = clientRange;
+          }
+          const tgRes = await fetch(directTgUrl, {
+            headers: upstreamHeaders,
+            signal: req.signal,
+          });
+          if (tgRes.ok || tgRes.status === 206) {
+            const respHeaders = new Headers(NO_CACHE_HEADERS);
+            tgRes.headers.forEach((val, key) => {
+              const lower = key.toLowerCase();
+              if (["content-type", "content-length", "content-range", "accept-ranges"].includes(lower)) {
+                respHeaders.set(key, val);
+              }
+            });
+            respHeaders.set("Content-Type", "audio/mpeg");
+            respHeaders.set("Accept-Ranges", "bytes");
+            respHeaders.set("Access-Control-Allow-Origin", "*");
+            respHeaders.set(
+              "Access-Control-Expose-Headers",
+              "Content-Length, Content-Range, Accept-Ranges, Content-Disposition, X-Original-Content-Length"
+            );
+            if (isAttachment) {
+              respHeaders.set(
+                "Content-Disposition",
+                `attachment; filename="${safeFilename}"; filename*=UTF-8''${safeFilename}`
+              );
+            } else {
+              respHeaders.set("Content-Disposition", "inline");
+            }
+            const cl = respHeaders.get("content-length");
+            if (cl) {
+              respHeaders.set("X-Original-Content-Length", cl);
+            }
+            // iOS 2-byte probe safeguard
+            if (clientRange === "bytes=0-1" && tgRes.status === 200 && tgRes.body) {
+              try {
+                const reader = tgRes.body.getReader();
+                const { value } = await reader.read();
+                reader.cancel().catch(() => {});
+                if (value && value.length >= 2) {
+                  const probeSlice = value.slice(0, 2);
+                  respHeaders.set("Content-Range", `bytes 0-1/${cl || value.length}`);
+                  respHeaders.set("Content-Length", "2");
+                  return new NextResponse(probeSlice, { status: 206, headers: respHeaders });
+                }
+              } catch {}
+            }
+            return new NextResponse(tgRes.body as any, { status: tgRes.status, headers: respHeaders });
+          }
+        }
+      }
+    }
+
     // Mode 2: If resolved source is YouTube or raw googlevideo URL
     const isGoogleVideo = resolved.streamUrl.includes("googlevideo.com") || resolved.source === "youtube";
     if (isGoogleVideo) {

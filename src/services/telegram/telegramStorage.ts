@@ -112,17 +112,15 @@ export async function getCachedTelegramTrack(params: {
       }
     }
 
-    // 1c. Search by normalized title & artist
+    // 1c. Search by title & artist
     if (title) {
-      const normTitle = normalizeText(title);
-      const normArtist = normalizeText(artist || "");
-
+      const cleanT = title.trim();
       const res = await query<any>(
         `SELECT id, video_id, song_id, title, artist, tg_file_id, tg_message_id, duration_sec, file_size, mime_type
          FROM telegram_audio_cache
-         WHERE LOWER(title) = LOWER($1)
-         LIMIT 5`,
-        [title.trim()]
+         WHERE title = $1 OR title ILIKE $1 OR title ILIKE $2
+         LIMIT 10`,
+        [cleanT, `%${cleanT}%`]
       );
 
       for (const row of res.rows) {
