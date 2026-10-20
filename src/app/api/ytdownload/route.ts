@@ -359,7 +359,7 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const isAttachment = req.nextUrl.searchParams.get("attachment") === "true" || isDownload;
+    const isAttachment = searchParams.get("attachment") === "true" || isDownload;
     const trackName = title || resolved.title || "song";
     const fileExtension =
       resolved.format === "m4a" ||

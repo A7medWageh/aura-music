@@ -14,11 +14,15 @@
 import { query } from "@apis/neon";
 import { isStrictArtistMatch, hasUnwantedTags } from "../music/artistMatcher";
 
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
+const BOT_TOKEN =
+  process.env.TELEGRAM_BOT_TOKEN || "8831422517:AAEXQFzQxzcyIKWI1WtfVh2XGzguGXAnCak";
+
 function getTargetChannels(): string[] {
+  const primary = process.env.TELEGRAM_CHANNEL_ID || "-1004310944763";
+  const alt = process.env.TELEGRAM_ALT_CHANNEL_ID || "-1003911765672";
   return Array.from(
     new Set(
-      [process.env.TELEGRAM_CHANNEL_ID, process.env.TELEGRAM_ALT_CHANNEL_ID]
+      [primary, alt]
         .map((channelId) => channelId?.trim())
         .filter((channelId): channelId is string => Boolean(channelId))
     )

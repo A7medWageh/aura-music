@@ -1,4 +1,4 @@
-﻿/**
+/**
  * universalAudioResolver.ts
  * ─────────────────────────
  * Universal Audio Extraction Engine — Vercel-Optimized Parallel Race
@@ -156,6 +156,41 @@ async function trySoundCloud(
   return null;
 }
 
+async function extractArabicFromWeb(query: string): Promise<{ title?: string; artist?: string } | null> {
+  try {
+    const res = await fetch(`https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`, {
+      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
+      signal: AbortSignal.timeout(3500),
+    });
+    if (!res.ok) return null;
+    const html = await res.text();
+    const regex = /"title":{"runs":\[{"text":"([^"]+)"/g;
+    let m;
+    while ((m = regex.exec(html)) !== null) {
+      if (m[1]) {
+        const arabicBlocks = m[1].match(/[\u0600-\u06FF][\u0600-\u06FF\s0-9\-_–—]+/g);
+        if (arabicBlocks) {
+          for (const block of arabicBlocks) {
+            const clean = block
+              .replace(/فيديو كليب|كليب رسمي|الأغنية الرسمية|اغنية|أغنية|اشتركو|قناتي|حصريا|ريمكس|remix/gi, "")
+              .trim();
+            if (clean.length >= 3) {
+              if (clean.includes("-") || clean.includes("–")) {
+                const parts = clean.split(/[-–]/).map((p) => p.trim()).filter(Boolean);
+                if (parts.length >= 2) {
+                  return { artist: parts[0], title: parts[1] };
+                }
+              }
+              return { title: clean };
+            }
+          }
+        }
+      }
+    }
+  } catch {}
+  return null;
+}
+
 async function ingestToTelegram(
   result: UniversalAudioResult,
   cacheKey: string,
@@ -168,42 +203,45 @@ async function ingestToTelegram(
     return result;
   }
 
-  if (!result.streamUrl.startsWith("http")) {
-    throw new Error("Audio source cannot be stored in Telegram");
-  }
   if (
+    !result.streamUrl.startsWith("http") ||
     result.streamUrl.includes("youtube.com") ||
     result.streamUrl.includes("youtu.be")
   ) {
-    throw new Error("YouTube watch pages cannot be stored as audio");
+    return result;
   }
 
-  const tgUpload = await uploadAudioUrlToTelegram({
-    audioUrl: result.streamUrl,
-    title: result.title || title,
-    artist: result.artist || artist,
-    duration: result.durationSec,
-    videoId,
-  });
-  if (!tgUpload?.fileId) {
-    throw new Error("Telegram storage upload failed; playback is blocked until the track is stored");
+  try {
+    const tgUpload = await uploadAudioUrlToTelegram({
+      audioUrl: result.streamUrl,
+      title: result.title || title,
+      artist: result.artist || artist,
+      duration: result.durationSec,
+      videoId,
+    });
+    if (tgUpload?.fileId) {
+      const tgResult: UniversalAudioResult = {
+        streamUrl: `/api/telegram/stream?fileId=${encodeURIComponent(tgUpload.fileId)}&title=${encodeURIComponent(result.title || title)}`,
+        directPlay: false,
+        source: "telegram",
+        title: result.title || title,
+        artist: result.artist || artist,
+        durationSec: result.durationSec,
+        bitrate: result.bitrate || "320kbps",
+        format: result.format || "mp3",
+        mimeType: tgUpload.mimeType || result.mimeType || "audio/mpeg",
+        videoId: videoId || result.videoId,
+      };
+      memCache.set(cacheKey, { result: tgResult, expiresAt: Date.now() + CACHE_TTL_MS });
+      console.log(`[AudioResolver] Telegram CDN ingest complete for "${tgResult.title}"`);
+      return tgResult;
+    }
+  } catch (err: any) {
+    console.warn(`[AudioResolver] Telegram upload error: ${err.message}, falling back to direct stream`);
   }
 
-  const tgResult: UniversalAudioResult = {
-    streamUrl: `/api/telegram/stream?fileId=${encodeURIComponent(tgUpload.fileId)}&title=${encodeURIComponent(result.title || title)}`,
-    directPlay: false,
-    source: "telegram",
-    title: result.title || title,
-    artist: result.artist || artist,
-    durationSec: result.durationSec,
-    bitrate: result.bitrate || "320kbps",
-    format: result.format || "mp3",
-    mimeType: tgUpload.mimeType,
-    videoId: videoId || result.videoId,
-  };
-  memCache.set(cacheKey, { result: tgResult, expiresAt: Date.now() + CACHE_TTL_MS });
-  console.log(`[AudioResolver] Telegram CDN ingest complete for "${tgResult.title}"`);
-  return tgResult;
+  memCache.set(cacheKey, { result, expiresAt: Date.now() + CACHE_TTL_MS });
+  return result;
 }
 
 export async function resolveUniversalAudio(params: {
@@ -285,21 +323,36 @@ export async function resolveUniversalAudio(params: {
     /[\u0600-\u06FF]/.test(title) ||
     /[\u0600-\u06FF]/.test(artist) ||
     Boolean(oembedArabicTitle) ||
-    /amr diab|tamer hosny|hamaki|sherine|angham|bahaa sultan|wegz|marwan pablo|cairokee|hamza namira|ahmed saad|elissa|nancy ajram|george wassouf|tul8te|rubi|ruby|ashour|mounir|hakim|assala|fairuz|fayrouz|kalthoum|abdel halim/i.test(
+    /amr diab|tamer hosny|hamaki|sherine|shereen|angham|bahaa sultan|wegz|marwan pablo|cairokee|hamza namira|ahmed saad|elissa|nancy ajram|george wassouf|tul8te|rubi|ruby|ashour|mounir|hakim|assala|fairuz|fayrouz|kalthoum|abdel halim|mesh aawza|mish awza|tamally maak|nour el ein/i.test(
       `${title} ${artist}`
     );
+
+  let arabicResolvedTitle = oembedArabicTitle || null;
+  let arabicResolvedArtist = effectiveArtist || null;
+
+  if (isArabicSong && (!arabicResolvedTitle || !/[\u0600-\u06FF]/.test(title))) {
+    const webArabic = await extractArabicFromWeb(`${artist || ""} ${title}`);
+    if (webArabic?.title) {
+      arabicResolvedTitle = webArabic.title;
+      if (webArabic.artist && (!arabicResolvedArtist || !/[\u0600-\u06FF]/.test(arabicResolvedArtist))) {
+        arabicResolvedArtist = webArabic.artist;
+      }
+      console.log(`[AudioResolver] Extracted Arabic identity: "${arabicResolvedTitle}" - "${arabicResolvedArtist}"`);
+    }
+  }
 
   // Strategy 1+2: Parallel race
   let winner: UniversalAudioResult | null = null;
 
   if (isArabicSong) {
-    const albumatyTitle = oembedArabicTitle || title;
+    const albumatyTitle = arabicResolvedTitle || oembedArabicTitle || title;
+    const albumatyArtist = arabicResolvedArtist || effectiveArtist;
     const [albumatyRes, saavnRes] = await Promise.all([
-      tryAlbumaty(albumatyTitle, effectiveArtist, videoId, 8000),
+      tryAlbumaty(albumatyTitle, albumatyArtist, videoId, 8000),
       tryJioSaavn(title, effectiveArtist, videoId, 6000),
     ]);
     winner = albumatyRes || saavnRes;
-    if (!winner && oembedArabicTitle && oembedArabicTitle !== title) {
+    if (!winner && albumatyTitle !== title) {
       winner = await tryAlbumaty(title, effectiveArtist, videoId, 5000);
     }
   } else {
