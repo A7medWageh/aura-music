@@ -226,9 +226,38 @@ export async function searchYouTubeInnertube(query: string) {
     (a) => { if (a.albumId && !albumMap.has(a.albumId)) albumMap.set(a.albumId, a); }
   );
 
-  const songs = Array.from(songMap.values()).filter((s: any) => !isJunkResult(s.title, s.artist)).slice(0, 30);
-  const albums = Array.from(albumMap.values()).slice(0, 12);
   const artists = extractArtists(generalResults, artistResults).slice(0, 5);
+
+  // Prolific artists list far more albums on their discography page than in
+  // search — pull it in when the query is essentially the artist's name.
+  const topArtist = artists[0];
+  const norm = (s: string) => (s || "").replace(/\s+/g, " ").trim().toLowerCase();
+  const an = norm(topArtist?.artistName?.replace(/\s*-\s*Topic\s*$/i, ""));
+  const qn = norm(query);
+  if (albumMap.size < 100 && topArtist?.artistId && an && (qn.includes(an) || an.includes(qn))) {
+    const disc: any = await withTimeout(
+      getArtistDetailsYoutube(topArtist.artistId).catch(() => null),
+      9000,
+      null
+    );
+    if (disc) {
+      [...(disc.newReleases || []), ...(disc.oldAlbums || [])].forEach((a: any) => {
+        if (a.albumId && !albumMap.has(a.albumId)) {
+          albumMap.set(a.albumId, {
+            type: "album",
+            albumId: a.albumId,
+            title: a.title,
+            artist: a.artist || disc.artistName || topArtist.artistName,
+            thumbnailUrl: a.thumbnailUrl || topArtist.thumbnailUrl,
+            year: a.year || 0,
+          });
+        }
+      });
+    }
+  }
+
+  const songs = Array.from(songMap.values()).filter((s: any) => !isJunkResult(s.title, s.artist)).slice(0, 30);
+  const albums = Array.from(albumMap.values()).slice(0, 100);
 
   const result = { query, songs, albums, artists };
   if (songs.length === 0 && albums.length === 0 && artists.length === 0) {
