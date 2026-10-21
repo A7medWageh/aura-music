@@ -7,12 +7,14 @@ import { motion } from "framer-motion";
 import { getProxyUrl } from "@/utils/media";
 
 import { getClientCached, setClientCached } from "@/utils/clientCache";
+import { useCacheWarm } from "@/hooks/useCacheWarm";
 
 export default function DiscoverPage() {
   const cachedReleases = getClientCached<any[]>("discover_new_releases");
   const [newReleases, setNewReleases] = useState<any[]>(() => cachedReleases || []);
   const [loading, setLoading] = useState(() => !cachedReleases || cachedReleases.length === 0);
   const { playNow } = usePlayer();
+  useCacheWarm(newReleases, 8, 600);
 
   useEffect(() => {
     // Fetch YouTube New Releases data and cache in background

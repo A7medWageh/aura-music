@@ -9,6 +9,7 @@ import { downloadSong } from "@/services/offline/downloader";
 import { FavoriteButton } from "@/components/FavoriteButton";
 import { PremiumModal } from "@/components/PremiumModal";
 import Link from "next/link";
+import { useCacheWarm } from "@/hooks/useCacheWarm";
 
 type ArtistEntry = { name: string; artistId: string; thumbnailUrl: string };
 
@@ -154,29 +155,7 @@ export default function HomePage() {
 
   // Cache warming: resolve trending songs in the background so a click hits
   // the Telegram cache and plays instantly (~240ms) instead of waiting 10-60s.
-  // prefetch=true keeps @L_10_BOT out of it — no "يوتيوب" menu spam in channel.
-  useEffect(() => {
-    if (!trending.length) return;
-    const seen: Set<string> = ((window as any).__auraWarmed ??= new Set());
-    const timers: number[] = [];
-    trending.forEach((s: any, i: number) => {
-      const key = String(s.songId || `${s.title}-${s.artist}`);
-      if (seen.has(key)) return;
-      const id = window.setTimeout(() => {
-        if (seen.has(key)) return;
-        seen.add(key);
-        const p = new URLSearchParams();
-        if (s.youtubeVideoId) p.set("videoId", s.youtubeVideoId);
-        if (s.title) p.set("title", s.title);
-        if (s.artist) p.set("artist", s.artist);
-        p.set("resolveOnly", "true");
-        p.set("prefetch", "true");
-        fetch(`/api/ytdownload?${p.toString()}`).catch(() => {});
-      }, 2000 + i * 700);
-      timers.push(id);
-    });
-    return () => timers.forEach((t) => clearTimeout(t));
-  }, [trending]);
+  useCacheWarm(trending);
 
   const currentSongs = trending.slice(currentSlide * CARDS_PER_SLIDE, (currentSlide + 1) * CARDS_PER_SLIDE);
 

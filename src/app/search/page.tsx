@@ -10,6 +10,7 @@ import { getProxyUrl } from "@/utils/media";
 import { downloadSong } from "@/services/offline/downloader";
 import { sanitizeTitle } from "@apis/youtubei.js";
 import { PremiumModal } from "@/components/PremiumModal";
+import { useCacheWarm } from "@/hooks/useCacheWarm";
 
 function SearchContent() {
   const searchParams = useSearchParams();
@@ -18,6 +19,7 @@ function SearchContent() {
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const { playNow } = usePlayer();
+  useCacheWarm(results?.songs, 8, 600);
   const [isPremium, setIsPremium] = useState(false);
   const [showPremiumModal, setShowPremiumModal] = useState(false);
   const [premiumFeatureName, setPremiumFeatureName] = useState("");

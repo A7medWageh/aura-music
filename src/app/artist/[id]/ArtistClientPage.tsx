@@ -13,6 +13,7 @@ import { downloadSong } from "@/services/offline/downloader";
 import { trackPlay } from "@/services/user/listeningHistory";
 import { FavoriteButton } from "@/components/FavoriteButton";
 import { PremiumModal } from "@/components/PremiumModal";
+import { useCacheWarm } from "@/hooks/useCacheWarm";
 
 export default function ArtistClientPage({ id }: { id: string }) {
   const { playNow, enqueueSongs } = usePlayer();
@@ -25,6 +26,7 @@ export default function ArtistClientPage({ id }: { id: string }) {
   const [isPremium, setIsPremium] = useState(false);
   const [showPremiumModal, setShowPremiumModal] = useState(false);
   const [premiumFeatureName, setPremiumFeatureName] = useState("");
+  useCacheWarm(artist?.songs, 6, 700);
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 3000); };
 

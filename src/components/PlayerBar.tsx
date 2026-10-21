@@ -3,7 +3,7 @@
 import {
   Play, Pause, SkipForward, SkipBack, Shuffle,
   Repeat, Volume2, VolumeX, Heart, DownloadCloud,
-  ChevronDown, Maximize2, ListMusic, Share2, Crown,
+  ChevronDown, ListMusic, Share2, Crown,
   Settings, Music2, FileText, Sparkles, Sliders, Waves
 } from "lucide-react";
 import { usePlayer } from "@/state/playerContext";
@@ -53,15 +53,15 @@ function useDominantColor(imageUrl: string | undefined) {
           r = Math.round(r / count);
           g = Math.round(g / count);
           b = Math.round(b / count);
-          // Dark obsidian black palette with zero purple hue
           const bg1 = "#090b10";
           const bg2 = "#040507";
           const isPurpleOrViolet = b > 115 && r > 85 && g < 115;
           let accent = "#00e5ff";
           if (!isPurpleOrViolet) {
             const max = Math.max(r, g, b);
-            const scale = max > 0 ? 220 / max : 1;
-            accent = `rgb(${Math.min(255, Math.round(r * scale))}, ${Math.min(255, Math.round(g * scale))}, ${Math.min(255, Math.round(b * scale))})`;
+            const scale = max > 0 ? 235 / max : 1;
+            const hx = (v: number) => Math.min(255, Math.round(v * scale)).toString(16).padStart(2, "0");
+            accent = `#${hx(r)}${hx(g)}${hx(b)}`;
           }
           setColors({ bg1, bg2, accent });
         }
@@ -181,20 +181,17 @@ function SeekBar({
 
 // ─── Full Screen Player ───────────────────────────────────────────────
 function FullPlayer({
-  isOpen, onClose, isLiked, onLike, onDownload,
+  isOpen, onClose, isLiked, onLike, onDownload, accent,
   isPremium, setIsPremiumModalOpen, setPremiumFeatureName, showToast
 }: {
   isOpen: boolean; onClose: () => void; isLiked: boolean;
-  onLike: () => void; onDownload: () => void;
+  onLike: () => void; onDownload: () => void; accent: string;
   isPremium: boolean; setIsPremiumModalOpen: (v: boolean) => void; setPremiumFeatureName: (v: string) => void;
   showToast: (msg: string, type?: "normal" | "hq") => void;
 }) {
   const { state, currentSong, togglePlay, next, prev, seekTo, setVolume, cycleRepeat, setShuffle, setHighQuality, setIsAiMix, soundPreset, setSoundPreset } = usePlayer();
   const art = currentSong?.thumbnailUrl || currentSong?.metadata?.thumbnailUrl;
   const proxyArt = getProxyUrl(art);
-
-  // ── Dynamic color from album art ──
-  const { bg1, bg2, accent } = useDominantColor(proxyArt);
 
   const [activeTab, setActiveTab] = useState("now"); // now | queue | audio | premium
   const [isBgPlayEnabled, setIsBgPlayEnabled] = useState(isPremium);
@@ -370,15 +367,29 @@ function FullPlayer({
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
     >
-      {/* ── Dark Obsidian ambient background with zero purple tint ── */}
+      {/* ── Aurora ambient background: breathing artwork + drifting accent orbs ── */}
       <div className="absolute inset-0 overflow-hidden" style={{ willChange: "transform", transform: "translateZ(0)" }}>
-        <img
+        <motion.img
           src={proxyArt}
           alt=""
-          className="w-full h-full object-cover scale-125 opacity-20"
-          style={{ filter: "blur(60px) brightness(0.25) saturate(1.1)", willChange: "transform", transform: "translateZ(0)" }}
+          className="w-full h-full object-cover"
+          style={{ filter: "blur(70px) brightness(0.32) saturate(1.35)", willChange: "transform", transform: "translateZ(0)" }}
+          animate={state.isPlaying ? { scale: [1.22, 1.32, 1.22] } : { scale: 1.22 }}
+          transition={{ duration: 14, repeat: Infinity, ease: "easeInOut" }}
         />
-        <div className="absolute inset-0 bg-gradient-to-b from-[#090b10]/95 via-[#06070a]/98 to-[#040507]" />
+        <motion.div
+          className="absolute -top-28 -right-24 w-80 h-80 rounded-full"
+          style={{ background: accent, opacity: 0.16, filter: "blur(90px)" }}
+          animate={{ x: [0, 60, 0], y: [0, 40, 0] }}
+          transition={{ duration: 10, repeat: Infinity, ease: "easeInOut" }}
+        />
+        <motion.div
+          className="absolute -bottom-32 -left-24 w-96 h-96 rounded-full"
+          style={{ background: accent, opacity: 0.1, filter: "blur(100px)" }}
+          animate={{ x: [0, -50, 0], y: [0, -30, 0] }}
+          transition={{ duration: 13, repeat: Infinity, ease: "easeInOut" }}
+        />
+        <div className="absolute inset-0 bg-gradient-to-b from-[#090b10]/90 via-[#06070a]/95 to-[#040507]" />
       </div>
 
       {/* ── Content ── */}
@@ -418,27 +429,39 @@ function FullPlayer({
         {activeTab === "now" && (
           <div className="flex-1 flex flex-col items-center justify-between px-5 pb-2 pt-1 overflow-hidden min-h-0 w-full">
 
-            {/* Album Art Container with harmonious spacing */}
+            {/* Album Art — immersive, with orbiting aurora ring */}
             <div className="w-full flex-1 flex items-center justify-center my-auto min-h-0 py-2 shrink">
               <motion.div
                 key={currentSong?.songId}
-                initial={{ scale: 0.92, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                transition={{ type: "spring", stiffness: 240, damping: 25 }}
-                className="relative max-h-[min(34vh,230px)] w-[min(65vw,230px)] aspect-square flex items-center justify-center mx-auto"
+                initial={{ scale: 0.88, opacity: 0, rotate: -4 }}
+                animate={{ scale: 1, opacity: 1, rotate: 0 }}
+                transition={{ type: "spring", stiffness: 200, damping: 22 }}
+                className="relative max-h-[min(38vh,260px)] w-[min(72vw,260px)] aspect-square flex items-center justify-center mx-auto"
               >
-                <div
-                  className="w-full h-full rounded-3xl overflow-hidden relative border border-white/10 shadow-[0_22px_60px_rgba(0,0,0,0.9)]"
+                {state.isPlaying && (
+                  <motion.div
+                    className="absolute -inset-4 rounded-full"
+                    style={{
+                      background: `conic-gradient(from 0deg, transparent 0%, ${accent}66 18%, transparent 42%, ${accent}33 68%, transparent 88%)`,
+                      filter: "blur(14px)",
+                    }}
+                    animate={{ rotate: 360 }}
+                    transition={{ duration: 9, repeat: Infinity, ease: "linear" }}
+                  />
+                )}
+                <motion.div
+                  className="relative w-full h-full rounded-[2rem] overflow-hidden border border-white/15"
+                  style={{ boxShadow: `0 24px 70px rgba(0,0,0,0.9), 0 0 45px ${accent}30` }}
+                  animate={state.isPlaying ? { scale: [1, 1.015, 1] } : { scale: 1 }}
+                  transition={{ duration: 3.2, repeat: Infinity, ease: "easeInOut" }}
                 >
                   <img src={proxyArt} alt={currentSong?.title} className="w-full h-full object-cover" />
-                  {state.isPlaying && (
-                    <motion.div
-                      animate={{ rotate: 360 }}
-                      transition={{ duration: 10, repeat: Infinity, ease: "linear" }}
-                      className="absolute inset-[-4px] rounded-[32px] border-2 border-dashed border-cyan-400/30 pointer-events-none"
-                    />
+                  {state.isBuffering && (
+                    <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px] flex items-center justify-center">
+                      <div className="w-9 h-9 rounded-full border-[3px] border-white/20 animate-spin" style={{ borderTopColor: accent }} />
+                    </div>
                   )}
-                </div>
+                </motion.div>
               </motion.div>
             </div>
 
@@ -458,9 +481,9 @@ function FullPlayer({
               </button>
             </div>
 
-            {/* Sleek Compact Waveform Visualizer */}
+            {/* Waveform Visualizer — tinted from album art */}
             <div className="w-full my-1 shrink-0">
-              <WaveformVisualizer isPlaying={state.isPlaying} accent="#00e5ff" />
+              <WaveformVisualizer isPlaying={state.isPlaying} accent={accent} />
             </div>
 
             {/* Seek Bar + Times */}
@@ -471,7 +494,7 @@ function FullPlayer({
                 onSeek={seekTo}
                 height="h-1.5"
                 rtl={false}
-                accent="#00e5ff"
+                accent={accent}
                 isPremium={isPremium}
                 onPremiumClick={() => { setPremiumFeatureName("تقديم وتأخير الأغنية"); setIsPremiumModalOpen(true); }}
               />
@@ -496,8 +519,17 @@ function FullPlayer({
 
               <button
                 onClick={togglePlay}
-                className="w-16 h-16 sm:w-18 sm:h-18 rounded-full flex items-center justify-center bg-white text-black shadow-[0_8px_30px_rgba(255,255,255,0.25),0_4px_16px_rgba(0,0,0,0.8)] active:scale-95 transition-transform shrink-0"
+                className="relative w-16 h-16 sm:w-18 sm:h-18 rounded-full flex items-center justify-center bg-white text-black active:scale-95 transition-transform shrink-0"
+                style={{ boxShadow: `0 0 0 1px rgba(255,255,255,0.1), 0 10px 34px rgba(0,0,0,0.85), 0 0 38px ${accent}55` }}
               >
+                {state.isPlaying && (
+                  <motion.span
+                    className="absolute inset-0 rounded-full"
+                  style={{ border: `2px solid ${accent}` }}
+                    animate={{ scale: [1, 1.35], opacity: [0.6, 0] }}
+                    transition={{ duration: 1.6, repeat: Infinity, ease: "easeOut" }}
+                  />
+                )}
                 {state.isBuffering ? (
                   <div className="w-7 h-7 border-3 border-neutral-300 border-t-black rounded-full animate-spin" />
                 ) : state.isPlaying ? (
@@ -759,18 +791,29 @@ function FullPlayer({
             { id: "queue", icon: ListMusic, label: "قائمة" },
             { id: "audio", icon: Settings, label: "نقاء الصوت" },
             { id: "premium", icon: Sparkles, label: "الخلفية" },
-          ].map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`flex flex-col items-center gap-1 px-3.5 py-1.5 rounded-2xl transition-all font-bold text-xs ${
-                activeTab === tab.id ? "text-white bg-white/10" : "text-neutral-500 hover:text-neutral-300"
-              }`}
-            >
-              <tab.icon className="w-5 h-5" />
-              <span>{tab.label}</span>
-            </button>
-          ))}
+          ].map(tab => {
+            const active = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`relative flex flex-col items-center gap-1 px-3.5 py-1.5 rounded-2xl transition-colors font-bold text-xs ${
+                  active ? "text-white" : "text-neutral-500 hover:text-neutral-300"
+                }`}
+              >
+                {active && (
+                  <motion.div
+                    layoutId="player-tab-pill"
+                    className="absolute inset-0 rounded-2xl"
+                    style={{ background: `${accent}26`, boxShadow: `0 0 18px ${accent}33`, border: `1px solid ${accent}44` }}
+                    transition={{ type: "spring", stiffness: 380, damping: 30 }}
+                  />
+                )}
+                <tab.icon className="relative z-10 w-5 h-5" />
+                <span className="relative z-10">{tab.label}</span>
+              </button>
+            );
+          })}
         </div>
 
       </div>
@@ -780,7 +823,7 @@ function FullPlayer({
 
 // ─── Mini Player Bar ──────────────────────────────────────────────────
 export function PlayerBar() {
-  const { state, currentSong, next, prev, togglePlay, setVolume, seekTo, cycleRepeat, setShuffle, setHighQuality } = usePlayer();
+  const { state, currentSong, next, prev, togglePlay, setVolume, seekTo } = usePlayer();
   const [isLiked, setIsLiked] = useState(false);
   const [fullOpen, setFullOpen] = useState(false);
   const [isPremiumModalOpen, setIsPremiumModalOpen] = useState(false);
@@ -788,7 +831,6 @@ export function PlayerBar() {
   const { addToast } = useToastStore();
 
   const isPremium = typeof window !== "undefined" && localStorage.getItem("aura_user_tier") === "premium";
-
   // Like state: check local store instantly without network call
   useEffect(() => {
     if (!currentSong?.songId) return;
@@ -826,6 +868,8 @@ export function PlayerBar() {
   };
 
   const art = currentSong?.thumbnailUrl || currentSong?.metadata?.thumbnailUrl;
+  const proxyArt = getProxyUrl(art);
+  const { accent } = useDominantColor(proxyArt);
   const pct = state.duration > 0 ? (state.currentTime / state.duration) * 100 : 0;
 
   if (!currentSong) return null;
@@ -839,6 +883,7 @@ export function PlayerBar() {
           isLiked={isLiked}
           onLike={toggleLike}
           onDownload={handleDownload}
+          accent={accent}
           isPremium={isPremium}
           setIsPremiumModalOpen={setIsPremiumModalOpen}
           setPremiumFeatureName={setPremiumFeatureName}
@@ -866,67 +911,89 @@ export function PlayerBar() {
           window.addEventListener("resize", update, { passive: true });
         }}
       >
-        {/* Progress bar at top edge */}
-        <div className="absolute top-0 left-0 right-0 h-[2px] bg-white/10" dir="ltr">
-          <SeekBar
-            progress={state.currentTime}
-            duration={state.duration}
-            onSeek={seekTo}
-            height="h-full"
-            rtl={false}
-            isPremium={isPremium}
-            onPremiumClick={() => { setPremiumFeatureName("تقديم وتأخير الأغنية"); setIsPremiumModalOpen(true); }}
-          />
-        </div>
+        {/* Floating glass card */}
+        <div
+          className="relative mx-3 mb-2 flex items-center gap-3 rounded-[22px] border px-3 py-2.5 backdrop-blur-2xl overflow-hidden"
+          style={{
+            background: "rgba(9,11,16,0.82)",
+            borderColor: "rgba(255,255,255,0.08)",
+            boxShadow: `0 14px 44px rgba(0,0,0,0.78), 0 0 24px ${accent}22`,
+          }}
+        >
+          {/* accent hairline glow across the top */}
+          <div className="absolute inset-x-8 top-0 h-px" style={{ background: `linear-gradient(90deg, transparent, ${accent}99, transparent)` }} />
 
-        <div className="bg-[#090b10]/95 backdrop-blur-2xl border-t border-white/10 px-4 py-3 flex items-center gap-4 shadow-2xl">
-          {/* Art + Info */}
-          <div className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer group" onClick={() => setFullOpen(true)}>
-            <div className="relative w-12 h-12 rounded-xl overflow-hidden shrink-0 shadow-lg border border-white/10">
-              <img src={getProxyUrl(art)} alt={currentSong.title} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
-              {state.isPlaying && <div className="absolute inset-0 rounded-xl border border-cyan-400/60 animate-pulse" />}
+          {/* Art with circular progress ring */}
+          <div className="relative w-[54px] h-[54px] shrink-0 cursor-pointer" onClick={() => setFullOpen(true)}>
+            <svg viewBox="0 0 60 60" className="absolute -inset-[3px] w-[60px] h-[60px] -rotate-90">
+              <circle cx="30" cy="30" r="28" fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth="3" />
+              <circle
+                cx="30" cy="30" r="28" fill="none"
+                stroke={accent} strokeWidth="3" strokeLinecap="round"
+                strokeDasharray={175.93}
+                strokeDashoffset={175.93 * (1 - pct / 100)}
+                style={{ filter: `drop-shadow(0 0 4px ${accent})`, transition: "stroke-dashoffset 0.4s linear" }}
+              />
+            </svg>
+            <div className="w-full h-full rounded-full overflow-hidden border border-white/10 shadow-lg">
+              <img src={proxyArt} alt={currentSong.title} className="w-full h-full object-cover" />
             </div>
-            <div className="min-w-0">
-              <p className="text-sm font-bold truncate text-white group-hover:text-cyan-300 transition-colors">
-                {state.isBuffering && state.currentTime === 0 ? "جاري التجهيز..." : currentSong.title}
-              </p>
-              <p className="text-xs text-neutral-400 truncate">
-                {state.isBuffering && state.currentTime === 0 ? "يتم جلب أفضل جودة" : (currentSong.artist || "فنان")}
-              </p>
+            {state.isPlaying && !state.isBuffering && (
+              <motion.div
+                className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2"
+                style={{ background: accent, borderColor: "#090b10" }}
+                animate={{ scale: [1, 1.25, 1] }}
+                transition={{ duration: 1.4, repeat: Infinity }}
+              />
+            )}
+          </div>
+
+          {/* Info */}
+          <div className="flex-1 min-w-0 cursor-pointer group" onClick={() => setFullOpen(true)}>
+            <p className="text-[13px] font-bold truncate text-white group-hover:text-cyan-300 transition-colors">
+              {state.isBuffering && state.currentTime === 0 ? "جاري التجهيز..." : currentSong.title}
+            </p>
+            <div className="flex items-center gap-1.5 mt-0.5">
+              {state.isBuffering && state.currentTime === 0 ? (
+                <p className="text-[11px] text-neutral-400 truncate">يتم جلب أفضل جودة</p>
+              ) : (
+                <>
+                  <p className="text-[11px] text-neutral-400 truncate">{currentSong.artist || "فنان"}</p>
+                  {state.isHighQuality && (
+                    <span className="shrink-0 text-[8px] font-black text-cyan-300 bg-cyan-400/10 border border-cyan-400/30 rounded-full px-1.5 py-px">HQ</span>
+                  )}
+                </>
+              )}
             </div>
-            <Maximize2 className="w-4 h-4 text-neutral-500 group-hover:text-cyan-400 transition-colors shrink-0 ml-1" />
           </div>
 
           {/* Controls */}
-          <div className="flex items-center gap-3 shrink-0">
-            <button onClick={() => setShuffle(!state.shuffle)} className={`hidden md:block transition-colors ${state.shuffle ? "text-cyan-400" : "text-neutral-500 hover:text-white"}`}>
-              <Shuffle className="w-4 h-4" />
-            </button>
-            <button onClick={prev} className="text-neutral-300 hover:text-white transition-colors active:scale-90">
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button onClick={prev} className="text-neutral-300 hover:text-white transition-colors active:scale-90 p-1.5">
               <SkipBack className="w-5 h-5 fill-current" />
             </button>
-            <button onClick={togglePlay} className="w-10 h-10 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 active:scale-95 transition-transform shadow-lg shadow-white/20">
+            <button
+              onClick={togglePlay}
+              className="w-11 h-11 rounded-full flex items-center justify-center text-black active:scale-95 transition-transform"
+              style={{ background: `linear-gradient(135deg, #ffffff 30%, ${accent})`, boxShadow: `0 4px 18px ${accent}55, 0 2px 8px rgba(0,0,0,0.6)` }}
+            >
               {state.isBuffering ? (
-                <div className="w-5 h-5 border-2 border-neutral-300 border-t-black rounded-full animate-spin" />
+                <div className="w-5 h-5 border-2 border-neutral-400 border-t-black rounded-full animate-spin" />
               ) : state.isPlaying ? (
-                <Pause className="w-4 h-4 fill-current" />
+                <Pause className="w-5 h-5 fill-current" />
               ) : (
-                <Play className="w-4 h-4 fill-current ml-0.5" />
+                <Play className="w-5 h-5 fill-current ml-0.5" />
               )}
             </button>
-            <button onClick={next} className="text-neutral-300 hover:text-white transition-colors active:scale-90">
+            <button onClick={next} className="text-neutral-300 hover:text-white transition-colors active:scale-90 p-1.5">
               <SkipForward className="w-5 h-5 fill-current" />
-            </button>
-            <button onClick={cycleRepeat} className={`hidden md:block relative transition-colors ${state.repeat !== "off" ? "text-cyan-400" : "text-neutral-500 hover:text-white"}`}>
-              <Repeat className="w-4 h-4" />
-              {state.repeat === "one" && <span className="absolute -top-1 -right-1 text-[7px] font-black">1</span>}
             </button>
           </div>
 
           {/* Right side */}
           <div className="flex items-center gap-2 shrink-0">
-            <button onClick={toggleLike}>
-              <Heart className={`w-5 h-5 transition-colors ${isLiked ? "text-pink-500 fill-current" : "text-neutral-500 hover:text-white"}`} />
+            <button onClick={toggleLike} className="p-1.5 active:scale-90 transition-transform">
+              <Heart className={`w-5 h-5 transition-colors ${isLiked ? "text-pink-500 fill-current drop-shadow-[0_0_8px_rgba(244,114,182,0.6)]" : "text-neutral-500 hover:text-white"}`} />
             </button>
             <button onClick={handleDownload} className="text-neutral-500 hover:text-cyan-400 transition-colors hidden md:block">
               <DownloadCloud className="w-4 h-4" />
@@ -937,6 +1004,20 @@ export function PlayerBar() {
                 onChange={e => setVolume(parseFloat(e.target.value))}
                 className="w-20 accent-cyan-400 h-1 cursor-pointer" />
             </div>
+          </div>
+
+          {/* Scrub line at the bottom edge (premium-gated like before) */}
+          <div className="absolute bottom-0 inset-x-4 h-[3px]" dir="ltr">
+            <SeekBar
+              progress={state.currentTime}
+              duration={state.duration}
+              onSeek={seekTo}
+              height="h-full"
+              rtl={false}
+              accent={accent}
+              isPremium={isPremium}
+              onPremiumClick={() => { setPremiumFeatureName("تقديم وتأخير الأغنية"); setIsPremiumModalOpen(true); }}
+            />
           </div>
         </div>
       </footer>
