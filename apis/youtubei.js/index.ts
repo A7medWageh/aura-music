@@ -634,7 +634,7 @@ export async function getArtistDetailsYoutube(artistId: string) {
   try {
     const extraPromises = [...albumPromises.map(p => ({ p, type: 'albums' })), ...songPromises.map(p => ({ p, type: 'songs' }))];
     
-    for (const item of extraPromises) {
+    const runExtra = async (item: any) => {
       try {
         const payload = (item.p as any)?.payload || (item.p as any)?.data;
         const browseId = payload?.browseId;
@@ -656,7 +656,7 @@ export async function getArtistDetailsYoutube(artistId: string) {
                   views: m.view_count?.toString() || "",
                 });
               });
-              continue;
+              return;
             }
           } catch (plErr) {
             // fallback to actions.execute below
@@ -723,7 +723,8 @@ export async function getArtistDetailsYoutube(artistId: string) {
       } catch (e) {
         console.warn(`[Artist] Failed to fetch extra ${item.type}`, e);
       }
-    }
+    };
+    await Promise.allSettled(extraPromises.map(runExtra));
   } catch (err) {
     console.warn("[Artist] Discography expansion failed:", err);
   }
