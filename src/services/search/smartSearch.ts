@@ -209,7 +209,7 @@ export async function smartSearch(searchTerm: string) {
       artistName: a.artistName,
       thumbnailUrl: a.thumbnailUrl ?? null,
     })),
-    albums: ytAlbumsAll.slice(0, 100).map((al: any) => ({
+    albums: ytAlbumsAll.slice(0, 200).map((al: any) => ({
       albumId: al.albumId,
       title: al.title,
       artist: al.artist ?? al.artistName ?? "فنان غير معروف",

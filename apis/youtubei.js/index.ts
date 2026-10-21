@@ -234,10 +234,10 @@ export async function searchYouTubeInnertube(query: string) {
   const norm = (s: string) => (s || "").replace(/\s+/g, " ").trim().toLowerCase();
   const an = norm(topArtist?.artistName?.replace(/\s*-\s*Topic\s*$/i, ""));
   const qn = norm(query);
-  if (albumMap.size < 100 && topArtist?.artistId && an && (qn.includes(an) || an.includes(qn))) {
+  if (albumMap.size < 200 && topArtist?.artistId && an && (qn.includes(an) || an.includes(qn))) {
     const disc: any = await withTimeout(
       getArtistDetailsYoutube(topArtist.artistId).catch(() => null),
-      9000,
+      25000,
       null
     );
     if (disc) {
@@ -257,7 +257,7 @@ export async function searchYouTubeInnertube(query: string) {
   }
 
   const songs = Array.from(songMap.values()).filter((s: any) => !isJunkResult(s.title, s.artist)).slice(0, 30);
-  const albums = Array.from(albumMap.values()).slice(0, 100);
+  const albums = Array.from(albumMap.values()).slice(0, 200);
 
   const result = { query, songs, albums, artists };
   if (songs.length === 0 && albums.length === 0 && artists.length === 0) {
@@ -361,6 +361,21 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Pro
   const result = await Promise.race([promise, timeout]);
   clearTimeout(timer as any);
   return result;
+}
+
+function deepFindKey(obj: any, key: string, depth = 0): any {
+  if (!obj || typeof obj !== "object" || depth > 12) return null;
+  if (!Array.isArray(obj) && Object.prototype.hasOwnProperty.call(obj, key)) return obj[key];
+  for (const v of Object.values(obj)) {
+    const found = deepFindKey(v, key, depth + 1);
+    if (found) return found;
+  }
+  return null;
+}
+
+function firstContinuationToken(obj: any): string | null {
+  const cir = deepFindKey(obj, "continuationItemRenderer");
+  return cir?.continuationEndpoint?.continuationCommand?.token ?? null;
 }
 
 // ── Piped API instances (better than Invidious for audio) ────────────────────
@@ -665,17 +680,16 @@ export async function getArtistDetailsYoutube(artistId: string) {
 
         const action = (item.p as any)?.action || 'browse';
         const res: any = await (innertube as any).actions.execute(action, payload);
-        
-        let contents: any[] = [];
-        const findItems = (obj: any): any[] => {
-          if (!obj || typeof obj !== 'object') return [];
+
+        const findItems = (obj: any, depth = 0): any[] => {
+          if (!obj || typeof obj !== 'object' || depth > 10) return [];
           if (Array.isArray(obj)) {
             let items: any[] = [];
             for (const x of obj) {
-              if (x?.musicResponsiveListItemRenderer || x?.gridVideoRenderer || x?.gridPlaylistRenderer || x?.playlistRenderer) {
+              if (x?.musicResponsiveListItemRenderer || x?.musicTwoRowItemRenderer || x?.gridVideoRenderer || x?.gridPlaylistRenderer || x?.playlistRenderer) {
                 items.push(x);
               } else {
-                items = items.concat(findItems(x));
+                items = items.concat(findItems(x, depth + 1));
               }
             }
             return items;
@@ -685,28 +699,61 @@ export async function getArtistDetailsYoutube(artistId: string) {
             if (key === 'contents' || key === 'items' || key === 'musicShelfRenderer' || key === 'gridRenderer') {
               const val = obj[key]?.contents || obj[key]?.items || obj[key];
               if (Array.isArray(val)) results = results.concat(val);
-              else results = results.concat(findItems(val));
+              else results = results.concat(findItems(val, depth + 1));
             } else {
-              results = results.concat(findItems(obj[key]));
+              results = results.concat(findItems(obj[key], depth + 1));
             }
           }
           return results;
         };
 
-        contents = findItems(res.data);
+        // "Show all" discography pages are paginated — follow continuation
+        // tokens so prolific artists return ALL albums, not just page 1.
+        let contents: any[] = findItems(res.data);
         if (!contents.length) contents = findItems(res.continuationContents);
-        
+        if (item.type === 'albums') {
+          let nextToken = firstContinuationToken(res.data ?? res);
+          for (let page = 0; page < 8 && nextToken; page++) {
+            const cont: any = await withTimeout(
+              (innertube as any).actions.execute('browse', { continuation: nextToken }).catch(() => null),
+              4000,
+              null
+            );
+            if (!cont?.data) break;
+            const more = findItems(cont.data);
+            if (!more.length) break;
+            contents = contents.concat(more);
+            const t = firstContinuationToken(cont.data);
+            if (!t || t === nextToken) break;
+            nextToken = t;
+          }
+        }
+
         contents.forEach((v: any) => {
-          const m = v.musicResponsiveListItemRenderer || v.gridVideoRenderer || v.gridPlaylistRenderer || v.playlistRenderer || v;
+          const m = v.musicResponsiveListItemRenderer || v.musicTwoRowItemRenderer || v.gridVideoRenderer || v.gridPlaylistRenderer || v.playlistRenderer || v;
           if (item.type === 'albums') {
-            const id = m.id ?? m.videoId ?? m.browseId ?? m.playlistId ?? (m.endpoint?.payload?.browseId || m.endpoint?.payload?.playlistId);
+            const id = m.id ?? m.videoId ?? m.browseId ?? m.playlistId
+              ?? m.endpoint?.payload?.browseId ?? m.endpoint?.payload?.playlistId
+              ?? m.navigationEndpoint?.payload?.browseId ?? m.navigationEndpoint?.payload?.playlistId;
             if (!id || processedAlbumIds.has(id)) return;
+            const title = sanitizeTitle(
+              m.title?.runs?.map((r: any) => r.text).join("") ||
+              m.title?.simpleText ||
+              m.title?.toString?.() ||
+              m.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.[0]?.text ||
+              ""
+            );
+            if (!title || (typeof id === 'string' && (id.startsWith('UC') || id.startsWith('FEmusic')))) return;
             processedAlbumIds.add(id);
+            const textBlob = JSON.stringify([m.subtitle, m.description, m.contextLine, m.flexColumns?.[1]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.[0]?.text]);
+            const yearMatch = textBlob.match(/\b(19|20)\d{2}\b/);
             oldAlbums.push({
               albumId: id,
-              title: sanitizeTitle(m.title?.toString() || m.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.[0]?.text || ""),
-              thumbnailUrl: getHighResThumbnail(m.thumbnails || m.thumbnail?.thumbnails || []),
-              year: 0, artist: artistName, songCount: 0
+              title,
+              thumbnailUrl: getHighResThumbnail(m.thumbnail?.contents || m.thumbnails || m.thumbnail?.thumbnails || []),
+              year: yearMatch ? parseInt(yearMatch[0]) : 0,
+              artist: artistName,
+              songCount: 0
             });
           } else {
              const vid = m.id ?? m.videoId ?? m.endpoint?.payload?.videoId;
@@ -754,7 +801,7 @@ export async function getArtistDetailsYoutube(artistId: string) {
     isVerified: true,
     songs: uniqueSongs.slice(0, 100),
     newReleases: newReleases.sort((a, b) => b.year - a.year).slice(0, 20),
-    oldAlbums: oldAlbums.sort((a, b) => b.year - a.year).slice(0, 150),
+    oldAlbums: oldAlbums.sort((a, b) => b.year - a.year).slice(0, 300),
   };
 }
 
