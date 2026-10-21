@@ -157,41 +157,6 @@ function tokenizeSimple(s: string): string[] {
   return String(s || "").toLowerCase().split(/[\s|,_\-–—]+/).filter(Boolean);
 }
 
-// Verify low-confidence search hits against the real watch page: drop anything
-// longer than a song (podcasts, shows) or outside the Music category.
-const viableCache = new Map<string, { ok: boolean; expiresAt: number }>();
-export async function pruneDeepSongCandidates(items: any[]): Promise<any[]> {
-  const innertube = await getYTWeb().catch(() => null);
-  if (!innertube) return items;
-  const checks = await Promise.all(
-    items.map(async (it: any) => {
-      const vid = it.youtubeVideoId ?? it.songId ?? it.videoId;
-      const known = vid && viableCache.get(vid);
-      if (known && known.expiresAt > Date.now()) return known.ok ? it : null;
-      try {
-        const info: any = await withTimeout(
-          innertube.getBasicInfo(vid, { client: "WEB" }).catch(() => null),
-          6000,
-          null
-        );
-        if (!info?.videoDetails) return null; // fail closed: unverified = dropped
-        const dur = parseInt(info?.videoDetails?.duration ?? "0");
-        const cat = String(
-          info?.microformat?.playerMicroformatRenderer?.category ??
-          info?.videoDetails?.category ?? ""
-        );
-        let ok = dur >= 40 && dur <= 55 * 60;
-        if (cat && !/music|أغاني|موسيقي/i.test(cat)) ok = false;
-        if (vid) viableCache.set(vid, { ok, expiresAt: Date.now() + 24 * 3600e3 });
-        return ok ? it : null;
-      } catch {
-        return null;
-      }
-    })
-  );
-  return checks.filter(Boolean);
-}
-
 // ── getMusicCharts ────────────────────────────────────────────────────────────
 export async function getMusicCharts() {
   const innertube = await getYTWeb();

@@ -8,7 +8,7 @@
  * Results are merged, de-duplicated, and sorted by relevance.
  * MusicApi songs appear first (they are the "official" catalog).
  */
-import { searchYouTube, resolveStream, isJunkResult, pruneDeepSongCandidates } from "@apis/youtubei.js";
+import { searchYouTube, resolveStream, isJunkResult } from "@apis/youtubei.js";
 import { getAllSongs, getAllArtists } from "@/services/music/musicApiClient";
 import { enrichSongs } from "@/services/music/songEnricher";
 
@@ -51,7 +51,7 @@ function scoreMatch(query: string, title: string, artist: string): number {
   if (a.includes(q)) return 50;
   const words = tokenize(q);
   const hay = [...tokenize(t), ...tokenize(a)];
-  const matched = words.filter((w) => hay.some((h) => tokenMatch(w, h))).length;
+  const matched = words.reduce((s, w) => s + Math.max(0, ...hay.map((h: string) => tokenScore(w, h))), 0);
   return Math.round((matched / words.length) * 40);
 }
 
@@ -84,16 +84,6 @@ function levenshtein(a: string, b: string): number {
     prev = cur;
   }
   return prev[n];
-}
-
-// Fuzzy word equivalence: exact / containment (≥3 letters) / one-typo distance.
-// Makes "ابيوسف" match "يوسف" and "خنزور" match "خنزول".
-function tokenMatch(a: string, b: string): boolean {
-  if (a === b) return true;
-  const [long, short] = a.length >= b.length ? [a, b] : [b, a];
-  if (short.length >= 3 && long.includes(short)) return true;
-  if (Math.min(a.length, b.length) >= 4 && Math.abs(a.length - b.length) <= 1 && levenshtein(a, b) <= 1) return true;
-  return false;
 }
 
 // Weighted match strength: containment (يوسف⊂ابيوسف) and typo-distance count
@@ -178,7 +168,7 @@ export async function smartSearch(searchTerm: string) {
       song,
       score: scoreMatch(q, song.title, song.artist),
     }))
-    .filter((r) => r.score > 0)
+    .filter((r) => r.score >= 28) // ≥70% weighted relevance, not just one shared word
     .sort((a, b) => b.score - a.score)
     .slice(0, 10)
     .map((r) => r.song);
@@ -196,18 +186,11 @@ export async function smartSearch(searchTerm: string) {
   const partial = scoredNonJunk.filter((r) => r.cov >= 0.45).sort((a, b) => b.cov - a.cov).slice(0, 8);
   // Last tier keeps YouTube's own ranking order — YouTube matches transliterated
   // titles (e.g. "Khanza2or" for خنزؤور) that token coverage cannot see. Only for
-  // multi-word queries, and every candidate is verified against the real watch
-  // page (duration + Music category) so podcasts/shows can never leak in.
+  // multi-word queries; junk/long-video/no-artist uploads are already gone.
   let ytSongsSel: any[];
   if (passing.length > 0) ytSongsSel = passing;
   else if (partial.length > 0) ytSongsSel = partial;
-  else if (tokenize(q).length >= 2) {
-    const candidates = scoredNonJunk.slice(0, 5).map((r) => r.item);
-    const viable = await pruneDeepSongCandidates(candidates);
-    ytSongsSel = viable.map((item: any) => ({ item, cov: tokenCoverage(q, item.title ?? "", item.artist ?? "") }));
-  } else {
-    ytSongsSel = [];
-  }
+  else ytSongsSel = multiWord ? scoredNonJunk.slice(0, 5) : [];
 
   const ytSongs = ytSongsSel.map(({ item }: any) => ({
       songId: item.songId ?? item.videoId,
