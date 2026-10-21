@@ -238,63 +238,86 @@ export async function searchYouTubeInnertube(query: string) {
   return result;
 }
 
-export async function searchYouTube(query: string) {
+// ── Secondary sources: yt-search, then plain (non-music) Innertube search ──
+async function searchYouTubeFallbacks(query: string): Promise<any | null> {
   try {
-    return await searchYouTubeInnertube(query);
-  } catch (e) {
-    console.warn(`[Search] Innertube multi-search failed for "${query}", trying yt-search fallback...`);
+    const yts = require("yt-search");
+    const r = await yts(query);
+
+    const songs = (r.videos || []).filter(looksLikeSongVideo).slice(0, 20).map((v: any) => ({
+      songId: v.videoId,
+      youtubeVideoId: v.videoId,
+      title: sanitizeTitle(v.title),
+      artist: v.author?.name || "فنان غير معروف",
+      thumbnailUrl: v.thumbnail || ""
+    }));
+
+    const albums = (r.playlists || r.lists || []).slice(0, 8).map((p: any) => ({
+      type: "album",
+      albumId: p.listId,
+      title: sanitizeTitle(p.title),
+      artist: p.author?.name || "فنان غير معروف",
+      thumbnailUrl: p.thumbnail || ""
+    }));
+
+    const accounts = (r.accounts || r.channels || []).slice(0, 5).map((s: any) => ({
+      type: "artist",
+      artistId: s.url ? s.url.split("/").pop() : s.name,
+      artistName: s.name || "فنان غير معروف",
+      thumbnailUrl: s.thumbnail || s.image || ""
+    }));
+
+    if (songs.length === 0 && albums.length === 0 && accounts.length === 0) return null;
+    const result = { query, songs, albums, artists: accounts, source: "yt-search" };
+    searchCache.set(query.trim().toLowerCase(), { data: result, expiresAt: Date.now() + SEARCH_TTL });
+    return result;
+  } catch (err) {
+    console.warn("[Search] yt-search fallback failed, trying basic Innertube search:", err);
     try {
-      const yts = require("yt-search");
-      const r = await yts(query);
-      
-      const songs = (r.videos || []).filter(looksLikeSongVideo).slice(0, 20).map((v: any) => ({
-        songId: v.videoId,
-        youtubeVideoId: v.videoId,
-        title: sanitizeTitle(v.title),
-        artist: v.author?.name || "فنان غير معروف",
-        thumbnailUrl: v.thumbnail || ""
-      }));
+      const yt = await getYTWeb();
+      const res = await yt.search(query, { type: "video" });
+      const raw = (res as any)?.videos ?? (res as any)?.contents ?? [];
+      const songs = (Array.isArray(raw) ? raw : []).map((v: any) => ({
+        type: "song",
+        songId: v.id ?? v.videoId,
+        title: sanitizeTitle(v.title?.toString() || ""),
+        artist: v.author?.name ?? v.channel?.name ?? "YouTube",
+        youtubeVideoId: v.id ?? v.videoId,
+        thumbnailUrl: getHighResThumbnail(v.thumbnails),
+        duration: v.duration,
+      })).filter((s: any) => s.songId && s.title && looksLikeSongVideo(s)).slice(0, 20);
 
-      const albums = (r.playlists || r.lists || []).slice(0, 8).map((p: any) => ({
-        type: "album",
-        albumId: p.listId,
-        title: sanitizeTitle(p.title),
-        artist: p.author?.name || "فنان غير معروف",
-        thumbnailUrl: p.thumbnail || ""
-      }));
-
-      const accounts = (r.accounts || r.channels || []).slice(0, 5).map((s: any) => ({
-        type: "artist",
-        artistId: s.url ? s.url.split("/").pop() : s.name,
-        artistName: s.name || "فنان غير معروف",
-        thumbnailUrl: s.thumbnail || s.image || ""
-      }));
-
-      const result = { query, songs, albums, artists: accounts, source: "yt-search" };
-      searchCache.set(query.trim().toLowerCase(), { data: result, expiresAt: Date.now() + SEARCH_TTL });
-      return result;
-    } catch (err) {
-      console.warn("[Search] yt-search fallback failed, trying basic Innertube search:", err);
-      try {
-        const yt = await getYTWeb();
-        const res = await yt.search(query, { type: "video" });
-        const raw = (res as any)?.videos ?? (res as any)?.contents ?? [];
-        const songs = (Array.isArray(raw) ? raw : []).map((v: any) => ({
-          type: "song",
-          songId: v.id ?? v.videoId,
-          title: sanitizeTitle(v.title?.toString() || ""),
-          artist: v.author?.name ?? v.channel?.name ?? "YouTube",
-          youtubeVideoId: v.id ?? v.videoId,
-          thumbnailUrl: getHighResThumbnail(v.thumbnails),
-          duration: v.duration,
-        })).filter((s: any) => s.songId && s.title && looksLikeSongVideo(s)).slice(0, 20);
-
-        return { query, songs, albums: [], artists: [], source: "basic-innertube" };
-      } catch (innertubeErr) {
-        return { query, songs: [], albums: [], artists: [], source: "error" };
-      }
+      return { query, songs, albums: [], artists: [], source: "basic-innertube" };
+    } catch (innertubeErr) {
+      return null;
     }
   }
+}
+
+export async function searchYouTube(query: string) {
+  let primary: any = null;
+  try {
+    primary = await searchYouTubeInnertube(query);
+  } catch (e) {
+    console.warn(`[Search] Innertube multi-search failed for "${query}", trying fallbacks...`);
+  }
+
+  if (primary && primary.songs.length > 0) return primary;
+
+  const fb = await searchYouTubeFallbacks(query);
+  if (!fb) {
+    return primary ?? { query, songs: [], albums: [], artists: [], source: "error" };
+  }
+  if (!primary) return fb;
+
+  // Merge: music-search albums/artists win, fallback supplies the songs
+  return {
+    query,
+    songs: fb.songs,
+    albums: primary.albums?.length ? primary.albums : fb.albums,
+    artists: primary.artists?.length ? primary.artists : fb.artists,
+    source: fb.source,
+  };
 }
 
 // ── resolveStream ─────────────────────────────────────────────────────────────
