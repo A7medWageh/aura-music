@@ -8,7 +8,7 @@
  * Results are merged, de-duplicated, and sorted by relevance.
  * MusicApi songs appear first (they are the "official" catalog).
  */
-import { searchYouTube, resolveStream, isJunkResult } from "@apis/youtubei.js";
+import { searchYouTube, resolveStream, isJunkResult, pruneDeepSongCandidates } from "@apis/youtubei.js";
 import { getAllSongs, getAllArtists } from "@/services/music/musicApiClient";
 import { enrichSongs } from "@/services/music/songEnricher";
 
@@ -193,10 +193,19 @@ export async function smartSearch(searchTerm: string) {
   const passing = scoredNonJunk.filter((r) => r.cov >= 0.5);
   const partial = scoredNonJunk.filter((r) => r.cov >= 0.45).sort((a, b) => b.cov - a.cov).slice(0, 8);
   // Last tier keeps YouTube's own ranking order — YouTube matches transliterated
-  // titles (e.g. "Khanza2or" for خنزؤور) that token coverage cannot see. Nonsense
-  // queries stay empty because YouTube itself returns nothing for them.
-  const deep = scoredNonJunk.slice(0, 5);
-  const ytSongsSel = passing.length > 0 ? passing : partial.length > 0 ? partial : deep;
+  // titles (e.g. "Khanza2or" for خنزؤور) that token coverage cannot see. Only for
+  // multi-word queries, and every candidate is verified against the real watch
+  // page (duration + Music category) so podcasts/shows can never leak in.
+  let ytSongsSel: any[];
+  if (passing.length > 0) ytSongsSel = passing;
+  else if (partial.length > 0) ytSongsSel = partial;
+  else if (tokenize(q).length >= 2) {
+    const candidates = scoredNonJunk.slice(0, 5).map((r) => r.item);
+    const viable = await pruneDeepSongCandidates(candidates);
+    ytSongsSel = viable.map((item: any) => ({ item, cov: tokenCoverage(q, item.title ?? "", item.artist ?? "") }));
+  } else {
+    ytSongsSel = [];
+  }
 
   const ytSongs = ytSongsSel.map(({ item }: any) => ({
       songId: item.songId ?? item.videoId,

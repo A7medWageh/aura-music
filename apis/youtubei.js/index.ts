@@ -153,6 +153,45 @@ function looksLikeSongVideo(v: any): boolean {
   return !isJunkResult(v.title, v.author?.name ?? v.channel?.name);
 }
 
+function tokenizeSimple(s: string): string[] {
+  return String(s || "").toLowerCase().split(/[\s|,_\-–—]+/).filter(Boolean);
+}
+
+// Verify low-confidence search hits against the real watch page: drop anything
+// longer than a song (podcasts, shows) or outside the Music category.
+const viableCache = new Map<string, { ok: boolean; expiresAt: number }>();
+export async function pruneDeepSongCandidates(items: any[]): Promise<any[]> {
+  const innertube = await getYTWeb().catch(() => null);
+  if (!innertube) return items;
+  const checks = await Promise.all(
+    items.map(async (it: any) => {
+      const vid = it.youtubeVideoId ?? it.songId ?? it.videoId;
+      const known = vid && viableCache.get(vid);
+      if (known && known.expiresAt > Date.now()) return known.ok ? it : null;
+      try {
+        const info: any = await withTimeout(
+          innertube.getBasicInfo(vid, { client: "WEB" }).catch(() => null),
+          6000,
+          null
+        );
+        const dur = parseInt(info?.videoDetails?.duration ?? "0");
+        const cat = String(
+          info?.microformat?.playerMicroformatRenderer?.category ??
+          info?.videoDetails?.category ?? ""
+        );
+        let ok = true;
+        if (dur && (dur < 40 || dur > 55 * 60)) ok = false;
+        if (cat && !/music|أغاني|موسيقي/i.test(cat)) ok = false;
+        if (vid) viableCache.set(vid, { ok, expiresAt: Date.now() + 24 * 3600e3 });
+        return ok ? it : null;
+      } catch {
+        return it; // fail open when YouTube is unreachable
+      }
+    })
+  );
+  return checks.filter(Boolean);
+}
+
 // ── getMusicCharts ────────────────────────────────────────────────────────────
 export async function getMusicCharts() {
   const innertube = await getYTWeb();
@@ -231,11 +270,15 @@ export async function searchYouTubeInnertube(query: string) {
 
   // Prolific artists list far more albums on their discography page than in
   // search — pull it in when the query is essentially the artist's name.
+  // Name comparison fails across scripts (محمد منير vs "Mohamed Mounir"), so a
+  // short query also merges whatever YouTube's own artist search ranked first.
   const topArtist = artists[0];
   const norm = (s: string) => (s || "").replace(/\s+/g, " ").trim().toLowerCase();
   const an = norm(topArtist?.artistName?.replace(/\s*-\s*Topic\s*$/i, ""));
   const qn = norm(query);
-  if (albumMap.size < 200 && topArtist?.artistId && an && (qn.includes(an) || an.includes(qn))) {
+  const nameMatch = an && (qn.includes(an) || an.includes(qn));
+  const looksLikeArtistQuery = tokenizeSimple(query).length <= 3 && !!topArtist?.artistId;
+  if (albumMap.size < 200 && (nameMatch || looksLikeArtistQuery)) {
     const disc: any = await withTimeout(
       getArtistDetailsYoutube(topArtist.artistId).catch(() => null),
       25000,
