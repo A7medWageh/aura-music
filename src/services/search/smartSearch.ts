@@ -8,7 +8,7 @@
  * Results are merged, de-duplicated, and sorted by relevance.
  * MusicApi songs appear first (they are the "official" catalog).
  */
-import { searchYouTube, resolveStream } from "@apis/youtubei.js";
+import { searchYouTube, resolveStream, isJunkResult } from "@apis/youtubei.js";
 import { getAllSongs, getAllArtists } from "@/services/music/musicApiClient";
 import { enrichSongs } from "@/services/music/songEnricher";
 
@@ -42,17 +42,54 @@ async function getLocalCatalog() {
 }
 
 function scoreMatch(query: string, title: string, artist: string): number {
-  const q = query.toLowerCase();
-  const t = title.toLowerCase();
-  const a = artist.toLowerCase();
+  const q = normArabic(query.toLowerCase());
+  const t = normArabic(title.toLowerCase());
+  const a = normArabic(artist.toLowerCase());
   if (t === q) return 100;
   if (t.startsWith(q)) return 90;
   if (t.includes(q)) return 70;
   if (a.includes(q)) return 50;
-  const words = q.split(/\s+/);
+  const words = tokenize(q);
   const matched = words.filter((w) => t.includes(w) || a.includes(w)).length;
   return Math.round((matched / words.length) * 40);
 }
+
+// Normalize Arabic letters so "أ/إ/آ" match "ا", "ة" matches "ه", "ى" matches "ي".
+function normArabic(s: string): string {
+  return s
+    .replace(/[أإآٱ]/g, "ا")
+    .replace(/ى/g, "ي")
+    .replace(/ة/g, "ه")
+    .replace(/[ً-ْ]/g, "") // harakat
+    .replace(/[_\-.]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// Tokenize into meaningful search words, dropping stop-words that appear in
+// nearly every title (feat/official/audio/video...) so relevance isn't faked.
+const STOP_WORDS = new Set([
+  "feat", "ft", "official", "offical", "audio", "video", "lyric", "lyrics",
+  "mv", "hd", "4k", "song", "clip", "with", "and", "the", "اغانى", "اغنية",
+  "الكليب", "كليب", "رسمي", "رسماي", "اغني",
+].map(w => normArabic(w)));
+
+function tokenize(s: string): string[] {
+  return normArabic(s)
+    .split(" ")
+    .filter((w) => w.length > 1 && !STOP_WORDS.has(w));
+}
+
+// How many of the query tokens appear in title or artist (0..1).
+function tokenCoverage(query: string, title: string, artist: string): number {
+  const qTokens = tokenize(query);
+  if (qTokens.length === 0) return 1;
+  const t = normArabic(title.toLowerCase());
+  const a = normArabic(artist.toLowerCase());
+  const hit = qTokens.filter((w) => t.includes(w) || a.includes(w)).length;
+  return hit / qTokens.length;
+}
+
 
 export async function smartSearch(searchTerm: string) {
   const q = searchTerm.trim();
@@ -79,18 +116,24 @@ export async function smartSearch(searchTerm: string) {
     .slice(0, 10)
     .map((r) => r.song);
 
-  // Normalize YouTube results
-  const ytSongs = ytResults.songs.map((item: any) => ({
-    songId: item.songId ?? item.videoId,
-    title: item.title,
-    artist: item.artist ?? "فنان غير معروف",
-    artistId: `yt-${item.artist ?? "unknown"}`,
-    albumId: null,
-    albumTitle: null,
-    youtubeVideoId: item.youtubeVideoId ?? item.songId,
-    thumbnailUrl: item.thumbnailUrl ?? null,
-    source: "youtube",
-  }));
+  // Normalize YouTube results — strict relevance: must look like the searched
+  // song (≥50% of query tokens in title/artist) and pass the junk filter.
+  const ytSongs = ytResults.songs
+    .filter((item: any) =>
+      !isJunkResult(item.title, item.artist) &&
+      tokenCoverage(q, item.title ?? "", item.artist ?? "") >= 0.5
+    )
+    .map((item: any) => ({
+      songId: item.songId ?? item.videoId,
+      title: item.title,
+      artist: item.artist ?? "فنان غير معروف",
+      artistId: `yt-${item.artist ?? "unknown"}`,
+      albumId: null,
+      albumTitle: null,
+      youtubeVideoId: item.youtubeVideoId ?? item.songId,
+      thumbnailUrl: item.thumbnailUrl ?? null,
+      source: "youtube",
+    }));
 
   // Merge: local first (official catalog), then YouTube (deduped by title)
   const seenIds = new Set(localMatches.map((s: any) => s.youtubeVideoId));

@@ -129,6 +129,29 @@ function extractArtists(results: any, artistResults: any): any[] {
   return Array.from(map.values());
 }
 
+// ── Junk/noise filter — keeps kids content, vlogs & non-music videos out of results ──
+const JUNK_PATTERN = /(أ?غاني?\s*أ?طفال|كرتون|انمي|anime|kids|nursery|cocomelon|baby\s*(shark|bus|yin)?|طيور\s*الجنة|عصافير|كاريوكي|karaoke|بودكاست|podcast|vlog|فلوج|تحدي|challenge|بريك|مقاطع\s*قصيرة|shorts|جيم|قيمنق|gaming|playstation|فوفوزيلا|lyric[- ]?video|نص الأغنية)/i;
+
+export function isJunkResult(...texts: (string | undefined | null)[]): boolean {
+  return JUNK_PATTERN.test(texts.filter(Boolean).join(" "));
+}
+
+/** Parse "3:45" / "1:02:45" / 210 (seconds) into seconds; 0 when unknown. */
+function toSeconds(d: any): number {
+  if (typeof d === "number") return d;
+  const s = String(d ?? "").replace(/[^0-9:]/g, "");
+  if (!s) return 0;
+  const parts = s.split(":").map(Number);
+  return parts.length >= 3 ? parts[0] * 3600 + parts[1] * 60 + parts[2] : parts.length === 2 ? parts[0] * 60 + parts[1] : parts[0] || 0;
+}
+
+/** A "song-shaped" regular YouTube video: 40s–12min, no junk keywords. */
+function looksLikeSongVideo(v: any): boolean {
+  const dur = toSeconds(v.duration ?? v.durationString ?? v.lengthSeconds);
+  if (dur && (dur < 40 || dur > 12 * 60)) return false;
+  return !isJunkResult(v.title, v.author?.name ?? v.channel?.name);
+}
+
 // ── getMusicCharts ────────────────────────────────────────────────────────────
 export async function getMusicCharts() {
   const innertube = await getYTWeb();
@@ -185,36 +208,26 @@ export async function searchYouTubeInnertube(query: string) {
 
   const innertube = await getYTWeb();
 
-  const [generalResults, songResults, artistResults, ytResults] = await Promise.all([
+  const [generalResults, songResults, artistResults, albumResults] = await Promise.all([
     innertube.music.search(query).catch(() => null),
     innertube.music.search(query, { type: "song" }).catch(() => null),
     innertube.music.search(query, { type: "artist" }).catch(() => null),
-    innertube.search(query, { type: "video" }).catch(() => null),
+    innertube.music.search(query, { type: "album" }).catch(() => null),
   ]);
 
   const songMap = new Map<string, any>();
-  
-  // Helper to extract standard YT videos
-  const extractVideos = (res: any) => {
-    const raw = res?.videos ?? res?.contents ?? [];
-    return (Array.isArray(raw) ? raw : [])
-      .map((v: any) => ({
-        type: "song",
-        songId: v.id ?? v.videoId,
-        title: sanitizeTitle(v.title?.toString() || ""),
-        artist: v.author?.name ?? v.channel?.name ?? "YouTube",
-        youtubeVideoId: v.id ?? v.videoId,
-        thumbnailUrl: getHighResThumbnail(v.thumbnails),
-      }))
-      .filter((v: any) => v.songId && v.title);
-  };
 
-  [...extractSongs(generalResults), ...extractSongs(songResults ?? {}), ...extractVideos(ytResults)].forEach(
+  [...extractSongs(generalResults), ...extractSongs(songResults ?? {})].forEach(
     (s) => { if (s.songId && !songMap.has(s.songId)) songMap.set(s.songId, s); }
   );
 
-  const songs = Array.from(songMap.values()).slice(0, 30);
-  const albums = extractAlbums(generalResults).slice(0, 8);
+  const albumMap = new Map<string, any>();
+  [...extractAlbums(generalResults), ...extractAlbums(albumResults ?? {})].forEach(
+    (a) => { if (a.albumId && !albumMap.has(a.albumId)) albumMap.set(a.albumId, a); }
+  );
+
+  const songs = Array.from(songMap.values()).filter((s: any) => !isJunkResult(s.title, s.artist)).slice(0, 30);
+  const albums = Array.from(albumMap.values()).slice(0, 12);
   const artists = extractArtists(generalResults, artistResults).slice(0, 5);
 
   const result = { query, songs, albums, artists };
@@ -234,7 +247,7 @@ export async function searchYouTube(query: string) {
       const yts = require("yt-search");
       const r = await yts(query);
       
-      const songs = (r.videos || []).slice(0, 20).map((v: any) => ({
+      const songs = (r.videos || []).filter(looksLikeSongVideo).slice(0, 20).map((v: any) => ({
         songId: v.videoId,
         youtubeVideoId: v.videoId,
         title: sanitizeTitle(v.title),
@@ -266,14 +279,15 @@ export async function searchYouTube(query: string) {
         const yt = await getYTWeb();
         const res = await yt.search(query, { type: "video" });
         const raw = (res as any)?.videos ?? (res as any)?.contents ?? [];
-        const songs = (Array.isArray(raw) ? raw : []).slice(0, 20).map((v: any) => ({
+        const songs = (Array.isArray(raw) ? raw : []).map((v: any) => ({
           type: "song",
           songId: v.id ?? v.videoId,
           title: sanitizeTitle(v.title?.toString() || ""),
           artist: v.author?.name ?? v.channel?.name ?? "YouTube",
           youtubeVideoId: v.id ?? v.videoId,
           thumbnailUrl: getHighResThumbnail(v.thumbnails),
-        })).filter((s: any) => s.songId && s.title);
+          duration: v.duration,
+        })).filter((s: any) => s.songId && s.title && looksLikeSongVideo(s)).slice(0, 20);
 
         return { query, songs, albums: [], artists: [], source: "basic-innertube" };
       } catch (innertubeErr) {
