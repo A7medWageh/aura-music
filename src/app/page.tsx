@@ -162,8 +162,9 @@ export default function HomePage() {
     trending.forEach((s: any, i: number) => {
       const key = String(s.songId || `${s.title}-${s.artist}`);
       if (seen.has(key)) return;
-      seen.add(key);
       const id = window.setTimeout(() => {
+        if (seen.has(key)) return;
+        seen.add(key);
         const p = new URLSearchParams();
         if (s.youtubeVideoId) p.set("videoId", s.youtubeVideoId);
         if (s.title) p.set("title", s.title);
