@@ -27,6 +27,7 @@ type PlayerContextValue = {
   setIsAiMix: (value: boolean) => void;
   soundPreset: "crystal" | "bass" | "vocal" | "spatial" | "noise_cancel";
   setSoundPreset: (preset: "crystal" | "bass" | "vocal" | "spatial" | "noise_cancel") => void;
+  getAnalyser: () => AnalyserNode | null;
 };
 
 const PlayerContext = createContext<PlayerContextValue | null>(null);
@@ -270,6 +271,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const compressorRef = useRef<DynamicsCompressorNode | null>(null);
   const preGainRef = useRef<GainNode | null>(null);
   const postGainRef = useRef<GainNode | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
 
   const PRESET_CONFIGS = {
     crystal: {
@@ -437,6 +439,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       comp.connect(postGain);
       postGain.connect(ctx.destination);
 
+      // 5. Analyser tap (visualizer only — never in the output chain)
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.82;
+      analyserRef.current = analyser;
+      postGain.connect(analyser);
+
       // Apply initial audio parameters
       applyAudioParameters(ctx, state.isHighQuality, soundPreset);
     } catch (err) {
@@ -445,7 +454,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
-    if (state.isHighQuality && !audioCtxRef.current) {
+    // Init on play too (non-iOS) so the visualizer works even without HQ mode.
+    if ((state.isHighQuality || state.isPlaying) && !audioCtxRef.current) {
       initWebAudio();
     }
     const ctx = audioCtxRef.current;
@@ -455,7 +465,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       }
       applyAudioParameters(ctx, state.isHighQuality, soundPreset);
     }
-  }, [state.isHighQuality, soundPreset]);
+  }, [state.isHighQuality, state.isPlaying, soundPreset]);
 
   useEffect(() => {
     isPlayingRef.current = state.isPlaying;
@@ -842,6 +852,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     setIsAiMix,
     soundPreset,
     setSoundPreset,
+    getAnalyser: () => analyserRef.current,
     prewarm: (videoId: string) => {
       // Prewarming removed for direct download chunking proxy
     }

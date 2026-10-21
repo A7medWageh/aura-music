@@ -73,41 +73,203 @@ function useDominantColor(imageUrl: string | undefined) {
   return colors;
 }
 
-// ─── Compact Pulsing Waveform Visualizer ─────────────────────────────
-function WaveformVisualizer({ isPlaying, accent }: { isPlaying: boolean; accent: string }) {
-  const bars = Array.from({ length: 24 });
+// ─── Background Ambience Modes ───────────────────────────────────────
+type BgMode = "calm" | "medium" | "epic";
+const BG_MODES: { id: BgMode; label: string }[] = [
+  { id: "calm", label: "هادئة" },
+  { id: "medium", label: "متوسطة" },
+  { id: "epic", label: "خرافية" },
+];
+
+function hexToRgb(hex: string): [number, number, number] {
+  const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex);
+  return m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)] : [0, 229, 255];
+}
+
+// ─── Real Audio Analyser → energy (bass) per frame, no re-renders ────
+function useAnalyserEnergy(getAnalyser: () => AnalyserNode | null, isPlaying: boolean) {
+  const energyRef = useRef(0);
+  useEffect(() => {
+    if (!isPlaying) { energyRef.current = 0; return; }
+    let raf = 0;
+    const bins = new Uint8Array(128);
+    const tick = () => {
+      const an = getAnalyser();
+      if (an) {
+        an.getByteFrequencyData(bins as any);
+        let bass = 0;
+        for (let i = 0; i < 8; i++) bass += bins[i];
+        bass /= 8 * 255;
+        energyRef.current = energyRef.current * 0.65 + bass * 0.35;
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [getAnalyser, isPlaying]);
+  return energyRef;
+}
+
+// ─── Live spectrum visualizer (canvas, real audio data) ──────────────
+function LiveVisualizer({
+  getAnalyser, isPlaying, accent,
+}: {
+  getAnalyser: () => AnalyserNode | null; isPlaying: boolean; accent: string;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const accentRef = useRef(accent);
+  accentRef.current = accent;
+  const playingRef = useRef(isPlaying);
+  playingRef.current = isPlaying;
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const BARS = 42;
+    const levels = new Float32Array(BARS);
+    const bins = new Uint8Array(128);
+    let raf = 0;
+    let t = 0;
+
+    const draw = () => {
+      t += 0.05;
+      const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+      const w = Math.max(1, Math.round(canvas.clientWidth * dpr));
+      const h = Math.max(1, Math.round(canvas.clientHeight * dpr));
+      if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+      ctx.clearRect(0, 0, w, h);
+
+      const analyser = getAnalyser();
+      const [r, g, b] = hexToRgb(accentRef.current);
+      const bw = w / BARS;
+      const barW = bw * 0.62;
+
+      for (let i = 0; i < BARS; i++) {
+        let target: number;
+        if (analyser && playingRef.current) {
+          analyser.getByteFrequencyData(bins as any);
+          // low-frequency-weighted bin mapping
+          const idx = Math.min(127, Math.floor(Math.pow(i / BARS, 1.35) * 96));
+          target = bins[idx] / 255;
+        } else if (playingRef.current) {
+          target = 0.25 + 0.5 * Math.abs(Math.sin(t + i * 0.55)) * (0.6 + 0.4 * Math.sin(t * 0.3 + i));
+        } else {
+          target = 0.04;
+        }
+        levels[i] += (target - levels[i]) * (target > levels[i] ? 0.45 : 0.12);
+        const bh = Math.max(2 * dpr, levels[i] * h);
+        const grad = ctx.createLinearGradient(0, h, 0, h - bh);
+        grad.addColorStop(0, `rgba(${r},${g},${b},0.35)`);
+        grad.addColorStop(1, `rgba(${r},${g},${b},0.95)`);
+        ctx.fillStyle = grad;
+        const x = i * bw + (bw - barW) / 2;
+        const rad = Math.min(barW / 2, 3 * dpr);
+        ctx.beginPath();
+        ctx.roundRect(x, h - bh, barW, bh, [rad, rad, 0, 0]);
+        ctx.fill();
+      }
+      raf = requestAnimationFrame(draw);
+    };
+    raf = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(raf);
+  }, [getAnalyser]);
+
   return (
-    <div className="flex items-end justify-center gap-[3px] h-8 w-full px-4">
-      {bars.map((_, i) => {
-        const baseH = 4 + Math.sin(i * 0.7) * 8 + (i % 3) * 2;
-        return (
-          <motion.div
-            key={i}
-            className="rounded-full w-[3.5px] shrink-0"
-            style={{ background: accent, opacity: 0.65, height: "3px" }}
-            animate={
-              isPlaying
-                ? {
-                    height: [
-                      `${baseH}px`,
-                      `${Math.max(3, baseH + (Math.random() - 0.5) * 16)}px`,
-                      `${Math.max(3, baseH + (Math.random() - 0.5) * 12)}px`,
-                      `${baseH}px`,
-                    ],
-                    opacity: [0.5, 0.95, 0.7, 0.5],
-                  }
-                : { height: "3px", opacity: 0.25 }
-            }
-            transition={{
-              duration: 0.6 + Math.random() * 0.5,
-              repeat: Infinity,
-              ease: "easeInOut",
-              delay: i * 0.03,
-            }}
-          />
-        );
-      })}
+    <div className="h-8 w-full px-4">
+      <canvas ref={canvasRef} className="w-full h-full block" />
     </div>
+  );
+}
+
+// ─── Drifting bokeh particle layer tinted by accent ──────────────────
+function AuroraParticles({
+  accent, mode, isPlaying, energyRef,
+}: {
+  accent: string; mode: BgMode; isPlaying: boolean; energyRef: { current: number };
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const COUNTS = { calm: 14, medium: 28, epic: 48 };
+    const count = COUNTS[mode];
+    const [r, g, b] = hexToRgb(accent);
+
+    const rnd = (a: number, z: number) => a + Math.random() * (z - a);
+    const parts = Array.from({ length: count }, () => ({
+      x: Math.random(), y: Math.random(),
+      rad: rnd(1.5, mode === "epic" ? 9 : 6),
+      vx: rnd(-0.00018, 0.00018), vy: rnd(-0.00032, -0.00006),
+      alpha: rnd(0.05, 0.3), tw: rnd(0, Math.PI * 2),
+    }));
+
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+    let raf = 0;
+    let t = 0;
+    const draw = () => {
+      t += 0.016;
+      const w = Math.round(canvas.clientWidth * dpr);
+      const h = Math.round(canvas.clientHeight * dpr);
+      if (w === 0 || h === 0) { raf = requestAnimationFrame(draw); return; }
+      if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+      ctx.clearRect(0, 0, w, h);
+
+      const energy = isPlaying && mode !== "calm" ? energyRef.current : 0;
+      const boost = mode === "epic" ? 1 + energy * 1.6 : 1 + energy * 0.7;
+
+      for (const p of parts) {
+        p.x += p.vx * boost; p.y += p.vy * boost; p.tw += 0.02;
+        if (p.y < -0.05) { p.y = 1.05; p.x = Math.random(); }
+        if (p.x < -0.05) p.x = 1.05; else if (p.x > 1.05) p.x = -0.05;
+        const a = p.alpha * (0.7 + 0.3 * Math.sin(p.tw)) * boost;
+        const rad = p.rad * dpr * (mode === "epic" ? 1 + energy * 0.9 : 1);
+        const px = p.x * w, py = p.y * h;
+        const grad = ctx.createRadialGradient(px, py, 0, px, py, rad * 3);
+        grad.addColorStop(0, `rgba(${r},${g},${b},${Math.min(0.6, a)})`);
+        grad.addColorStop(1, `rgba(${r},${g},${b},0)`);
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(px, py, rad * 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      raf = requestAnimationFrame(draw);
+    };
+    raf = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(raf);
+  }, [accent, mode, isPlaying, energyRef]);
+
+  return <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" style={{ willChange: "transform" }} />;
+}
+
+// ─── Beat-synced glow: rAF writes style directly, zero re-renders ────
+function BeatGlow({ accent, energyRef, enabled }: { accent: string; energyRef: { current: number }; enabled: boolean }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    let raf = 0;
+    const tick = () => {
+      const el = ref.current;
+      if (el) {
+        const e = enabled ? energyRef.current : 0;
+        el.style.opacity = String(0.28 + e * 0.65);
+        el.style.transform = `scale(${1 + e * 0.22})`;
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [enabled, energyRef]);
+  return (
+    <div
+      ref={ref}
+      className="absolute -inset-7 rounded-full pointer-events-none"
+      style={{ background: `radial-gradient(circle, ${accent}66 0%, transparent 68%)`, filter: "blur(26px)", willChange: "opacity, transform" }}
+    />
   );
 }
 
@@ -189,12 +351,28 @@ function FullPlayer({
   isPremium: boolean; setIsPremiumModalOpen: (v: boolean) => void; setPremiumFeatureName: (v: string) => void;
   showToast: (msg: string, type?: "normal" | "hq") => void;
 }) {
-  const { state, currentSong, togglePlay, next, prev, seekTo, setVolume, cycleRepeat, setShuffle, setHighQuality, setIsAiMix, soundPreset, setSoundPreset } = usePlayer();
+  const { state, currentSong, togglePlay, next, prev, seekTo, setVolume, cycleRepeat, setShuffle, setHighQuality, setIsAiMix, soundPreset, setSoundPreset, getAnalyser } = usePlayer();
   const art = currentSong?.thumbnailUrl || currentSong?.metadata?.thumbnailUrl;
   const proxyArt = getProxyUrl(art);
 
   const [activeTab, setActiveTab] = useState("now"); // now | queue | audio | premium
   const [isBgPlayEnabled, setIsBgPlayEnabled] = useState(isPremium);
+
+  // ── Background ambience mode (persisted) ──
+  const [bgMode, setBgMode] = useState<BgMode>("medium");
+  useEffect(() => {
+    const saved = localStorage.getItem("aura_player_bg_mode") as BgMode | null;
+    if (saved && ["calm", "medium", "epic"].includes(saved)) setBgMode(saved);
+  }, []);
+  const cycleBgMode = () => {
+    const order: BgMode[] = ["calm", "medium", "epic"];
+    const nextMode = order[(order.indexOf(bgMode) + 1) % order.length];
+    setBgMode(nextMode);
+    try { localStorage.setItem("aura_player_bg_mode", nextMode); } catch {}
+    showToast(`الخلفية ${BG_MODES.find((m) => m.id === nextMode)?.label} ✨`);
+  };
+  const energyRef = useAnalyserEnergy(getAnalyser, state.isPlaying);
+  const orbBoost = bgMode === "calm" ? 0.45 : bgMode === "epic" ? 1.7 : 1;
 
   // ── Lyrics State ──
   const [lyrics, setLyrics] = useState<string | null>(null);
@@ -379,17 +557,18 @@ function FullPlayer({
         />
         <motion.div
           className="absolute -top-28 -right-24 w-80 h-80 rounded-full"
-          style={{ background: accent, opacity: 0.16, filter: "blur(90px)" }}
+          style={{ background: accent, opacity: 0.16 * orbBoost, filter: "blur(90px)" }}
           animate={{ x: [0, 60, 0], y: [0, 40, 0] }}
-          transition={{ duration: 10, repeat: Infinity, ease: "easeInOut" }}
+          transition={{ duration: bgMode === "epic" ? 7 : 10, repeat: Infinity, ease: "easeInOut" }}
         />
         <motion.div
           className="absolute -bottom-32 -left-24 w-96 h-96 rounded-full"
-          style={{ background: accent, opacity: 0.1, filter: "blur(100px)" }}
+          style={{ background: accent, opacity: 0.1 * orbBoost, filter: "blur(100px)" }}
           animate={{ x: [0, -50, 0], y: [0, -30, 0] }}
-          transition={{ duration: 13, repeat: Infinity, ease: "easeInOut" }}
+          transition={{ duration: bgMode === "epic" ? 9 : 13, repeat: Infinity, ease: "easeInOut" }}
         />
         <div className="absolute inset-0 bg-gradient-to-b from-[#090b10]/90 via-[#06070a]/95 to-[#040507]" />
+        <AuroraParticles accent={accent} mode={bgMode} isPlaying={state.isPlaying} energyRef={energyRef} />
       </div>
 
       {/* ── Content ── */}
@@ -413,16 +592,27 @@ function FullPlayer({
               </span>
             )}
           </div>
-          <button
-            onClick={() => {
-              if (!isPremium) { setPremiumFeatureName("ميكس AI (الدي جي الذكي)"); setIsPremiumModalOpen(true); }
-              else { setIsAiMix(!state.isAiMix); showToast(!state.isAiMix ? "تم تفعيل ميكس AI 🤖✨" : "تم إيقاف ميكس AI"); }
-            }}
-            className={`px-3 py-1.5 rounded-full text-xs font-black transition-all border ${state.isAiMix ? "bg-white text-black border-white" : "bg-white/5 text-white/70 border-white/10"}`}
-          >
-            {!isPremium && <Crown className="w-3 h-3 text-amber-400 inline ml-1" />}
-            ميكس AI
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={cycleBgMode}
+              title="شكل الخلفية"
+              className={`p-2 rounded-full border transition-all active:scale-90 ${bgMode === "epic"
+                ? "bg-white/10 border-white/25 text-white shadow-[0_0_14px_rgba(255,255,255,0.15)]"
+                : "bg-white/5 border-white/10 text-white/60 hover:text-white"}`}
+            >
+              <Sparkles className="w-4 h-4" style={bgMode !== "calm" ? { color: bgMode === "epic" ? accent : undefined } : undefined} />
+            </button>
+            <button
+              onClick={() => {
+                if (!isPremium) { setPremiumFeatureName("ميكس AI (الدي جي الذكي)"); setIsPremiumModalOpen(true); }
+                else { setIsAiMix(!state.isAiMix); showToast(!state.isAiMix ? "تم تفعيل ميكس AI 🤖✨" : "تم إيقاف ميكس AI"); }
+              }}
+              className={`px-3 py-1.5 rounded-full text-xs font-black transition-all border ${state.isAiMix ? "bg-white text-black border-white" : "bg-white/5 text-white/70 border-white/10"}`}
+            >
+              {!isPremium && <Crown className="w-3 h-3 text-amber-400 inline ml-1" />}
+              ميكس AI
+            </button>
+          </div>
         </div>
 
         {/* ═══════════ NOW PLAYING TAB ═══════════ */}
@@ -438,6 +628,9 @@ function FullPlayer({
                 transition={{ type: "spring", stiffness: 200, damping: 22 }}
                 className="relative max-h-[min(38vh,260px)] w-[min(72vw,260px)] aspect-square flex items-center justify-center mx-auto"
               >
+                {bgMode !== "calm" && (
+                  <BeatGlow accent={accent} energyRef={energyRef} enabled={state.isPlaying} />
+                )}
                 {state.isPlaying && (
                   <motion.div
                     className="absolute -inset-4 rounded-full"
@@ -481,9 +674,9 @@ function FullPlayer({
               </button>
             </div>
 
-            {/* Waveform Visualizer — tinted from album art */}
+            {/* Live spectrum visualizer — real WebAudio data (accent tinted) */}
             <div className="w-full my-1 shrink-0">
-              <WaveformVisualizer isPlaying={state.isPlaying} accent={accent} />
+              <LiveVisualizer getAnalyser={getAnalyser} isPlaying={state.isPlaying} accent={accent} />
             </div>
 
             {/* Seek Bar + Times */}
