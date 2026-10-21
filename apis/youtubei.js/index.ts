@@ -94,6 +94,7 @@ function extractSongs(results: any): any[] {
         v.subtitle?.toString() ??
         "فنان غير معروف",
       youtubeVideoId: v.id ?? v.videoId,
+      duration: toSeconds(v.duration?.asSeconds?.() ?? v.duration?.seconds ?? v.duration ?? v.length),
       thumbnailUrl: getHighResThumbnail(v.thumbnails),
     }))
     .filter((v: any) => v.songId && v.title);
@@ -276,6 +277,7 @@ async function searchYouTubeFallbacks(query: string): Promise<any | null> {
     const songs = (r.videos || []).filter(looksLikeSongVideo).slice(0, 20).map((v: any) => ({
       songId: v.videoId,
       youtubeVideoId: v.videoId,
+      duration: toSeconds(v.duration),
       title: sanitizeTitle(v.title),
       artist: v.author?.name || "فنان غير معروف",
       thumbnailUrl: v.thumbnail || ""

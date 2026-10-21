@@ -96,6 +96,16 @@ function tokenMatch(a: string, b: string): boolean {
   return false;
 }
 
+// Weighted match strength: containment (يوسف⊂ابيوسف) and typo-distance count
+// for less than an exact match, so weak similarity can't fake a 0.5 pass.
+function tokenScore(w: string, h: string): number {
+  if (w === h) return 1;
+  const [long, short] = w.length >= h.length ? [w, h] : [h, w];
+  if (short.length >= 3 && long.includes(short)) return 0.8;
+  if (Math.min(w.length, h.length) >= 4 && Math.abs(w.length - h.length) <= 1 && levenshtein(w, h) <= 1) return 0.6;
+  return 0;
+}
+
 // Tokenize into meaningful search words, dropping stop-words that appear in
 // nearly every title (feat/official/audio/video...) so relevance isn't faked.
 const STOP_WORDS = new Set([
@@ -110,13 +120,14 @@ function tokenize(s: string): string[] {
     .filter((w) => w.length > 1 && !STOP_WORDS.has(w));
 }
 
-// How many of the query tokens appear in title or artist (0..1), fuzzy-matched.
+// How well the query tokens appear in title or artist (0..1), weighted:
+// exact=1, containment=0.8, typo-distance=0.6 — averaged over query tokens.
 function tokenCoverage(query: string, title: string, artist: string): number {
   const qTokens = tokenize(query);
   if (qTokens.length === 0) return 1;
   const hay = [...tokenize(title), ...tokenize(artist)];
-  const hits = qTokens.filter((w) => hay.some((h) => tokenMatch(w, h))).length;
-  return hits / qTokens.length;
+  const score = qTokens.reduce((sum, w) => sum + Math.max(0, ...hay.map((h) => tokenScore(w, h))), 0);
+  return score / qTokens.length;
 }
 
 
@@ -172,18 +183,19 @@ export async function smartSearch(searchTerm: string) {
     .slice(0, 10)
     .map((r) => r.song);
 
-  // Normalize YouTube results — junk is always dropped; strong matches
-  // (≥50% fuzzy token coverage) pass, and if NONE pass we keep the best
-  // partial matches (>0) instead of returning an empty page.
+  // Normalize YouTube results — junk is always dropped; long-form videos
+  // (podcasts/shows) drop via duration; strong weighted matches (≥0.5) pass,
+  // then ≥0.45 partials, then YouTube's own order as the last resort.
   const scoredNonJunk = ytSongsRaw
     .filter((item: any) => !isJunkResult(item.title, item.artist))
+    .filter((item: any) => !item.duration || (item.duration >= 40 && item.duration <= 55 * 60))
     .map((item: any) => ({ item, cov: tokenCoverage(q, item.title ?? "", item.artist ?? "") }));
   const passing = scoredNonJunk.filter((r) => r.cov >= 0.5);
-  const partial = scoredNonJunk.filter((r) => r.cov > 0).sort((a, b) => b.cov - a.cov).slice(0, 8);
+  const partial = scoredNonJunk.filter((r) => r.cov >= 0.45).sort((a, b) => b.cov - a.cov).slice(0, 8);
   // Last tier keeps YouTube's own ranking order — YouTube matches transliterated
-  // titles (e.g. "Khanza2or" for خنزؤور) that token coverage cannot see. Only
-  // for multi-word queries, so single nonsense words still yield zero.
-  const deep = tokenize(q).length >= 2 ? scoredNonJunk.slice(0, 5) : [];
+  // titles (e.g. "Khanza2or" for خنزؤور) that token coverage cannot see. Nonsense
+  // queries stay empty because YouTube itself returns nothing for them.
+  const deep = scoredNonJunk.slice(0, 5);
   const ytSongsSel = passing.length > 0 ? passing : partial.length > 0 ? partial : deep;
 
   const ytSongs = ytSongsSel.map(({ item }: any) => ({
