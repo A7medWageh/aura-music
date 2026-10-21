@@ -184,11 +184,13 @@ export async function smartSearch(searchTerm: string) {
     .map((r) => r.song);
 
   // Normalize YouTube results — junk is always dropped; long-form videos
-  // (podcasts/shows) drop via duration; strong weighted matches (≥0.5) pass,
-  // then ≥0.45 partials, then YouTube's own order as the last resort.
+  // (podcasts/shows) drop via duration; on multi-word queries uploads without
+  // real artist metadata (podcasts, reaction videos) drop outright.
+  const multiWord = tokenize(q).length >= 2;
   const scoredNonJunk = ytSongsRaw
     .filter((item: any) => !isJunkResult(item.title, item.artist))
     .filter((item: any) => !item.duration || (item.duration >= 40 && item.duration <= 55 * 60))
+    .filter((item: any) => !multiWord || (item.artist && item.artist !== "فنان غير معروف"))
     .map((item: any) => ({ item, cov: tokenCoverage(q, item.title ?? "", item.artist ?? "") }));
   const passing = scoredNonJunk.filter((r) => r.cov >= 0.5);
   const partial = scoredNonJunk.filter((r) => r.cov >= 0.45).sort((a, b) => b.cov - a.cov).slice(0, 8);

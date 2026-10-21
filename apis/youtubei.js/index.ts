@@ -174,18 +174,18 @@ export async function pruneDeepSongCandidates(items: any[]): Promise<any[]> {
           6000,
           null
         );
+        if (!info?.videoDetails) return null; // fail closed: unverified = dropped
         const dur = parseInt(info?.videoDetails?.duration ?? "0");
         const cat = String(
           info?.microformat?.playerMicroformatRenderer?.category ??
           info?.videoDetails?.category ?? ""
         );
-        let ok = true;
-        if (dur && (dur < 40 || dur > 55 * 60)) ok = false;
+        let ok = dur >= 40 && dur <= 55 * 60;
         if (cat && !/music|أغاني|موسيقي/i.test(cat)) ok = false;
         if (vid) viableCache.set(vid, { ok, expiresAt: Date.now() + 24 * 3600e3 });
         return ok ? it : null;
       } catch {
-        return it; // fail open when YouTube is unreachable
+        return null;
       }
     })
   );
