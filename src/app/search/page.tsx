@@ -1,6 +1,6 @@
 "use client";
 
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import { useEffect, useState, Suspense } from "react";
 import { usePlayer } from "@/state/playerContext";
 import { Play, Heart, Clock, Music, User, Disc, DownloadCloud, CheckCircle2, Crown } from "lucide-react";
@@ -14,7 +14,10 @@ import { useCacheWarm } from "@/hooks/useCacheWarm";
 
 function SearchContent() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const q = searchParams?.get("q") || "";
+  const [type, setType] = useState(searchParams?.get("type") || "all");
+  useEffect(() => { setType(searchParams?.get("type") || "all"); }, [searchParams]);
   const [results, setResults] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -104,8 +107,37 @@ function SearchContent() {
 
       <header>
         <h1 className="text-3xl font-extrabold mb-2 text-indigo-100">نتائج البحث عن "{q}"</h1>
-        <p className="text-gray-400">بيانات حقيقية 100% من قاعدة بيانات أورا</p>
+        <p className="text-gray-400">أغانى وألبومات وفنانين — نتائج موسيقية مفلترة بدقة</p>
       </header>
+
+      {/* Type filter tabs */}
+      {!loading && results && (
+        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar -mx-1 px-1 pb-1">
+          {[
+            { id: "all", label: "الكل", icon: null as any, count: (results?.songs?.length || 0) + (results?.albums?.length || 0) + (results?.artists?.length || 0) },
+            { id: "songs", label: "أغانى", icon: Music, count: results?.songs?.length || 0 },
+            { id: "albums", label: "ألبومات", icon: Disc, count: results?.albums?.length || 0 },
+            { id: "artists", label: "فنانين", icon: User, count: results?.artists?.length || 0 },
+          ].map(t => (
+            <button
+              key={t.id}
+              onClick={() => {
+                setType(t.id);
+                router.replace(`/search?q=${encodeURIComponent(q)}${t.id !== "all" ? `&type=${t.id}` : ""}`);
+              }}
+              className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-bold whitespace-nowrap transition-all border shrink-0 active:scale-95 ${
+                type === t.id
+                  ? "bg-indigo-500 text-white border-indigo-400 shadow-lg shadow-indigo-500/30"
+                  : "border-white/10 text-gray-400 hover:border-white/30 hover:text-white"
+              }`}
+            >
+              {t.icon && <t.icon className="w-4 h-4" />}
+              {t.label}
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full tabular-nums ${type === t.id ? "bg-white/20" : "bg-white/10"}`}>{t.count}</span>
+            </button>
+          ))}
+        </div>
+      )}
 
       {loading ? (
         <div className="space-y-4">
@@ -116,7 +148,7 @@ function SearchContent() {
       ) : (
         <div className="space-y-12">
           {/* Artists Section */}
-          {results?.artists?.length > 0 && (
+          {(type === "all" || type === "artists") && results?.artists?.length > 0 && (
             <section>
               <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
                 <User className="text-indigo-400 w-5 h-5" /> فنانين مشابهين
@@ -135,6 +167,7 @@ function SearchContent() {
           )}
 
           {/* Songs Section - High Priority */}
+          {(type === "all" || type === "songs") && (
           <section>
             <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
               <Music className="text-indigo-400 w-5 h-5" /> أهم الأغاني
@@ -175,9 +208,10 @@ function SearchContent() {
               ))}
             </div>
           </section>
+          )}
 
           {/* Albums Section */}
-          {results?.albums?.length > 0 && (
+          {(type === "all" || type === "albums") && results?.albums?.length > 0 && (
             <section>
               <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
                 <Disc className="text-indigo-400 w-5 h-5" /> ألبومات ذات صلة
@@ -186,20 +220,25 @@ function SearchContent() {
                 {results.albums.map((album: any) => (
                   <Link href={`/album/${album.albumId}`} key={album.albumId} className="group cursor-pointer block">
                     <div className="aspect-square rounded-xl overflow-hidden glass mb-3 relative">
-                      <img src={getProxyUrl(album.thumbnailUrl)} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" alt={album.albumTitle} />
+                      <img src={getProxyUrl(album.thumbnailUrl)} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" alt={album.title || album.albumTitle} />
                       <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                         <Play className="text-white fill-current w-10 h-10" />
                       </div>
                     </div>
-                    <p className="text-sm font-bold truncate">{album.albumTitle}</p>
-                    <p className="text-xs text-gray-500 truncate">{album.artistName}</p>
+                    <p className="text-sm font-bold truncate">{album.title || album.albumTitle}</p>
+                    <p className="text-xs text-gray-500 truncate">{album.artist || album.artistName}</p>
                   </Link>
                 ))}
               </div>
             </section>
           )}
 
-          {(!loading && results?.songs?.length === 0) && (
+          {!loading && results && (
+            (type === "songs" && results?.songs?.length === 0) ||
+            (type === "albums" && results?.albums?.length === 0) ||
+            (type === "artists" && results?.artists?.length === 0) ||
+            (type === "all" && results?.songs?.length === 0)
+          ) && (
             <div className="text-center py-20 bg-white/5 rounded-3xl border border-dashed border-white/10">
                <Music className="w-12 h-12 text-gray-600 mx-auto mb-4" />
                <p className="text-gray-400">مفيش نتائج للبحث ده، جرب كلمات تانية</p>

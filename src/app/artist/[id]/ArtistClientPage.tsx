@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import {
   Play, MoreHorizontal, BadgeCheck, Music,
-  Disc, Users, Share2, BellOff, DownloadCloud, Shuffle, Crown
+  Disc, Users, Share2, BellOff, DownloadCloud, Shuffle, Crown, ChevronDown
 } from "lucide-react";
 import Link from "next/link";
 import { getProxyUrl } from "@/utils/media";
@@ -26,6 +26,7 @@ export default function ArtistClientPage({ id }: { id: string }) {
   const [isPremium, setIsPremium] = useState(false);
   const [showPremiumModal, setShowPremiumModal] = useState(false);
   const [premiumFeatureName, setPremiumFeatureName] = useState("");
+  const [showAllAlbums, setShowAllAlbums] = useState(false);
   useCacheWarm(artist?.songs, 6, 700);
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 3000); };
@@ -95,6 +96,11 @@ export default function ArtistClientPage({ id }: { id: string }) {
 
   const allSongs = artist?.songs || [];
   const allAlbums = [...(artist?.newReleases || []), ...(artist?.oldAlbums || [])];
+  const chronologicalAlbums = (() => {
+    const map = new Map<string, any>();
+    allAlbums.forEach((a: any) => { if (a.albumId && !map.has(a.albumId)) map.set(a.albumId, a); });
+    return [...map.values()].sort((a, b) => (a.year || 9999) - (b.year || 9999));
+  })();
 
   const playSong = (song: any, rest: any[]) => {
     playNow(song);
@@ -312,13 +318,28 @@ export default function ArtistClientPage({ id }: { id: string }) {
           )}
         </section>
 
-        {/* ═══ ALL ALBUMS ═════════════════════════ */}
-        {artist.oldAlbums?.length > 0 && (
+        {/* ═══ ALL ALBUMS — chronologically, oldest → newest ═══ */}
+        {chronologicalAlbums.length > 0 && (
           <section>
-            <h2 className="text-3xl font-black mb-6">ألبومات أخرى</h2>
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-5">
-              {artist.oldAlbums.map((alb: any) => <AlbumCard key={alb.albumId} album={alb} />)}
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-3xl font-black">كل الألبومات</h2>
+              <span className="text-xs text-indigo-400 border border-indigo-500/30 px-3 py-1 rounded-full">
+                {chronologicalAlbums.length} ألبوم — من الأقدم للأحدث
+              </span>
             </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-5">
+              {(showAllAlbums ? chronologicalAlbums : chronologicalAlbums.slice(0, 10)).map((alb: any) => (
+                <AlbumCard key={alb.albumId} album={alb} />
+              ))}
+            </div>
+            {chronologicalAlbums.length > 10 && (
+              <button
+                onClick={() => setShowAllAlbums(v => !v)}
+                className="mt-8 mx-auto flex items-center gap-2 px-6 py-3 rounded-full border border-white/15 text-sm font-bold text-gray-300 hover:border-indigo-500/60 hover:text-white hover:bg-indigo-500/10 transition-all">
+                {showAllAlbums ? "عرض أقل" : `عرض كل الألبومات (${chronologicalAlbums.length})`}
+                <ChevronDown className={`w-4 h-4 transition-transform ${showAllAlbums ? "rotate-180" : ""}`} />
+              </button>
+            )}
           </section>
         )}
 

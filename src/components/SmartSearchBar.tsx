@@ -33,6 +33,15 @@ export function SmartSearchBar() {
   const [isOpen, setIsOpen] = useState(false);
   const [recent, setRecent] = useState<string[]>([]);
   const [activeIdx, setActiveIdx] = useState(-1);
+  const [type, setType] = useState("all"); // all | songs | albums | artists
+  const TYPE_CYCLE = ["all", "songs", "albums", "artists"];
+  const TYPE_META: Record<string, { label: string; icon: any }> = {
+    all: { label: "الكل", icon: Search },
+    songs: { label: "أغانى", icon: Music },
+    albums: { label: "ألبومات", icon: Disc },
+    artists: { label: "فنانين", icon: Mic2 },
+  };
+  const cycleType = () => setType(t => TYPE_CYCLE[(TYPE_CYCLE.indexOf(t) + 1) % TYPE_CYCLE.length]);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -96,18 +105,21 @@ export function SmartSearchBar() {
     if (!q.trim()) return;
     pushRecent(q);
     setIsOpen(false);
-    router.push(`/search?q=${encodeURIComponent(q.trim())}`);
+    router.push(`/search?q=${encodeURIComponent(q.trim())}${type !== "all" ? `&type=${type}` : ""}`);
   };
 
   const onKeyDown = (e: ReactKeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") { e.preventDefault(); if (songs[activeIdx]) playSong(songs[activeIdx]); else goSearch(); return; }
-    if (e.key === "ArrowDown") { e.preventDefault(); setActiveIdx(p => Math.min(p + 1, songs.length - 1)); return; }
+    if (e.key === "Enter") { e.preventDefault(); if (visibleSongs[activeIdx]) playSong(visibleSongs[activeIdx]); else goSearch(); return; }
+    if (e.key === "ArrowDown") { e.preventDefault(); setActiveIdx(p => Math.min(p + 1, visibleSongs.length - 1)); return; }
     if (e.key === "ArrowUp") { e.preventDefault(); setActiveIdx(p => Math.max(p - 1, -1)); return; }
     if (e.key === "Escape") { setIsOpen(false); e.currentTarget.blur(); }
   };
 
   const showPanel = isOpen;
-  const hasResults = songs.length > 0 || artists.length > 0 || albums.length > 0;
+  const visibleSongs = type === "all" || type === "songs" ? songs : [];
+  const visibleAlbums = type === "all" || type === "albums" ? albums : [];
+  const visibleArtists = type === "all" || type === "artists" ? artists : [];
+  const hasResults = visibleSongs.length > 0 || visibleArtists.length > 0 || visibleAlbums.length > 0;
 
   return (
     <div ref={wrapperRef} className="relative w-full">
@@ -128,6 +140,17 @@ export function SmartSearchBar() {
           ? <Loader2 className="w-4 h-4 text-indigo-400 animate-spin shrink-0" />
           : <Search className="w-4 h-4 text-gray-400 shrink-0" />
         }
+        <button
+          onClick={cycleType}
+          title="تغيير نوع البحث"
+          className={`shrink-0 flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1 rounded-full border transition-all active:scale-95 ${
+            type === "all"
+              ? "border-white/10 text-gray-400 hover:text-white hover:border-white/25"
+              : "border-indigo-500/50 bg-indigo-500/15 text-indigo-300"
+          }`}
+        >
+          {(() => { const M = TYPE_META[type]; return <><M.icon className="w-3 h-3" />{M.label}</>; })()}
+        </button>
         <input
           ref={inputRef}
           value={term}
@@ -232,13 +255,13 @@ export function SmartSearchBar() {
               <div className="p-2 space-y-1">
 
                 {/* Artists */}
-                {artists.length > 0 && (
+                {visibleArtists.length > 0 && (
                   <div className="pb-2">
                     <p className="px-3 py-2 text-[11px] font-bold text-gray-500 uppercase tracking-wider flex items-center gap-1.5">
                       <Mic2 className="w-3.5 h-3.5" /> فنانين
                     </p>
                     <div className="flex gap-3 px-3 pb-2 overflow-x-auto">
-                      {artists.map(a => (
+                      {visibleArtists.map(a => (
                         <Link key={a.artistId} href={`/artist/${a.artistId}`} onClick={() => { pushRecent(term); setIsOpen(false); }}
                           className="flex flex-col items-center gap-1.5 shrink-0 group">
                           <div className="w-14 h-14 rounded-full bg-white/5 overflow-hidden border-2 border-transparent group-hover:border-indigo-500/60 transition-all">
@@ -256,12 +279,12 @@ export function SmartSearchBar() {
                 )}
 
                 {/* Songs */}
-                {songs.length > 0 && (
+                {visibleSongs.length > 0 && (
                   <div>
                     <p className="px-3 py-2 text-[11px] font-bold text-gray-500 uppercase tracking-wider flex items-center gap-1.5">
                       <Music className="w-3.5 h-3.5" /> أغاني
                     </p>
-                    {songs.map((song, i) => (
+                    {visibleSongs.map((song, i) => (
                       <div key={`${song.songId}-${i}`}
                         onClick={() => playSong(song)}
                         className={`group flex items-center gap-3 px-3 py-2.5 rounded-xl cursor-pointer transition-all ${
@@ -292,13 +315,13 @@ export function SmartSearchBar() {
                 )}
 
                 {/* Albums */}
-                {albums.length > 0 && (
+                {visibleAlbums.length > 0 && (
                   <div className="mt-1">
                     <div className="h-px bg-white/5 mx-1 mb-2" />
                     <p className="px-3 py-2 text-[11px] font-bold text-gray-500 uppercase tracking-wider flex items-center gap-1.5">
                       <Disc className="w-3.5 h-3.5" /> ألبومات
                     </p>
-                    {albums.map(alb => (
+                    {visibleAlbums.map(alb => (
                       <Link key={alb.albumId} href={`/album/${alb.albumId}`} onClick={() => { pushRecent(term); setIsOpen(false); }}
                         className="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-white/5 transition-colors group">
                         <div className="w-10 h-10 rounded-lg bg-white/5 shrink-0 overflow-hidden border border-white/5">
