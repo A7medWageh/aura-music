@@ -179,9 +179,12 @@ export async function smartSearch(searchTerm: string) {
     .filter((item: any) => !isJunkResult(item.title, item.artist))
     .map((item: any) => ({ item, cov: tokenCoverage(q, item.title ?? "", item.artist ?? "") }));
   const passing = scoredNonJunk.filter((r) => r.cov >= 0.5);
-  const ytSongsSel = passing.length > 0
-    ? passing
-    : scoredNonJunk.filter((r) => r.cov > 0).sort((a, b) => b.cov - a.cov).slice(0, 8);
+  const partial = scoredNonJunk.filter((r) => r.cov > 0).sort((a, b) => b.cov - a.cov).slice(0, 8);
+  // Last tier keeps YouTube's own ranking order — YouTube matches transliterated
+  // titles (e.g. "Khanza2or" for خنزؤور) that token coverage cannot see. Only
+  // for multi-word queries, so single nonsense words still yield zero.
+  const deep = tokenize(q).length >= 2 ? scoredNonJunk.slice(0, 5) : [];
+  const ytSongsSel = passing.length > 0 ? passing : partial.length > 0 ? partial : deep;
 
   const ytSongs = ytSongsSel.map(({ item }: any) => ({
       songId: item.songId ?? item.videoId,
