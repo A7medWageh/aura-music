@@ -19,9 +19,21 @@ export type AuraNotification = {
   artistImage?: string;
   releaseTitle: string;
   releaseId: string;
+  publishedAt?: number;
+  videoId?: string | null;
+  kind?: "song" | "album";
   seenAt: number | null;
   createdAt: number;
 };
+
+export function releaseAgeLabel(publishedAt?: number): string {
+  if (!publishedAt) return "";
+  const h = Math.max(0, Math.round((Date.now() - publishedAt) / 3600e3));
+  if (h < 1) return "نزلت دلوقتي 🔥";
+  if (h < 24) return `منذ ${h} ساعة`;
+  const d = Math.round(h / 24);
+  return d === 1 ? "أمبارح" : `منذ ${d} أيام`;
+}
 
 export function getStoredNotifications(): AuraNotification[] {
   try {
@@ -36,67 +48,71 @@ export function markAllSeen() {
   localStorage.setItem(NOTIFS_KEY, JSON.stringify(notifs));
 }
 
-export function useArtistNotifications() {
-  useEffect(() => {
-    const init = async () => {
-      const lastCheck = parseInt(localStorage.getItem(CHECK_KEY) || "0");
-      if (Date.now() - lastCheck < MIN_INTERVAL_MS) return;
+export async function runReleaseCheck(force = false): Promise<void> {
+  if (typeof window === "undefined") return;
+  const lastCheck = parseInt(localStorage.getItem(CHECK_KEY) || "0");
+  if (!force && Date.now() - lastCheck < MIN_INTERVAL_MS) return;
 
-      const followed: string[] = JSON.parse(localStorage.getItem("aura-followed-artists") || "[]");
-      if (followed.length === 0) return;
+  const followed: string[] = JSON.parse(localStorage.getItem("aura-followed-artists") || "[]");
+  if (followed.length === 0) return;
 
-      localStorage.setItem(CHECK_KEY, String(Date.now()));
+  localStorage.setItem(CHECK_KEY, String(Date.now()));
 
-      // Store known release IDs to avoid duplicate notifications
-      const knownReleases: string[] = JSON.parse(localStorage.getItem("aura-known-releases") || "[]");
-      const newNotifications: AuraNotification[] = [];
+  // Server verifies REAL YouTube publish dates (release must be ≤36h old)
+  const knownReleases: string[] = JSON.parse(localStorage.getItem("aura-known-releases") || "[]");
+  const newNotifications: AuraNotification[] = [];
 
-      for (const artistId of followed) {
+  try {
+    const res = await fetch(
+      `/api/releases/check?artists=${encodeURIComponent(followed.slice(0, 12).join(","))}&maxAgeHours=36`
+    );
+    const data = await res.json();
+    const artistImageCache = new Map<string, string>();
+
+    for (const r of data.releases || []) {
+      const key = `${r.artistId}:${r.albumId}:${r.publishedAt}`;
+      if (knownReleases.includes(key)) continue;
+      knownReleases.push(key);
+
+      let artistImage = r.thumbnailUrl;
+      if (!artistImageCache.has(r.artistId)) {
         try {
-          const res = await fetch(`/api/artist/${artistId}`);
-          const data = await res.json();
-          if (!data || data.error) continue;
-
-          const currentYear = new Date().getFullYear().toString();
-          const allReleases = [...(data.newReleases || []), ...(data.oldAlbums || [])].slice(0, 3);
-
-          for (const release of allReleases) {
-            if (!release.albumId || knownReleases.includes(release.albumId)) continue;
-            
-            // Only notify if it's released THIS YEAR. Otherwise, silently mark as known.
-            if (release.year && release.year !== currentYear) {
-              knownReleases.push(release.albumId);
-              continue;
-            }
-
-            // This release is genuinely NEW (not seen before and released this year)
-            newNotifications.push({
-              id: `${artistId}-${release.albumId}`,
-              artistId,
-              artistName: data.artistName,
-              artistImage: data.artistImage,
-              releaseTitle: release.title,
-              releaseId: release.albumId,
-              seenAt: null,
-              createdAt: Date.now(),
-            });
-            knownReleases.push(release.albumId);
-          }
-        } catch { /* skip artist on error */ }
+          const a = await fetch(`/api/artist/${r.artistId}`).then((x) => x.json());
+          const ad = a?.data || a;
+          artistImageCache.set(r.artistId, ad?.artistImage || "");
+        } catch { artistImageCache.set(r.artistId, ""); }
       }
+      artistImage = artistImageCache.get(r.artistId) || artistImage;
+
+          newNotifications.push({
+            id: key,
+            artistId: r.artistId,
+            artistName: r.artist,
+            artistImage: artistImage || undefined,
+            releaseTitle: r.title,
+            releaseId: r.albumId,
+            publishedAt: r.publishedAt,
+            videoId: r.videoId || null,
+            kind: r.kind,
+            seenAt: null,
+            createdAt: Date.now(),
+          });
+        }
+      } catch { /* network hiccup — try again next hour */ }
 
       if (newNotifications.length > 0) {
         const existing = getStoredNotifications();
         const merged = [...newNotifications, ...existing].slice(0, 50); // keep last 50
         localStorage.setItem(NOTIFS_KEY, JSON.stringify(merged));
-        localStorage.setItem("aura-known-releases", JSON.stringify(knownReleases.slice(-200)));
+        localStorage.setItem("aura-known-releases", JSON.stringify(knownReleases.slice(-300)));
 
         // Browser notification (if permitted)
         if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
           newNotifications.slice(0, 3).forEach(async n => {
-            const title = `نشر ${n.artistName} أغنية جديدة`;
+            const what = n.kind === "album" ? "ألبوم" : "أغنية";
+            const title = `${what} جديدة من ${n.artistName} 🎤`;
             const options: any = {
-              body: `اسم الأغنية: ${n.releaseTitle}`,
+              body: `${n.releaseTitle} — ${releaseAgeLabel(n.publishedAt)}`,
               icon: n.artistImage || "/logo-v2.png",
               badge: "/logo-v2.png",
               tag: n.id,
@@ -118,9 +134,11 @@ export function useArtistNotifications() {
             new Notification(title, options);
           });
         }
-      }
-    };
+  }
+}
 
-    init();
+export function useArtistNotifications() {
+  useEffect(() => {
+    runReleaseCheck().catch(() => {});
   }, []);
 }

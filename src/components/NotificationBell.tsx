@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   getStoredNotifications,
   markAllSeen,
+  releaseAgeLabel,
   AuraNotification,
 } from "@/services/notifications/artistNotifications";
 import { getProxyUrl } from "@/utils/media";
@@ -120,7 +121,10 @@ export function NotificationBell() {
                         {!n.seenAt && <span className="inline-block w-1.5 h-1.5 rounded-full bg-indigo-400 mr-1.5 align-middle" />}
                         إصدار جديد من {n.artistName}
                       </p>
-                      <p className="text-xs text-gray-400 truncate mt-0.5">🎵 {n.releaseTitle}</p>
+                      <p className="text-xs text-gray-400 truncate mt-0.5">
+                        🎵 {n.releaseTitle}
+                        {n.publishedAt ? <span className="text-emerald-400/80"> — {releaseAgeLabel(n.publishedAt)}</span> : null}
+                      </p>
                     </div>
                   </Link>
                 ))

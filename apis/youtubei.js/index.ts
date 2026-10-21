@@ -1074,3 +1074,101 @@ export async function getLyricsYoutube(videoId: string): Promise<string | null> 
   const synced = await getSyncedLyricsYoutube(videoId);
   return synced?.plainLyrics || null;
 }
+
+// ── Real publish dates — used to verify a release dropped TODAY ──────────────
+const publishDateCache = new Map<string, { ms: number; expiresAt: number }>();
+
+export async function getVideoPublishDateMs(videoId: string): Promise<number | null> {
+  const key = `pub:${videoId}`;
+  const hit = publishDateCache.get(key);
+  if (hit && hit.expiresAt > Date.now()) return hit.ms;
+
+  try {
+    const redis = getRedisClient();
+    const cached = await withTimeout(redis.get(key), 1200, null);
+    if (cached) {
+      const ms = Number(cached);
+      if (ms > 0) {
+        publishDateCache.set(key, { ms, expiresAt: Date.now() + 6 * 3600e3 });
+        return ms;
+      }
+    }
+  } catch {}
+
+  try {
+    const innertube = await getYTWeb();
+    const info: any = await innertube.getBasicInfo(videoId);
+    const mf = info?.microformat?.playerMicroformatRenderer;
+    const iso = mf?.publishDate || mf?.uploadDate;
+    if (!iso) return null;
+    const ms = Date.parse(iso);
+    if (!Number.isFinite(ms)) return null;
+    publishDateCache.set(key, { ms, expiresAt: Date.now() + 6 * 3600e3 });
+    try {
+      const redis = getRedisClient();
+      withTimeout(redis.set(key, String(ms), "EX", 3 * 24 * 3600), 1000, null).catch(() => {});
+    } catch {}
+    return ms;
+  } catch (e: any) {
+    console.warn(`[PublishDate] Failed for ${videoId}:`, e?.message);
+    return null;
+  }
+}
+
+export type FreshRelease = {
+  albumId: string;
+  title: string;
+  artist: string;
+  thumbnailUrl: string | null;
+  videoId: string | null;
+  publishedAt: number;
+  kind: "song" | "album";
+};
+
+/**
+ * Verified fresh releases for an artist: candidates are this-year entries of
+ * the artist page; each is confirmed against the real YouTube publish date of
+ * its first track, keeping only those published within maxAgeHours.
+ */
+export async function getFreshReleases(
+  artistId: string,
+  maxAgeHours = 36,
+  artistNameHint?: string
+): Promise<FreshRelease[]> {
+  const artist: any = await getArtistDetails(artistId).catch(() => null);
+  const artistName = artist?.artistName || artistNameHint;
+  if (!artistName) return [];
+
+  const year = new Date().getFullYear();
+  const candidates = [...(artist.newReleases || [])]
+    .filter((r: any) => r.albumId && r.year >= year)
+    .slice(0, 4);
+
+  const cutoff = Date.now() - maxAgeHours * 3600e3;
+  const settled = await Promise.allSettled(
+    candidates.map(async (r: any): Promise<FreshRelease | null> => {
+      let videoId: string | null = null;
+      try {
+        const album: any = await getAlbumDetails(r.albumId);
+        videoId = album?.songs?.[0]?.youtubeVideoId || album?.songs?.[0]?.songId || null;
+      } catch {}
+      if (!videoId) return null;
+      const ms = await getVideoPublishDateMs(videoId);
+      if (!ms || ms < cutoff) return null;
+      return {
+        albumId: r.albumId,
+        title: r.title,
+        artist: artistName,
+        thumbnailUrl: r.thumbnailUrl || null,
+        videoId,
+        publishedAt: ms,
+        kind: (r.songCount || 0) > 1 ? "album" : "song",
+      };
+    })
+  );
+
+  return settled
+    .map((s) => (s.status === "fulfilled" ? s.value : null))
+    .filter((r): r is FreshRelease => !!r)
+    .sort((a, b) => b.publishedAt - a.publishedAt);
+}

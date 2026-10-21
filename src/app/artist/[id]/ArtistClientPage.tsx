@@ -14,6 +14,7 @@ import { trackPlay } from "@/services/user/listeningHistory";
 import { FavoriteButton } from "@/components/FavoriteButton";
 import { PremiumModal } from "@/components/PremiumModal";
 import { useCacheWarm } from "@/hooks/useCacheWarm";
+import { runReleaseCheck, releaseAgeLabel } from "@/services/notifications/artistNotifications";
 
 export default function ArtistClientPage({ id }: { id: string }) {
   const { playNow, enqueueSongs } = usePlayer();
@@ -27,6 +28,7 @@ export default function ArtistClientPage({ id }: { id: string }) {
   const [showPremiumModal, setShowPremiumModal] = useState(false);
   const [premiumFeatureName, setPremiumFeatureName] = useState("");
   const [showAllAlbums, setShowAllAlbums] = useState(false);
+  const [freshReleases, setFreshReleases] = useState<any[]>([]);
   useCacheWarm(artist?.songs, 6, 700);
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 3000); };
@@ -43,6 +45,11 @@ export default function ArtistClientPage({ id }: { id: string }) {
       .finally(() => setLoading(false));
 
     setIsPremium(localStorage.getItem("aura_user_tier") === "premium");
+
+    fetch(`/api/releases/check?artists=${encodeURIComponent(id)}&maxAgeHours=48`)
+      .then(r => r.json())
+      .then(d => setFreshReleases(d.releases || []))
+      .catch(() => {});
   }, [id]);
 
   const toggleFollow = async () => {
@@ -56,6 +63,7 @@ export default function ArtistClientPage({ id }: { id: string }) {
     if (nowFollowing) {
       // Auto-request notification permission on follow
       await tryRequestNotification();
+      runReleaseCheck(true).catch(() => {});
     }
   };
 
@@ -269,6 +277,62 @@ export default function ArtistClientPage({ id }: { id: string }) {
       </div>
 
       <div className="px-4 pt-12 space-y-20">
+
+        {/* ═══ JUST DROPPED — verified real publish dates ═══ */}
+        {freshReleases.length > 0 && (
+          <section>
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-3xl font-black flex items-center gap-2">
+                نزل حديثاً
+                <span className="text-[11px] font-black text-emerald-300 bg-emerald-400/10 border border-emerald-400/30 px-3 py-1 rounded-full">
+                  ✅ تاريخ الإصدار مؤكد من يوتيوب
+                </span>
+              </h2>
+            </div>
+            <div className="flex gap-4 overflow-x-auto pb-2 -mx-1 px-1">
+              {freshReleases.map((rel: any) => (
+                <div
+                  key={`${rel.albumId}-${rel.publishedAt}`}
+                  className="group shrink-0 w-40 cursor-pointer"
+                  onClick={() => {
+                    if (rel.videoId) {
+                      const song: any = {
+                        songId: rel.videoId,
+                        title: rel.title,
+                        artist: rel.artist,
+                        youtubeVideoId: rel.videoId,
+                        thumbnailUrl: rel.thumbnailUrl,
+                        source: "youtube",
+                      };
+                      playNow(song);
+                      trackPlay(song);
+                    }
+                  }}
+                >
+                  <Link href={`/album/${rel.albumId}`} onClick={(e) => e.stopPropagation()} className="block">
+                    <div className="relative aspect-square rounded-2xl overflow-hidden glass mb-2">
+                      {rel.thumbnailUrl ? (
+                        <img src={getProxyUrl(rel.thumbnailUrl)} alt={rel.title} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-3xl">🎵</div>
+                      )}
+                      <span className="absolute top-2 right-2 text-[10px] font-black bg-emerald-500 text-black px-2 py-0.5 rounded-full shadow-lg">
+                        {releaseAgeLabel(rel.publishedAt)}
+                      </span>
+                      {rel.videoId && (
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                          <Play className="text-white fill-current w-10 h-10 drop-shadow-lg" />
+                        </div>
+                      )}
+                    </div>
+                    <p className="text-sm font-bold truncate">{rel.title}</p>
+                    <p className="text-xs text-gray-500 truncate">{rel.kind === "album" ? "ألبوم جديد" : "أغنية جديدة"}</p>
+                  </Link>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         {/* ═══ LATEST RELEASES (first) ════════════ */}
         {artist.newReleases?.length > 0 && (
