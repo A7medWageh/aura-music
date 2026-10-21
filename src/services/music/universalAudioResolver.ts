@@ -310,6 +310,7 @@ export async function resolveUniversalAudio(params: {
   title?: string;
   artist?: string;
   forDownload?: boolean;
+  skipBot?: boolean;
 }): Promise<UniversalAudioResult> {
   let { videoId, title = "", artist = "" } = params;
 
@@ -407,6 +408,8 @@ export async function resolveUniversalAudio(params: {
   // @L_10_BOT is the primary source (direct Telegram MP3 CDN).
   // JioSaavn + Albumaty run in parallel so we don't lose time.
   // First winner is used.
+  // skipBot=true (cache warming) skips the bot entirely so background
+  // prefetching never posts "يوتيوب" menus into the channel.
   // ─────────────────────────────────────────────────────────────────
   let winner: UniversalAudioResult | null = null;
 
@@ -416,7 +419,7 @@ export async function resolveUniversalAudio(params: {
 
     // All three run in parallel — whoever finds the song first wins instantly
     winner = await raceFirst([
-      tryMoonBot(albumatyTitle, albumatyArtist, videoId, 90000),
+      ...(params.skipBot ? [] : [tryMoonBot(albumatyTitle, albumatyArtist, videoId, 90000)]),
       tryAlbumaty(albumatyTitle, albumatyArtist, videoId, 8000),
       tryJioSaavn(title, effectiveArtist, videoId, 6000),
     ]);
@@ -430,7 +433,7 @@ export async function resolveUniversalAudio(params: {
     winner = await raceFirst([
       tryJioSaavn(title, effectiveArtist, videoId, 6000),
       tryAlbumaty(title, effectiveArtist, videoId, 8000),
-      tryMoonBot(title, effectiveArtist, videoId, 40000),
+      ...(params.skipBot ? [] : [tryMoonBot(title, effectiveArtist, videoId, 40000)]),
     ]);
   }
 

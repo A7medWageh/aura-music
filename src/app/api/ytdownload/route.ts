@@ -265,6 +265,7 @@ export async function GET(req: NextRequest) {
   const useProxy = searchParams.get("proxy") === "true";
   const resolveOnly = searchParams.get("resolveOnly") === "true";
   const isDownload = searchParams.get("download") === "true";
+  const prefetch = searchParams.get("prefetch") === "true";
   const forceYtDlp = searchParams.get("forceYtDlp") === "true";
 
   // Clean generic placeholders
@@ -317,6 +318,7 @@ export async function GET(req: NextRequest) {
         title,
         artist,
         forDownload: isDownload,
+        skipBot: prefetch,
       });
     } catch (resolveError) {
       const fallbackVideoId = targetVideoId || videoId;
