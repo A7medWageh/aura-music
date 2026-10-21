@@ -50,20 +50,50 @@ function scoreMatch(query: string, title: string, artist: string): number {
   if (t.includes(q)) return 70;
   if (a.includes(q)) return 50;
   const words = tokenize(q);
-  const matched = words.filter((w) => t.includes(w) || a.includes(w)).length;
+  const hay = [...tokenize(t), ...tokenize(a)];
+  const matched = words.filter((w) => hay.some((h) => tokenMatch(w, h))).length;
   return Math.round((matched / words.length) * 40);
 }
 
-// Normalize Arabic letters so "أ/إ/آ" match "ا", "ة" matches "ه", "ى" matches "ي".
+// Normalize Arabic letters so "أ/إ/آ" match "ا", "ة" matches "ه", "ى" matches "ي",
+// and hamza forms (ؤ/ئ/ء) collapse into their base letters — "خنزؤور" ≈ "خنزور".
 function normArabic(s: string): string {
   return s
     .replace(/[أإآٱ]/g, "ا")
     .replace(/ى/g, "ي")
     .replace(/ة/g, "ه")
+    .replace(/ؤ/g, "و")
+    .replace(/ئ/g, "ي")
+    .replace(/ء/g, "")
+    .replace(/ـ/g, "") // tatweel
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
     .replace(/[ً-ْ]/g, "") // harakat
     .replace(/[_\-.]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function levenshtein(a: string, b: string): number {
+  const m = a.length, n = b.length;
+  let prev = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i++) {
+    const cur = [i];
+    for (let j = 1; j <= n; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = cur;
+  }
+  return prev[n];
+}
+
+// Fuzzy word equivalence: exact / containment (≥3 letters) / one-typo distance.
+// Makes "ابيوسف" match "يوسف" and "خنزور" match "خنزول".
+function tokenMatch(a: string, b: string): boolean {
+  if (a === b) return true;
+  const [long, short] = a.length >= b.length ? [a, b] : [b, a];
+  if (short.length >= 3 && long.includes(short)) return true;
+  if (Math.min(a.length, b.length) >= 4 && Math.abs(a.length - b.length) <= 1 && levenshtein(a, b) <= 1) return true;
+  return false;
 }
 
 // Tokenize into meaningful search words, dropping stop-words that appear in
@@ -80,14 +110,13 @@ function tokenize(s: string): string[] {
     .filter((w) => w.length > 1 && !STOP_WORDS.has(w));
 }
 
-// How many of the query tokens appear in title or artist (0..1).
+// How many of the query tokens appear in title or artist (0..1), fuzzy-matched.
 function tokenCoverage(query: string, title: string, artist: string): number {
   const qTokens = tokenize(query);
   if (qTokens.length === 0) return 1;
-  const t = normArabic(title.toLowerCase());
-  const a = normArabic(artist.toLowerCase());
-  const hit = qTokens.filter((w) => t.includes(w) || a.includes(w)).length;
-  return hit / qTokens.length;
+  const hay = [...tokenize(title), ...tokenize(artist)];
+  const hits = qTokens.filter((w) => hay.some((h) => tokenMatch(w, h))).length;
+  return hits / qTokens.length;
 }
 
 
@@ -99,11 +128,38 @@ export async function smartSearch(searchTerm: string) {
   const hit = cache.get(q.toLowerCase());
   if (hit && Date.now() - hit.ts < CACHE_TTL) return hit.data;
 
-  // Run YouTube search + local catalog search in parallel
-  const [ytResults, localCatalog] = await Promise.all([
-    searchYouTube(q).catch(() => ({ songs: [], artists: [], albums: [] })),
+  // Run YouTube search + local catalog search in parallel. A second,
+  // linguistically-corrected variant (normalized/spaced) is also sent so
+  // "ابيوسف خنزؤور" still reaches YouTube as searchable Arabic.
+  const normQuery = tokenize(q).join(" ");
+  const emptyYt = { songs: [], artists: [], albums: [] };
+  const [ytResults, ytVariant, localCatalog] = await Promise.all([
+    searchYouTube(q).catch(() => emptyYt),
+    normQuery && normQuery.toLowerCase() !== q.toLowerCase()
+      ? searchYouTube(normQuery).catch(() => emptyYt)
+      : Promise.resolve(emptyYt),
     getLocalCatalog(),
   ]);
+
+  const ytSongsRaw: any[] = [];
+  const ytSeenIds = new Set<string>();
+  for (const item of [...(ytResults.songs || []), ...(ytVariant.songs || [])]) {
+    const id = String(item.songId ?? item.videoId ?? item.youtubeVideoId ?? "");
+    if (!id || ytSeenIds.has(id)) continue;
+    ytSeenIds.add(id);
+    ytSongsRaw.push(item);
+  }
+
+  const mergeByKey = (lists: any[][], key: string) => {
+    const map = new Map<string, any>();
+    lists.flat().forEach((x: any) => {
+      const id = String(x?.[key] ?? "");
+      if (id && !map.has(id)) map.set(id, x);
+    });
+    return Array.from(map.values());
+  };
+  const ytAlbumsAll = mergeByKey([ytResults.albums || [], ytVariant.albums || []], "albumId");
+  const ytArtistsAll = mergeByKey([ytResults.artists || [], ytVariant.artists || []], "artistId");
 
   // Filter local catalog for matches
   const localMatches = localCatalog
@@ -116,14 +172,18 @@ export async function smartSearch(searchTerm: string) {
     .slice(0, 10)
     .map((r) => r.song);
 
-  // Normalize YouTube results — strict relevance: must look like the searched
-  // song (≥50% of query tokens in title/artist) and pass the junk filter.
-  const ytSongs = ytResults.songs
-    .filter((item: any) =>
-      !isJunkResult(item.title, item.artist) &&
-      tokenCoverage(q, item.title ?? "", item.artist ?? "") >= 0.5
-    )
-    .map((item: any) => ({
+  // Normalize YouTube results — junk is always dropped; strong matches
+  // (≥50% fuzzy token coverage) pass, and if NONE pass we keep the best
+  // partial matches (>0) instead of returning an empty page.
+  const scoredNonJunk = ytSongsRaw
+    .filter((item: any) => !isJunkResult(item.title, item.artist))
+    .map((item: any) => ({ item, cov: tokenCoverage(q, item.title ?? "", item.artist ?? "") }));
+  const passing = scoredNonJunk.filter((r) => r.cov >= 0.5);
+  const ytSongsSel = passing.length > 0
+    ? passing
+    : scoredNonJunk.filter((r) => r.cov > 0).sort((a, b) => b.cov - a.cov).slice(0, 8);
+
+  const ytSongs = ytSongsSel.map(({ item }: any) => ({
       songId: item.songId ?? item.videoId,
       title: item.title,
       artist: item.artist ?? "فنان غير معروف",
@@ -144,12 +204,12 @@ export async function smartSearch(searchTerm: string) {
 
   const result = {
     songs: mergedSongs,
-    artists: ytResults.artists.map((a: any) => ({
+    artists: ytArtistsAll.slice(0, 6).map((a: any) => ({
       artistId: a.artistId,
       artistName: a.artistName,
       thumbnailUrl: a.thumbnailUrl ?? null,
     })),
-    albums: ytResults.albums.map((al: any) => ({
+    albums: ytAlbumsAll.slice(0, 100).map((al: any) => ({
       albumId: al.albumId,
       title: al.title,
       artist: al.artist ?? al.artistName ?? "فنان غير معروف",
