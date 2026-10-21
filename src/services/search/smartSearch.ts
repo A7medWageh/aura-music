@@ -8,7 +8,8 @@
  * Results are merged, de-duplicated, and sorted by relevance.
  * MusicApi songs appear first (they are the "official" catalog).
  */
-import { searchYouTube, resolveStream, isJunkResult } from "@apis/youtubei.js";
+import { searchYouTube, isJunkResult } from "@apis/youtubei.js";
+import { resolveUniversalAudio } from "@/services/music/universalAudioResolver";
 import { getAllSongs, getAllArtists } from "@/services/music/musicApiClient";
 import { enrichSongs } from "@/services/music/songEnricher";
 
@@ -228,10 +229,19 @@ export async function smartSearch(searchTerm: string) {
 
   cache.set(q.toLowerCase(), { data: result, ts: Date.now() });
 
-  // Background pre-fetch top 3 stream URLs for instant playback
+  // Background pre-warm stream cache for instant first click — must use the
+  // same resolver the player hits (/api/ytdownload → resolveUniversalAudio),
+  // skipBot keeps @L_10_BOT out of warmups, and 8 covers deep-tier results.
   setTimeout(() => {
-    result.songs.slice(0, 3).forEach((s: any) => {
-      if (s.youtubeVideoId) resolveStream(s.youtubeVideoId).catch(() => {});
+    result.songs.slice(0, 8).forEach((s: any) => {
+      if (s.youtubeVideoId) {
+        resolveUniversalAudio({
+          videoId: s.youtubeVideoId,
+          title: s.title || "",
+          artist: s.artist || "",
+          skipBot: true,
+        }).catch(() => {});
+      }
     });
   }, 500);
 

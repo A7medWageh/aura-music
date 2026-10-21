@@ -323,6 +323,32 @@ export async function resolveUniversalAudio(params: {
     artist === "فنان غير معروف" ||
     artist.toLowerCase().includes("unknown");
 
+  // Strategy 0 (fast path): a known videoId is checked against the Telegram DB
+  // BEFORE any YouTube oEmbed/getFile round-trips — those together cost ~7s
+  // cold, which looked like "loading forever then 0:00" on first click.
+  if (videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+    try {
+      const tgCached = await withTimeout(getCachedTelegramTrack({ videoId }), 4000);
+      if (tgCached?.tgFileId) {
+        console.log(`[AudioResolver] Telegram DB HIT (fast path): "${tgCached.title}"`);
+        return {
+          streamUrl: `/api/telegram/stream?fileId=${encodeURIComponent(tgCached.tgFileId)}&title=${encodeURIComponent(tgCached.title || title)}`,
+          directPlay: false,
+          source: "telegram",
+          title: tgCached.title || title,
+          artist: tgCached.artist || artist,
+          durationSec: tgCached.durationSec,
+          bitrate: "320kbps",
+          format: "mp3",
+          mimeType: tgCached.mimeType,
+          videoId: tgCached.videoId || videoId,
+        };
+      }
+    } catch (err: any) {
+      console.warn("[AudioResolver] Fast Telegram DB lookup failed:", err.message);
+    }
+  }
+
   let oembedArabicTitle: string | null = null;
   if (videoId && (!title || isGeneric || !/[\u0600-\u06FF]/.test(title))) {
     const oembed = await withTimeout(fetchYouTubeOEmbed(videoId), 3000);
