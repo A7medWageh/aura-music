@@ -157,19 +157,6 @@ function tokenizeSimple(s: string): string[] {
   return String(s || "").toLowerCase().split(/[\s|,_\-–—]+/).filter(Boolean);
 }
 
-// Normalized comparison key for a track title — used to match search/artist
-// songs against the artist's official album tracks.
-function titleKey(s: string): string {
-  return String(s || "")
-    .toLowerCase()
-    .replace(/\(.*?\)|\[.*?\]/g, " ")
-    .replace(/\b(official\s*(video|music\s*video|audio)|lyrics?|كليب|فيديو)\b/g, " ")
-    .replace(/[|·—–]/g, " ")
-    .replace(/[^a-z0-9\u0621-\u064A\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
 // ── getMusicCharts ────────────────────────────────────────────────────────────
 export async function getMusicCharts() {
   const innertube = await getYTWeb();
@@ -278,70 +265,9 @@ export async function searchYouTubeInnertube(query: string) {
     }
   }
 
-  // Wrong-song guard: third-party re-uploads steal official titles ("Replica |
-  // Abyusif" uploaded by another channel, audio is a different track). When the
-  // same search surfaces the artist's albums, replace song ids with the real
-  // album-track ids so clicks resolve the official master, not the bait video.
-  const songList = Array.from(songMap.values());
-  if (songList.length > 0 && albumMap.size > 0 && tokenizeSimple(query).length <= 4) {
-    // An album-track id replaces a search song only when the song's own artist
-    // matches the album artist — never swap based on title alone.
-    const artistOverlap = (a: string, b: string) => {
-      const na = norm(a).replace(/\s*-\s*topic\s*$/, "");
-      const nb = norm(b).replace(/\s*-\s*topic\s*$/, "");
-      if (!na || !nb) return false;
-      if (na.includes(nb) || nb.includes(na)) return true;
-      const wa = na.split(" ").filter((w) => w.length > 2);
-      const wb = new Set(nb.split(" ").filter((w) => w.length > 2));
-      return wa.some((w) => wb.has(w));
-    };
-
-    const wantedByTitle = new Map<string, any>();
-    songList.forEach((s: any) => {
-      const k = titleKey(s.title);
-      if (k && !wantedByTitle.has(k)) wantedByTitle.set(k, s);
-    });
-
-    const albumsToFetch = (Array.from(albumMap.values()) as any[])
-      .filter((a: any) => Array.from(wantedByTitle.values()).some((s: any) => artistOverlap(a.artist, s.artist)))
-      .slice(0, 3);
-
-    if (albumsToFetch.length > 0) {
-      const trackSets = await Promise.all(
-        albumsToFetch.map((a: any) =>
-          withTimeout(getAlbumDetailsYoutube(a.albumId).catch(() => null), 6000, null)
-        )
-      );
-      const officialByTitle = new Map<string, any>();
-      trackSets.forEach((album: any, i: number) => {
-        (album?.songs || []).forEach((t: any) => {
-          const k = titleKey(t.title);
-          const wanted = wantedByTitle.get(k);
-          if (!k || !wanted || !t.youtubeVideoId || officialByTitle.has(k)) return;
-          if (!artistOverlap(album.artist || albumsToFetch[i]?.artist, wanted.artist)) return;
-          officialByTitle.set(k, { ...t, albumId: album?.albumId || albumsToFetch[i]?.albumId });
-        });
-      });
-      if (officialByTitle.size > 0) {
-        songMap.clear();
-        songList.forEach((s: any) => {
-          const t = officialByTitle.get(titleKey(s.title));
-          if (t && t.youtubeVideoId !== s.songId) {
-            songMap.set(t.youtubeVideoId, {
-              ...s,
-              songId: t.youtubeVideoId,
-              youtubeVideoId: t.youtubeVideoId,
-              albumId: t.albumId || s.albumId || null,
-              artist: s.artist,
-              thumbnailUrl: s.thumbnailUrl || t.thumbnailUrl,
-            });
-          } else {
-            songMap.set(s.songId, s);
-          }
-        });
-      }
-    }
-  }
+  // Wrong-song guard lives in the audio resolver (artist gate on cached rows),
+  // NOT here: swapping ids to official album-track versions would orphan every
+  // Telegram-cached row (keys are the clicked upload ids) and break playback.
 
   const songs = Array.from(songMap.values()).filter((s: any) => !isJunkResult(s.title, s.artist)).slice(0, 30);
   const albums = Array.from(albumMap.values()).slice(0, 200);
@@ -877,39 +803,8 @@ export async function getArtistDetailsYoutube(artistId: string) {
 
   const uniqueSongs = Array.from(new Map(songs.map(s => [s.songId, s])).values());
 
-  // Wrong-song guard: YT Music's "popular songs" shelf happily ranks third-party
-  // re-uploads (same title, different audio). Swap any such song for the
-  // matching track from the artist's own discography when we have one.
-  try {
-    const discAlbumIds = Array.from(new Set([...newReleases, ...oldAlbums].map((a: any) => a.albumId)))
-      .filter((id: any) => typeof id === "string" && id.startsWith("MPREb_"))
-      .slice(0, 12);
-    if (discAlbumIds.length > 0 && uniqueSongs.length > 0) {
-      const trackSets = await Promise.all(
-        discAlbumIds.map((id) => withTimeout(getAlbumDetailsYoutube(id as string).catch(() => null), 6000, null))
-      );
-      const officialByTitle = new Map<string, string>();
-      const officialIds = new Set<string>();
-      trackSets.forEach((album: any) => {
-        (album?.songs || []).forEach((t: any) => {
-          if (!t.youtubeVideoId) return;
-          officialIds.add(t.youtubeVideoId);
-          const k = titleKey(t.title);
-          if (k && !officialByTitle.has(k)) officialByTitle.set(k, t.youtubeVideoId);
-        });
-      });
-      uniqueSongs.forEach((s: any) => {
-        const k = titleKey(s.title);
-        const off = k ? officialByTitle.get(k) : undefined;
-        if (off && off !== s.songId && !officialIds.has(s.songId)) {
-          s.songId = off;
-          s.youtubeVideoId = off;
-        }
-      });
-    }
-  } catch (e) {
-    console.warn("[Artist] official-track remap failed:", e);
-  }
+  // NB: no id remapping against album tracks here — Telegram cache rows are
+  // keyed by these ids; the wrong-song guard is the resolver's artist gate.
 
   if (uniqueSongs.length === 0 && oldAlbums.length === 0) {
     throw new Error("No artist data found via YouTube API");
@@ -921,7 +816,7 @@ export async function getArtistDetailsYoutube(artistId: string) {
     artistImage,
     subscribers: rawSubscribers,
     isVerified: true,
-    songs: Array.from(new Map(uniqueSongs.map((s: any) => [s.songId, s])).values()).slice(0, 100),
+    songs: uniqueSongs.slice(0, 100),
     newReleases: newReleases.sort((a, b) => b.year - a.year).slice(0, 20),
     oldAlbums: oldAlbums.sort((a, b) => b.year - a.year).slice(0, 300),
   };
