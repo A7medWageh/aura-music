@@ -313,14 +313,19 @@ export async function GET(req: NextRequest) {
     const targetVideoId = await getFallbackVideoId(videoId, title, artist);
     let resolved: UniversalAudioResult;
     try {
-      resolved = await resolveUniversalAudio({
-        videoId: targetVideoId || videoId,
-        title,
-        artist,
-        forDownload: isDownload,
-        skipBot: prefetch,
-      });
-    } catch (resolveError) {
+      resolved = await Promise.race([
+        resolveUniversalAudio({
+          videoId: targetVideoId || videoId,
+          title,
+          artist,
+          forDownload: isDownload,
+          skipBot: prefetch,
+        }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("resolve_timeout")), 18000)
+        ),
+      ]);
+    } catch (resolveError: any) {
       // Prefetch is best-effort cache warming: never run the heavy yt-dlp
       // ingest (worker health probes can burn 30s) and never answer 500 —
       // that just floods the browser console with red errors.
@@ -328,7 +333,20 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ error: "prefetch_miss" }, { status: 200 });
       }
       const fallbackVideoId = targetVideoId || videoId;
-      if (!fallbackVideoId || !/^[a-zA-Z0-9_-]{11}$/.test(fallbackVideoId)) throw resolveError;
+      const timedOut = resolveError?.message === "resolve_timeout";
+      if (!fallbackVideoId || !/^[a-zA-Z0-9_-]{11}$/.test(fallbackVideoId)) {
+        throw new Error(timedOut
+          ? "الأغنية لسه بيتنزّل دلوقتي — استنى نص دقيقة ودوس تاني"
+          : resolveError?.message || "مش قادر نستخرج الصوت دلوقتي");
+      }
+      // Without a connected extraction worker the yt-dlp ingest can never
+      // succeed — fail fast with a friendly message instead of stalling 30s+.
+      const workerUrl = await getRemoteWorkerUrl();
+      if (!workerUrl) {
+        throw new Error(timedOut
+          ? "الأغنية لسه بيتنزّل دلوقتي — استنى نص دقيقة ودوس تاني"
+          : "مش قادر نستخرج الصوت دلوقتي — شغّل خادم Aura Music Link أو جرّب أغنية تانية");
+      }
       console.warn(
         `[ytdownload] Audio providers failed for "${title || fallbackVideoId}"; trying yt-dlp Telegram ingestion`
       );
@@ -705,7 +723,7 @@ export async function GET(req: NextRequest) {
     }
     console.error("[ytdownload] Fatal Error:", error.message);
     return NextResponse.json(
-      { error: "Audio extraction failed", details: error.message },
+      { error: error.message || "Audio extraction failed", details: error.message },
       { status: 500 }
     );
   }

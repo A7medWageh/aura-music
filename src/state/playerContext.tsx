@@ -664,9 +664,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         if (!cancelled) {
           console.error("[Player] Playback error:", error);
           isLoadingNewSongRef.current = false;
+          // Stop claiming "playing" — otherwise the UI spins at 0:00 (or the
+          // previous track quietly keeps running) while the user watches nothing happen.
           setState((prev) => ({
             ...prev,
             isBuffering: false,
+            isPlaying: false,
             error: error instanceof Error ? error.message : "Playback error",
           }));
         }
