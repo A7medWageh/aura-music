@@ -65,6 +65,8 @@ export const BILINGUAL_ARTIST_MAP: Record<string, string> = {
   "farid al atrache": "فريد الاطرش",
   "warda": "وردة",
   "warda al jazairia": "وردة",
+  "abyusif": "ابيوسف",
+  "seif magdy": "سيف مجدي",
 };
 
 // Build reverse map (Arabic -> Latin primary)
@@ -105,6 +107,8 @@ export const ARABIC_TO_LATIN_MAP: Record<string, string> = {
   "عبد الحليم حافظ": "abdel halim hafez",
   "فريد الاطرش": "farid al atrache",
   "وردة": "warda",
+  "ابيوسف": "abyusif",
+  "أبيوسف": "abyusif",
 };
 
 export const UNWANTED_TERMS = [
@@ -166,6 +170,35 @@ export function cleanText(text: string): string {
 /**
  * Returns canonical Arabic and Latin forms of an artist name
  */
+function editDistance(a: string, b: string): number {
+  const m = a.length, n = b.length;
+  if (Math.abs(m - n) > 3) return 99;
+  let prev = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i++) {
+    const cur = [i];
+    for (let j = 1; j <= n; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = cur;
+  }
+  return prev[n];
+}
+
+/**
+ * True when both phrases have the same number of tokens and every token of the
+ * dictionary key has a near-identical counterpart — absorbs transliteration
+ * variants like "Abdel Haleem Hafiz" vs key "abdel halim hafez" while refusing
+ * different-length names (e.g. "Hamada" must not match "Mohamed Hamaki").
+ */
+function fuzzyTokenMatch(phrase: string, key: string): boolean {
+  const pt = phrase.split(" ").filter(Boolean);
+  const kt = key.split(" ").filter(Boolean);
+  if (!pt.length || pt.length !== kt.length) return false;
+  return kt.every((k) =>
+    pt.some((p) => editDistance(p, k) <= (Math.max(p.length, k.length) >= 6 ? 2 : 1))
+  );
+}
+
 export function getArtistForms(artistName: string): { arabic: string; latin: string } {
   const cleaned = cleanText(artistName);
   let arabic = "";
@@ -182,7 +215,7 @@ export function getArtistForms(artistName: string): { arabic: string; latin: str
   // Partial dictionary lookup for compound names (e.g. "Amr Diab Live")
   if (!arabic) {
     for (const [k, v] of Object.entries(BILINGUAL_ARTIST_MAP)) {
-      if (cleaned.includes(k) || k.includes(cleaned)) {
+      if (cleaned.includes(k) || k.includes(cleaned) || fuzzyTokenMatch(cleaned, k)) {
         arabic = v;
         break;
       }
@@ -191,7 +224,7 @@ export function getArtistForms(artistName: string): { arabic: string; latin: str
 
   if (!latin) {
     for (const [k, v] of Object.entries(ARABIC_TO_LATIN_MAP)) {
-      if (cleaned.includes(k) || k.includes(cleaned)) {
+      if (cleaned.includes(k) || k.includes(cleaned) || fuzzyTokenMatch(cleaned, k)) {
         latin = v;
         break;
       }

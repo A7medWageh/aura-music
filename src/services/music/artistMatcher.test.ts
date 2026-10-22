@@ -11,6 +11,15 @@ describe("artistMatcher", () => {
     expect(isStrictArtistMatch("عمرو دياب", "Sarah Cover")).toBe(false);
   });
 
+  it("tolerates Latin transliteration variants of dictionary artists", () => {
+    expect(isStrictArtistMatch("Abdel Haleem Hafiz", "عبد الحليم حافظ")).toBe(true);
+    expect(isStrictArtistMatch("Abyusif", "Abyusif I أبيوسف")).toBe(true);
+    // the mislabeled re-upload channel must never pass as Abyusif
+    expect(isStrictArtistMatch("Abyusif", "Aether Shade")).toBe(false);
+    // short names must not fuzzy-collide with dictionary artists
+    expect(isStrictArtistMatch("حمادة", "محمد حماقي")).toBe(false);
+  });
+
   it("detects unwanted tags like remix, cover, slowed, karaoke", () => {
     expect(hasUnwantedTags("Tamally Maak (Remix)", "Tamally Maak")).toBe(true);
     expect(hasUnwantedTags("Tamally Maak (Cover by Sarah)", "Tamally Maak")).toBe(true);
