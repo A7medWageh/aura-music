@@ -21,7 +21,7 @@ import { resolveSaavnSong } from "./jiosaavn";
 import { resolveAlbumatyStream } from "../scrapers/albumaty";
 import { getCachedTelegramTrack, getTelegramDirectUrl, uploadAudioUrlToTelegram } from "../telegram/telegramStorage";
 import { resolveViaMoonBot } from "../telegram/moonBotResolver";
-import { findBestOfficialVideo } from "./artistMatcher";
+import { findBestOfficialVideo, isStrictArtistMatch } from "./artistMatcher";
 
 export interface UniversalAudioResult {
   streamUrl: string;
@@ -323,13 +323,20 @@ export async function resolveUniversalAudio(params: {
     artist === "فنان غير معروف" ||
     artist.toLowerCase().includes("unknown");
 
+  // A DB row keyed by videoId is only trustworthy when its artist matches the
+  // clicked one — re-uploaded "same title, different audio" uploads (e.g. the
+  // "Replica | Abyusif" bait video by another channel) otherwise play a
+  // completely different song without any warning.
+  const rowMatchesArtist = (rowArtist?: string) =>
+    !rowArtist || !artist || isStrictArtistMatch(artist, rowArtist);
+
   // Strategy 0 (fast path): a known videoId is checked against the Telegram DB
   // BEFORE any YouTube oEmbed/getFile round-trips — those together cost ~7s
   // cold, which looked like "loading forever then 0:00" on first click.
   if (videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
     try {
       const tgCached = await withTimeout(getCachedTelegramTrack({ videoId }), 4000);
-      if (tgCached?.tgFileId) {
+      if (tgCached?.tgFileId && rowMatchesArtist(tgCached.artist)) {
         console.log(`[AudioResolver] Telegram DB HIT (fast path): "${tgCached.title}"`);
         return {
           streamUrl: `/api/telegram/stream?fileId=${encodeURIComponent(tgCached.tgFileId)}&title=${encodeURIComponent(tgCached.title || title)}`,
@@ -343,6 +350,10 @@ export async function resolveUniversalAudio(params: {
           mimeType: tgCached.mimeType,
           videoId: tgCached.videoId || videoId,
         };
+      } else if (tgCached?.tgFileId) {
+        console.warn(
+          `[AudioResolver] Wrong-upload guard: DB row for ${videoId} is "${tgCached.title} — ${tgCached.artist}", not "${title} — ${artist}"; ignoring`
+        );
       }
     } catch (err: any) {
       console.warn("[AudioResolver] Fast Telegram DB lookup failed:", err.message);
@@ -378,10 +389,21 @@ export async function resolveUniversalAudio(params: {
 
   // Strategy 0: Telegram DB cache (instant)
   try {
-    const tgCached = await withTimeout(
+    let tgCached = await withTimeout(
       getCachedTelegramTrack({ videoId, title, artist: effectiveArtist }),
       5000
     );
+    if (tgCached?.tgFileId && !rowMatchesArtist(tgCached.artist)) {
+      // The videoId row is a mislabeled upload — retry title-only so a
+      // correctly tagged row (different videoId) can still serve the song.
+      console.warn(
+        `[AudioResolver] Wrong-upload guard (strategy 0): ignoring "${tgCached.artist}" row for ${videoId}`
+      );
+      tgCached = await withTimeout(
+        getCachedTelegramTrack({ title, artist: effectiveArtist }),
+        5000
+      );
+    }
     if (tgCached?.tgFileId) {
       const telegramUrl = await getTelegramDirectUrl(tgCached.tgFileId);
       if (telegramUrl) {
@@ -461,7 +483,7 @@ export async function resolveUniversalAudio(params: {
     winner = await raceFirst([
       tryJioSaavn(title, effectiveArtist, videoId, 6000),
       tryAlbumaty(title, effectiveArtist, videoId, 8000),
-      ...(params.skipBot ? [] : [tryMoonBot(title, effectiveArtist, videoId, 40000)]),
+      ...(params.skipBot ? [] : [tryMoonBot(title, effectiveArtist, videoId, 15000)]),
     ]);
   }
 
