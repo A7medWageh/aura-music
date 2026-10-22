@@ -150,10 +150,7 @@ async function ingestYouTubeFallback(params: {
     if (!workerUrl) {
       throw new Error("YouTube audio extraction is unavailable: no yt-dlp worker is connected");
     }
-    const workerToken = process.env.REMOTE_STREAM_WORKER_TOKEN;
-    if (!workerToken) {
-      throw new Error("YouTube audio extraction is unavailable: REMOTE_STREAM_WORKER_TOKEN is not configured");
-    }
+    const workerToken = process.env.REMOTE_STREAM_WORKER_TOKEN || "";
 
     const workerParams = new URLSearchParams({
       videoId,
