@@ -327,8 +327,12 @@ export async function resolveUniversalAudio(params: {
   // clicked one — re-uploaded "same title, different audio" uploads (e.g. the
   // "Replica | Abyusif" bait video by another channel) otherwise play a
   // completely different song without any warning.
-  const rowMatchesArtist = (rowArtist?: string) =>
-    !rowArtist || !artist || isStrictArtistMatch(artist, rowArtist);
+  const rowIsRightSong = (row: { videoId?: string; artist?: string }) => {
+    // 1a rows share the clicked videoId (identity by id); rows found via the
+    // title+artist branch already matched on title — so the artist check is
+    // the remaining trust gap for polluted uploads.
+    return !artist || isStrictArtistMatch(artist, row.artist || "");
+  };
 
   // Strategy 0 (fast path): a known videoId is checked against the Telegram DB
   // BEFORE any YouTube oEmbed/getFile round-trips — those together cost ~7s
@@ -336,7 +340,7 @@ export async function resolveUniversalAudio(params: {
   if (videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
     try {
       const tgCached = await withTimeout(getCachedTelegramTrack({ videoId }), 4000);
-      if (tgCached?.tgFileId && rowMatchesArtist(tgCached.artist)) {
+      if (tgCached?.tgFileId && rowIsRightSong(tgCached)) {
         console.log(`[AudioResolver] Telegram DB HIT (fast path): "${tgCached.title}"`);
         return {
           streamUrl: `/api/telegram/stream?fileId=${encodeURIComponent(tgCached.tgFileId)}&title=${encodeURIComponent(tgCached.title || title)}`,
@@ -393,7 +397,22 @@ export async function resolveUniversalAudio(params: {
       getCachedTelegramTrack({ videoId, title, artist: effectiveArtist }),
       5000
     );
-    if (tgCached?.tgFileId && !rowMatchesArtist(tgCached.artist)) {
+    // Identity gate: a row answering THIS click must either carry the clicked
+    // videoId or have a title near-identical to the clicked one — otherwise a
+    // polluted "same artist, different song" row would play the wrong track.
+    if (tgCached?.tgFileId && tgCached.videoId && tgCached.videoId !== videoId) {
+      const clean = (s: string) =>
+        String(s || "").toLowerCase().replace(/[^a-z0-9\u0621-\u064A]+/g, "");
+      const rt = clean(tgCached.title);
+      const qt = clean(title);
+      if (rt && qt && rt !== qt && !(rt.length > 3 && (rt.includes(qt) || qt.includes(rt)))) {
+        console.warn(
+          `[AudioResolver] Wrong-title guard: row "${tgCached.title}" (${tgCached.videoId}) is not "${title}" (${videoId})`
+        );
+        tgCached = null;
+      }
+    }
+    if (tgCached?.tgFileId && !rowIsRightSong(tgCached)) {
       // The videoId row is a mislabeled upload — retry title-only so a
       // correctly tagged row (different videoId) can still serve the song.
       console.warn(
