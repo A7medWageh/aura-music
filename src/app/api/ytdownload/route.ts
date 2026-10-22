@@ -321,6 +321,12 @@ export async function GET(req: NextRequest) {
         skipBot: prefetch,
       });
     } catch (resolveError) {
+      // Prefetch is best-effort cache warming: never run the heavy yt-dlp
+      // ingest (worker health probes can burn 30s) and never answer 500 —
+      // that just floods the browser console with red errors.
+      if (prefetch) {
+        return NextResponse.json({ error: "prefetch_miss" }, { status: 200 });
+      }
       const fallbackVideoId = targetVideoId || videoId;
       if (!fallbackVideoId || !/^[a-zA-Z0-9_-]{11}$/.test(fallbackVideoId)) throw resolveError;
       console.warn(

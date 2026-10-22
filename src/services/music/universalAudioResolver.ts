@@ -443,9 +443,11 @@ export async function resolveUniversalAudio(params: {
     const albumatyTitle = arabicResolvedTitle || oembedArabicTitle || title;
     const albumatyArtist = arabicResolvedArtist || effectiveArtist;
 
-    // All three run in parallel — whoever finds the song first wins instantly
+    // All three run in parallel — whoever finds the song first wins instantly.
+    // MoonBot needs a human to press its reply button, so it must never hold
+    // the click path hostage: 15s cap, and its DB row shows up for next time.
     winner = await raceFirst([
-      ...(params.skipBot ? [] : [tryMoonBot(albumatyTitle, albumatyArtist, videoId, 90000)]),
+      ...(params.skipBot ? [] : [tryMoonBot(albumatyTitle, albumatyArtist, videoId, 15000)]),
       tryAlbumaty(albumatyTitle, albumatyArtist, videoId, 8000),
       tryJioSaavn(title, effectiveArtist, videoId, 6000),
     ]);
