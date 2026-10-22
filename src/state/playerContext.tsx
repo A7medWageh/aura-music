@@ -664,14 +664,18 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         if (!cancelled) {
           console.error("[Player] Playback error:", error);
           isLoadingNewSongRef.current = false;
+          const message = error instanceof Error ? error.message : "Playback error";
           // Stop claiming "playing" — otherwise the UI spins at 0:00 (or the
           // previous track quietly keeps running) while the user watches nothing happen.
           setState((prev) => ({
             ...prev,
             isBuffering: false,
             isPlaying: false,
-            error: error instanceof Error ? error.message : "Playback error",
+            error: message,
           }));
+          // The mini bar shows no error text — surface the reason as a toast
+          // so a failed song never looks like an infinite 0:00 load.
+          useToastStore.getState().addToast(message, "error");
         }
       }
     })();
