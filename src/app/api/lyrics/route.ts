@@ -218,6 +218,18 @@ interface GeniusHit {
 
 const GENIUS_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+// Genius' CDN answers datacenter IPs (Vercel) with a 403 challenge; a full
+// browser header set is tried before giving up on the source.
+const GENIUS_HEADERS: Record<string, string> = {
+  "User-Agent": GENIUS_UA,
+  Accept: "application/json, text/plain, */*",
+  "Accept-Language": "en-US,en;q=0.9,ar;q=0.8",
+  "Sec-Fetch-Dest": "empty",
+  "Sec-Fetch-Mode": "cors",
+  "Sec-Fetch-Site": "same-origin",
+  Origin: "https://genius.com",
+  Referer: "https://genius.com/",
+};
 
 /** Genius' own search API — free, and unlike RapidAPI it returns the credited artist. */
 async function geniusWebCandidates(
@@ -228,7 +240,7 @@ async function geniusWebCandidates(
 ): Promise<GeniusHit[]> {
   try {
     const res = await fetch(`https://genius.com/api/search/multi?q=${encodeURIComponent(searchQuery)}`, {
-      headers: { "User-Agent": GENIUS_UA, Accept: "application/json" },
+      headers: GENIUS_HEADERS,
     });
     if (!res.ok) {
       trace?.push(`genius_web_search_http_${res.status}`);
@@ -303,7 +315,7 @@ async function geniusWebLyrics(
   trace?: string[]
 ): Promise<{ cleaned: string; raw: string }> {
   const res = await fetch(url, {
-    headers: { "User-Agent": GENIUS_UA, Accept: "text/html,application/xhtml+xml" },
+    headers: { ...GENIUS_HEADERS, Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" },
   });
   if (!res.ok) {
     trace?.push(`genius_web_page_http_${res.status}`);
