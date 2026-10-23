@@ -604,6 +604,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         if (!data.url) throw new Error("لم يتم العثور على رابط صوتي للأغنية");
         if (cancelled) return;
 
+        // Fresh-song progressive start: kick off the full-file Telegram ingest
+        // in the background so the next play of this song is instant + seekable.
+        if (data.warmUrl) {
+          fetch(toAbsoluteApiUrl(data.warmUrl)).catch(() => {});
+        }
+
         // If directPlay is true and host allows CORS (like JioSaavn CDN), stream directly.
         // If host blocks CORS (like Albumaty) or requires custom headers, proxy via /api/stream-proxy
         const hasDirectCors = data.url.includes("saavncdn.com") || data.url.includes("sndcdn.com");

@@ -264,6 +264,8 @@ export async function GET(req: NextRequest) {
   const isDownload = searchParams.get("download") === "true";
   const prefetch = searchParams.get("prefetch") === "true";
   const forceYtDlp = searchParams.get("forceYtDlp") === "true";
+  const streamNow = searchParams.get("streamNow") === "true";
+  const ingestNow = searchParams.get("ingestNow") === "true";
 
   // Clean generic placeholders
   if (title === "أغنية محفوظة" || title === "song") title = undefined;
@@ -293,6 +295,64 @@ export async function GET(req: NextRequest) {
     return new NextResponse(stream, { status: 200, headers });
   }
 
+  // Progressive first-play: pipe the worker's live yt-dlp stream (TTFB ~4s)
+  // instead of waiting for the full file + Telegram upload ingest (~48s).
+  if (streamNow) {
+    if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+      return NextResponse.json({ error: "A valid videoId is required for streamNow" }, { status: 400 });
+    }
+    const workerUrl = await getRemoteWorkerUrl();
+    if (!workerUrl) {
+      return NextResponse.json(
+        { error: "مش قادر أستخرج الصوت دلوقتي — شغّل خادم Aura Music Link أو جرّب أغنية تانية" },
+        { status: 503 }
+      );
+    }
+    const workerRes = await fetch(
+      `${workerUrl}/api/ytdownload?videoId=${encodeURIComponent(videoId)}&forceYtDlp=true`,
+      {
+        headers: {
+          "User-Agent": "AuraMusic/1.0",
+          Authorization: `Bearer ${process.env.REMOTE_STREAM_WORKER_TOKEN || ""}`,
+        },
+        signal: AbortSignal.timeout(55000),
+      }
+    );
+    if (!workerRes.ok || !workerRes.body) {
+      return NextResponse.json(
+        { error: `استخراج الصوت فشل (HTTP ${workerRes.status}) — جرّب تاني بعد نص دقيقة` },
+        { status: 502 }
+      );
+    }
+    const streamHeaders = new Headers(NO_CACHE_HEADERS);
+    streamHeaders.set("Content-Type", workerRes.headers.get("content-type") || "audio/mp4");
+    streamHeaders.set("Content-Disposition", "inline");
+    streamHeaders.set("Access-Control-Allow-Origin", "*");
+    return new NextResponse(workerRes.body as any, { status: 200, headers: streamHeaders });
+  }
+
+  // Background cache warm (fire-and-forget from the player): full ingest to
+  // Telegram so the NEXT play is instant + seekable. Never throws at the client.
+  if (ingestNow) {
+    const vid = (await getFallbackVideoId(videoId, title, artist)) || videoId || "";
+    if (!/^[a-zA-Z0-9_-]{11}$/.test(vid)) {
+      return NextResponse.json({ ok: false, error: "A valid videoId is required for ingestNow" }, { status: 400 });
+    }
+    try {
+      const { getCachedTelegramTrack } = await import("@/services/telegram/telegramStorage");
+      const hit = await getCachedTelegramTrack({ videoId: vid, title, artist });
+      if (hit?.tgFileId) {
+        return NextResponse.json({ ok: true, cached: true }, { headers: NO_CACHE_HEADERS });
+      }
+      await ingestYouTubeFallback({ videoId: vid, title: title || vid, artist });
+      console.log(`[ytdownload] ingestNow warm done for ${vid}`);
+      return NextResponse.json({ ok: true }, { headers: NO_CACHE_HEADERS });
+    } catch (err: any) {
+      console.warn(`[ytdownload] ingestNow warm failed for ${vid}:`, err.message);
+      return NextResponse.json({ ok: false, error: err.message }, { headers: NO_CACHE_HEADERS });
+    }
+  }
+
   // If title has "Artist - Song", extract both
   if (title && title.includes("-")) {
     const parts = title.split("-");
@@ -308,20 +368,68 @@ export async function GET(req: NextRequest) {
 
   try {
     const targetVideoId = await getFallbackVideoId(videoId, title, artist);
+    const activeVid = targetVideoId || videoId || "";
+    const hasValidVid = /^[a-zA-Z0-9_-]{11}$/.test(activeVid);
+    const resolvePromise = resolveUniversalAudio({
+      videoId: targetVideoId || videoId,
+      title,
+      artist,
+      forDownload: isDownload,
+      skipBot: prefetch,
+    });
+
     let resolved: UniversalAudioResult;
     try {
-      resolved = await Promise.race([
-        resolveUniversalAudio({
-          videoId: targetVideoId || videoId,
-          title,
-          artist,
-          forDownload: isDownload,
-          skipBot: prefetch,
-        }),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("resolve_timeout")), 18000)
-        ),
-      ]);
+      if (resolveOnly && !prefetch && hasValidVid) {
+        // Fresh songs: after ~6s of no cached hit, if the extraction worker is
+        // alive, hand the player its progressive stream now (first sound ~10s)
+        // instead of blocking on full-file Telegram ingestion (~48s).
+        type RaceOutcome =
+          | { kind: "resolved"; result: UniversalAudioResult }
+          | { kind: "early" }
+          | { kind: "timeout" };
+        const outcome = await Promise.race<RaceOutcome>([
+          resolvePromise.then((result) => ({ kind: "resolved" as const, result })),
+          (async () => {
+            await new Promise((r) => setTimeout(r, 6000));
+            const workerAlive = await getRemoteWorkerUrl();
+            if (workerAlive) return { kind: "early" as const };
+            // Worker offline — stay out of the race; providers/timeout path decides.
+            return new Promise<RaceOutcome>(() => {});
+          })(),
+          new Promise<RaceOutcome>((r) => setTimeout(() => r({ kind: "timeout" as const }), 18000)),
+        ]);
+
+        if (outcome.kind === "early") {
+          const streamParams = new URLSearchParams({ videoId: activeVid, streamNow: "true" });
+          if (title) streamParams.set("title", title);
+          if (artist) streamParams.set("artist", artist);
+          const warmParams = new URLSearchParams({ videoId: activeVid, ingestNow: "true" });
+          if (title) warmParams.set("title", title);
+          if (artist) warmParams.set("artist", artist);
+          console.log(`[ytdownload] ⚡ Early progressive stream for "${title || activeVid}" — full-file warm queued in background`);
+          return NextResponse.json(
+            {
+              url: `/api/ytdownload?${streamParams.toString()}`,
+              warmUrl: `/api/ytdownload?${warmParams.toString()}`,
+              directPlay: true,
+              source: "stream",
+              title,
+              artist,
+            },
+            { headers: { ...NO_CACHE_HEADERS, "Access-Control-Allow-Origin": "*" } }
+          );
+        }
+        if (outcome.kind === "timeout") throw new Error("resolve_timeout");
+        resolved = outcome.result;
+      } else {
+        resolved = await Promise.race([
+          resolvePromise,
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("resolve_timeout")), 18000)
+          ),
+        ]);
+      }
     } catch (resolveError: any) {
       // Prefetch is best-effort cache warming: never run the heavy yt-dlp
       // ingest (worker health probes can burn 30s) and never answer 500 —
