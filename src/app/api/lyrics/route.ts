@@ -201,7 +201,7 @@ async function writeLyricsCache(
 /** Genius translation/annotation pages are never what the user wants. */
 function isJunkGeniusHit(title: string): boolean {
   const t = (title || "").toLowerCase();
-  return /translated|traduction|traducción|ترجمه|ترجمة|lyric interpretation|annotation/.test(t);
+  return /translated|translation|traduction|traducción|übersetzung|romanized|romanization|transliteration|ترجمه|ترجمة|lyric interpretation|annotation/.test(t);
 }
 
 interface GeniusHit {
@@ -210,7 +210,7 @@ interface GeniusHit {
   artist: string;
 }
 
-async function geniusCandidates(searchQuery: string, artistName: string): Promise<GeniusHit[]> {
+async function geniusCandidates(searchQuery: string, artistName: string, trackName: string): Promise<GeniusHit[]> {
   try {
     const res = await fetch(`https://${RAPIDAPI_HOST}/search/?q=${encodeURIComponent(searchQuery)}`, {
       headers: { "x-rapidapi-host": RAPIDAPI_HOST, "x-rapidapi-key": RAPIDAPI_KEY },
@@ -227,18 +227,20 @@ async function geniusCandidates(searchQuery: string, artistName: string): Promis
         artist: r?.primaryArtist?.name || r?.artist?.name || "",
       }))
       .filter((r) => !isJunkGeniusHit(r.title))
-      .filter((r) => !namesConflict(artistName, r.artist))
-      .slice(0, 3);
+      .map((r) => ({ r, score: geniusHitScore(r, trackName, artistName) }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 4)
+      .map((x) => x.r);
   } catch {
     return [];
   }
 }
 
-async function geniusLyrics(songId: number): Promise<string> {
+async function geniusLyrics(songId: number): Promise<{ cleaned: string; raw: string }> {
   const res = await fetch(`https://${RAPIDAPI_HOST}/song/lyrics/?id=${songId}`, {
     headers: { "x-rapidapi-host": RAPIDAPI_HOST, "x-rapidapi-key": RAPIDAPI_KEY },
   });
-  if (!res.ok) return "";
+  if (!res.ok) return { cleaned: "", raw: "" };
   const d = await res.json();
   const bodyObj = d?.lyrics?.lyrics?.body || d?.lyrics?.body || d?.body;
   let raw = "";
@@ -255,7 +257,26 @@ async function geniusLyrics(songId: number): Promise<string> {
       .replace(/&#39;/g, "'")
       .replace(/&nbsp;/g, " ");
   } else if (typeof d?.lyrics === "string") raw = d.lyrics;
-  return cleanGeniusLyrics(raw);
+  return { cleaned: cleanGeniusLyrics(raw), raw };
+}
+
+/**
+ * Genius section headers ("[المقطع الأول: سعد لمجرد و إليسا]", "[Verse 1: …]")
+ * name the real performer, which the search API doesn't return. That is the only
+ * reliable way to tell the right song from a same-title/unrelated hit.
+ */
+function geniusBodyArtists(raw: string, hitTitle: string, hitArtist: string): string[] {
+  const names = new Set<string>();
+  if (hitArtist) names.add(hitArtist);
+  const prefix = /^([^-–]{2,50})[-–]\s/.exec(hitTitle || "");
+  if (prefix) names.add(prefix[1]);
+  for (const m of (raw || "").matchAll(/\[([^\]\n]{0,70}):([^\]\n]{0,70})\]/g)) {
+    for (const part of m[2].split(/,|،|&|\/|\s+و\s*| ft\.?\s+|\s+\+\s+/i)) {
+      const t = part.replace(/<[^>]+>/g, "").trim();
+      if (t.length > 1 && t.length < 45 && !/^\d/.test(t)) names.add(t);
+    }
+  }
+  return [...names];
 }
 
 /** lrclib entries carry duration — pick the one matching this recording. */
@@ -301,6 +322,68 @@ async function archiveToLyricsChannel(track: string, artist: string, body: strin
   } catch {
     /* archiving never blocks lyrics delivery */
   }
+}
+
+/** Fold Arabic to Latin so "تملى معاك" can be compared with "Tamali M3ak". */
+const AR_FOLD: Record<string, string> = {
+  ا: "a", آ: "a", أ: "a", إ: "i", ء: "", ي: "y", ئ: "y", و: "w", ؤ: "u",
+  ب: "b", ت: "t", ث: "s", ج: "j", ح: "h", خ: "k", د: "d", ذ: "z", ر: "r",
+  ز: "z", س: "s", ش: "sh", ص: "s", ض: "d", ط: "t", ظ: "z", ع: "a", غ: "gh",
+  ف: "f", ق: "k", ك: "k", ل: "l", م: "m", ن: "n", ه: "h", ة: "t", ى: "a",
+};
+
+function foldName(value: string): string {
+  const norm = normalizeText(value);
+  if (!norm) return "";
+  let out = "";
+  for (const ch of norm) {
+    if (/[\u0600-\u06FF]/.test(ch)) out += AR_FOLD[ch] ?? "";
+    else if (/[a-z0-9]/.test(ch)) out += ch;
+  }
+  const consonants = out.replace(/[^a-z0-9]/g, "").replace(/(.)\1+/g, "$1").replace(/[aeiou]/g, "");
+  return consonants || out.replace(/[^a-z0-9]/g, "");
+}
+
+/** Bigram (Dice) similarity over script-folded names. */
+function nameSimilarity(a: string, b: string): number {
+  const fa = foldName(a);
+  const fb = foldName(b);
+  if (!fa || !fb) return 0;
+  if (fa === fb) return 1;
+  // Containment only counts when one name nearly covers the other — otherwise a
+  // short title like "hotel" would match "Heartbreak Hotel".
+  const [short, long] = fa.length <= fb.length ? [fa, fb] : [fb, fa];
+  if (short.length >= 4 && (long.includes(short) || short.includes(long)) && short.length / long.length >= 0.5) return 1;
+  const grams = (s: string) => {
+    const set = new Set<string>();
+    for (let i = 0; i < s.length - 1; i++) set.add(s.slice(i, i + 2));
+    return set;
+  };
+  const ga = grams(fa);
+  const gb = grams(fb);
+  let shared = 0;
+  for (const g of ga) if (gb.has(g)) shared++;
+  return (2 * shared) / (ga.size + gb.size || 1);
+}
+
+/**
+ * Genius search returns unrelated songs whose artist field is often missing, so
+ * score hits on both artist and title, and demand that an Arabic request yields
+ * Arabic text — otherwise the wrong song's lyrics get served with a confident
+ * source label.
+ */
+function geniusHitScore(hit: GeniusHit, track: string, artist: string): number {
+  const title = hit.title.replace(/^[^-]*[-–]\s*/, "");
+  const titleSim = nameSimilarity(track, title);
+  const artistSim = hit.artist ? nameSimilarity(artist, hit.artist) : 0;
+  return titleSim * 0.65 + artistSim * 0.35;
+}
+
+function arabicShare(text: string): number {
+  const letters = text.match(/[ء-يA-Za-z]/g);
+  if (!letters || letters.length < 20) return 1; // too short to judge
+  const ar = text.match(/[ء-ي]/g);
+  return (ar ? ar.length : 0) / letters.length;
 }
 
 function cachedResponse(row: CacheRow) {  return NextResponse.json(
@@ -363,6 +446,16 @@ export async function GET(req: NextRequest) {
     );
   };
 
+  // An Arabic-titled request must yield Arabic text, and no source may leak a
+  // Persian/Urdu translation page in place of the original lyrics.
+  const wantsArabic = /[ء-ي]/.test(`${cleanTrack}${artistName || ""}`);
+  const usable = (text: string): boolean => {
+    if (!text || text.length < 20) return false;
+    if (foreignScriptRatio(text) >= 0.06) return false;
+    if (wantsArabic && arabicShare(text) < 0.2) return false;
+    return true;
+  };
+
   try {
     // 1. YouTube timed captions — word-accurate for official videos
     if (videoId) {
@@ -370,7 +463,7 @@ export async function GET(req: NextRequest) {
       if (ytSynced?.syncedLyrics) {
         const plain = ytSynced.plainLyrics || "";
         const merged = `${plain}\n${ytSynced.syncedLyrics}`;
-        if (foreignScriptRatio(merged) < 0.06) {
+        if (usable(merged)) {
           return await succeed({
             lyrics: plain || ytSynced.syncedLyrics.split(/\n/).map((l) => l.replace(/^\[[^\]]*\]/, "").trim()).filter(Boolean).join("\n"),
             syncedLyrics: ytSynced.syncedLyrics,
@@ -389,7 +482,7 @@ export async function GET(req: NextRequest) {
 
       if (lrclibRes?.ok) {
         const data: LrclibHit = await lrclibRes.json();
-        if (data?.syncedLyrics && !namesConflict(artistName, data.artistName || "") && foreignScriptRatio(data.syncedLyrics) < 0.06) {
+        if (data?.syncedLyrics && !namesConflict(artistName, data.artistName || "") && usable(data.syncedLyrics)) {
           return await succeed({ lyrics: data.plainLyrics || null, syncedLyrics: data.syncedLyrics, source: "lrclib" });
         }
       }
@@ -403,10 +496,10 @@ export async function GET(req: NextRequest) {
       if (searchRes?.ok) {
         const results: LrclibHit[] = await searchRes.json();
         const best = pickLrclib(Array.isArray(results) ? results : [], durationSec, artistName);
-        if (best?.syncedLyrics && foreignScriptRatio(best.syncedLyrics) < 0.06) {
+        if (best?.syncedLyrics && usable(best.syncedLyrics)) {
           return await succeed({ lyrics: best.plainLyrics || null, syncedLyrics: best.syncedLyrics, source: "lrclib" });
         }
-        if (best?.plainLyrics && foreignScriptRatio(best.plainLyrics) < 0.06) {
+        if (best?.plainLyrics && usable(best.plainLyrics)) {
           return await succeed({ lyrics: best.plainLyrics, syncedLyrics: null, source: "lrclib" });
         }
       }
@@ -415,23 +508,33 @@ export async function GET(req: NextRequest) {
     // 4. YouTube Music native lyrics block
     if (videoId) {
       const ytLyrics = await getLyricsYoutube(videoId).catch(() => null);
-      if (ytLyrics && ytLyrics.length >= 20 && foreignScriptRatio(ytLyrics) < 0.06) {
+      if (usable(ytLyrics || "")) {
         return await succeed({ lyrics: ytLyrics, syncedLyrics: null, source: "youtubei" });
       }
     }
 
-    // 5. Genius via RapidAPI — artist-verified, translation pages rejected
-    const candidates = await geniusCandidates(searchQuery, artistName || "");
+    // 5. Genius via RapidAPI — page identity verified against the requested artist
+    const candidates = await geniusCandidates(searchQuery, artistName || "", cleanTrack);
     for (const cand of candidates) {
-      const lyrics = await geniusLyrics(cand.id).catch(() => "");
-      if (lyrics.length < 30) continue;
-      const ratio = foreignScriptRatio(lyrics);
-      if (ratio >= 0.06) {
-        const cleaned = stripForeignLines(lyrics);
-        if (cleaned.length < 30 || foreignScriptRatio(cleaned) >= 0.06) continue;
-        return await succeed({ lyrics: cleaned, syncedLyrics: null, source: "rapidapi-genius" });
+      const { cleaned, raw } = await geniusLyrics(cand.id).catch(() => ({ cleaned: "", raw: "" }));
+      if (cleaned.length < 30) continue;
+
+      const bodyArtists = geniusBodyArtists(raw, cand.title, cand.artist);
+      const artistSim = artistName
+        ? Math.max(0, ...bodyArtists.map((a) => nameSimilarity(artistName, a)))
+        : 0;
+      const titleSim = nameSimilarity(cleanTrack, cand.title.replace(/^[^-]*[-–]\s*/, ""));
+      // A page only counts as this song when the credited singer appears in it,
+      // or its own title is unmistakably the requested track.
+      if (artistSim < 0.25 && titleSim < 0.6) continue;
+
+      if (foreignScriptRatio(cleaned) >= 0.06) {
+        const stripped = stripForeignLines(cleaned);
+        if (stripped.length < 30 || !usable(stripped)) continue;
+        return await succeed({ lyrics: stripped, syncedLyrics: null, source: "rapidapi-genius" });
       }
-      return await succeed({ lyrics, syncedLyrics: null, source: "rapidapi-genius" });
+      if (!usable(cleaned)) continue;
+      return await succeed({ lyrics: cleaned, syncedLyrics: null, source: "rapidapi-genius" });
     }
 
     // 6. Gemini last resort (never for songs that may be copyrighted elsewhere)

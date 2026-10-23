@@ -389,6 +389,7 @@ function FullPlayer({
   const [lyrics, setLyrics] = useState<string | null>(null);
   const [syncedLyrics, setSyncedLyrics] = useState<{ timeMs: number; text: string }[] | null>(null);
   const [isLyricsLoading, setIsLyricsLoading] = useState(false);
+  const [lyricsSource, setLyricsSource] = useState<string | null>(null);
   // Manual timing nudge (ms) for songs whose lyrics start early/late, kept per song.
   const [lyricOffset, setLyricOffset] = useState(0);
   const manualScrollUntilRef = useRef(0);
@@ -444,6 +445,7 @@ function FullPlayer({
 
     setLyrics(null);
     setSyncedLyrics(null);
+    setLyricsSource(null);
 
     getLyrics(currentSong.songId).then((cached: any) => {
       if (cancelled || !cached) return;
@@ -451,15 +453,18 @@ function FullPlayer({
         if (looksForeign(cached.syncedLyrics.map((l: any) => l.text).join("\n"))) return;
         setSyncedLyrics(cached.syncedLyrics);
         setLyrics(cached.lyrics || null);
+        setLyricsSource(cached.source || null);
       } else if (cached.rawSynced) {
         const parsed = parseLrc(cached.rawSynced);
         if (looksForeign(cached.rawSynced) || parsed.length === 0) return;
         setSyncedLyrics(parsed);
         setLyrics(cached.lyrics || null);
+        setLyricsSource(cached.source || null);
       } else if (cached.lyrics && typeof cached.lyrics === "string") {
         if (looksForeign(cached.lyrics)) return;
         setLyrics(cached.lyrics);
         setSyncedLyrics(null);
+        setLyricsSource(cached.source || null);
       } else if (Array.isArray(cached) && cached.length > 0) {
         setSyncedLyrics(cached);
       }
@@ -502,6 +507,7 @@ function FullPlayer({
               const cleanPlain = d.lyrics || parsed.map(p => p.text).join("\n");
               setSyncedLyrics(parsed.length > 0 ? parsed : null);
               setLyrics(cleanPlain);
+              setLyricsSource(d.source || null);
               await storeLyrics(currentSong.songId, {
                 lyrics: cleanPlain,
                 syncedLyrics: parsed,
@@ -516,6 +522,7 @@ function FullPlayer({
                 .trim();
               setSyncedLyrics(null);
               setLyrics(cleanText);
+              setLyricsSource(d.source || null);
               await storeLyrics(currentSong.songId, {
                 lyrics: cleanText,
                 syncedLyrics: null,
@@ -908,7 +915,13 @@ function FullPlayer({
           >
             <div className="sticky top-0 z-10 flex items-center justify-between gap-2 pt-1 pb-3 bg-gradient-to-b from-black/40 to-transparent backdrop-blur-sm">
               <h3 className="text-white font-black text-lg">كلمات الأغنية</h3>
-              <div className="flex items-center gap-1 shrink-0">
+              <div className="flex items-center gap-1.5 shrink-0">
+                {lyricsSource === "ai" && (
+                  <span className="text-[10px] font-black text-amber-300 bg-amber-400/10 border border-amber-400/30 px-2 py-0.5 rounded-full">تقريبية بالذكاء الاصطناعي</span>
+                )}
+                {lyricsSource !== "ai" && syncedLyrics && syncedLyrics.length > 0 && (
+                  <span className="text-[10px] font-black text-emerald-300 bg-emerald-400/10 border border-emerald-400/30 px-2 py-0.5 rounded-full">متزامنة ✓</span>
+                )}
                 <button onClick={() => bumpLyricOffset(-2000)} className="w-7 h-7 rounded-full bg-white/10 border border-white/15 text-white text-sm font-black active:scale-90">−</button>
                 <span className="text-[10px] font-bold text-white/45 tabular-nums w-10 text-center" dir="ltr">
                   {lyricOffset === 0 ? "توقيت" : `${lyricOffset > 0 ? "+" : ""}${(lyricOffset / 1000).toFixed(0)}s`}
