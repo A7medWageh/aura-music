@@ -153,3 +153,7 @@ input[type="range"]::-webkit-slider-thumb {
   from { opacity: 0; }
   to   { opacity: 1; }
 }
+/* Expanded player owns the screen — the page refresh FAB would sit on its seek bar */
+body.player-full-open #floating-refresh-btn {
+  display: none !important;
+}

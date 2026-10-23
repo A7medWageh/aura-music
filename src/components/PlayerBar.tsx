@@ -678,28 +678,29 @@ function FullPlayer({
           }}
         >
 
-        {/* Notch band: controls sit to the right and left of the island, never under it */}
+        {/* Notch band: iOS draws the clock and battery inside the safe area, so the
+            controls sit on a row *below* it instead of competing with the status bar. */}
         <div
           className="flex items-end justify-between shrink-0"
           style={{
-            height: "max(46px, env(safe-area-inset-top, 0px))",
-            paddingBottom: "5px",
-            paddingLeft: "max(12px, env(safe-area-inset-left, 0px))",
-            paddingRight: "max(12px, env(safe-area-inset-right, 0px))",
+            height: "calc(env(safe-area-inset-top, 0px) + 44px)",
+            paddingBottom: "4px",
+            paddingLeft: "max(14px, env(safe-area-inset-left, 0px))",
+            paddingRight: "max(14px, env(safe-area-inset-right, 0px))",
           }}
         >
-          <button onClick={onClose} className="p-1.5 rounded-full hover:bg-white/10 transition active:scale-90">
+          <button onClick={onClose} className="p-2 rounded-full bg-white/[0.06] border border-white/10 hover:bg-white/10 transition active:scale-90">
             <ChevronDown className="w-6 h-6 text-white" />
           </button>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-2">
             <button
               onClick={cycleBgMode}
               title="شكل الخلفية"
-              className={`p-2 rounded-full border transition-all active:scale-90 ${bgMode === "epic"
+              className={`p-2.5 rounded-full border transition-all active:scale-90 ${bgMode === "epic"
                 ? "bg-white/10 border-white/25 text-white shadow-[0_0_14px_rgba(255,255,255,0.15)]"
                 : "bg-white/5 border-white/10 text-white/60 hover:text-white"}`}
             >
-              <Sparkles className="w-4 h-4" style={bgMode !== "calm" ? { color: bgMode === "epic" ? accent : undefined } : undefined} />
+              <Sparkles className="w-5 h-5" style={bgMode !== "calm" ? { color: bgMode === "epic" ? accent : undefined } : undefined} />
             </button>
             <button
               onClick={() => {
@@ -707,16 +708,16 @@ function FullPlayer({
                 else { setIsAiMix(!state.isAiMix); showToast(!state.isAiMix ? "تم تفعيل ميكس AI 🤖✨" : "تم إيقاف ميكس AI"); }
               }}
               title="ميكس AI"
-              className={`p-2 rounded-full border transition-all active:scale-90 ${state.isAiMix ? "bg-white text-black border-white" : "bg-white/5 text-white/70 border-white/10"}`}
+              className={`relative p-2.5 rounded-full border transition-all active:scale-90 ${state.isAiMix ? "bg-white text-black border-white" : "bg-white/5 text-white/70 border-white/10"}`}
             >
               {!isPremium && <Crown className="w-3 h-3 text-amber-400 absolute -top-1 -right-1" />}
-              <Sliders className="w-4 h-4" />
+              <Sliders className="w-5 h-5" />
             </button>
           </div>
         </div>
 
         {/* Title row (below the notch) */}
-        <div className="flex items-center justify-center gap-2 shrink-0 py-0.5">
+        <div className="flex items-center justify-center gap-2 shrink-0 pb-1">
           <p className="text-white/50 text-[11px] font-bold uppercase tracking-widest">يعزف الآن</p>
           {state.isHighQuality && (
             <span className="text-[10px] font-black text-cyan-300 flex items-center gap-1 bg-cyan-400/10 px-2.5 py-0.5 rounded-full border border-cyan-400/30 shadow-[0_0_12px_rgba(0,229,255,0.2)]">
@@ -727,16 +728,16 @@ function FullPlayer({
 
         {/* ═══════════ NOW PLAYING TAB ═══════════ */}
         {activeTab === "now" && (
-          <div className="flex-1 flex flex-col items-center justify-between px-4 pb-1 pt-0.5 overflow-hidden min-h-0 w-full">
+          <div className="flex-1 flex flex-col items-center justify-center gap-4 px-5 pb-2 overflow-hidden min-h-0 w-full">
 
             {/* Album Art — immersive, with orbiting aurora ring */}
-            <div className="w-full flex-1 flex items-center justify-center my-auto min-h-0 py-1 shrink">
+            <div className="w-full shrink min-h-0 flex items-center justify-center">
               <motion.div
                 key={currentSong?.songId}
                 initial={{ scale: 0.88, opacity: 0, rotate: -4 }}
                 animate={{ scale: 1, opacity: 1, rotate: 0 }}
                 transition={{ type: "spring", stiffness: 200, damping: 22 }}
-                className="relative w-[min(64vw,34vh,232px)] aspect-square flex items-center justify-center mx-auto"
+                className="relative w-[min(76vw,34vh,290px)] aspect-square flex items-center justify-center mx-auto"
               >
                 {bgMode !== "calm" && (
                   <BeatGlow accent={accent} energyRef={energyRef} enabled={state.isPlaying} />
@@ -769,18 +770,18 @@ function FullPlayer({
             </div>
 
             {/* Song Meta (Title + Artist + Heart + Download) */}
-            <div className="w-full flex items-center justify-between px-1 pt-1 pb-0.5 shrink-0">
-              <button onClick={onLike} className="p-2 rounded-full hover:bg-white/5 active:scale-90 transition-transform shrink-0">
+            <div className="w-full flex items-center justify-between shrink-0">
+              <button onClick={onLike} className="p-2 rounded-full bg-white/[0.05] border border-white/10 hover:bg-white/10 active:scale-90 transition-transform shrink-0">
                 <Heart
-                  className={`w-5 h-5 transition-all ${isLiked ? "fill-current text-pink-400 scale-110 drop-shadow-[0_0_8px_rgba(244,114,182,0.6)]" : "text-neutral-500 hover:text-white"}`}
+                  className={`w-6 h-6 transition-all ${isLiked ? "fill-current text-pink-400 scale-110 drop-shadow-[0_0_8px_rgba(244,114,182,0.6)]" : "text-neutral-400 hover:text-white"}`}
                 />
               </button>
-              <div className="flex-1 text-center px-2 min-w-0">
-                <h2 className="text-white font-black text-[17px] leading-tight truncate">{currentSong?.title || "—"}</h2>
-                <p className="text-neutral-400 text-xs font-medium mt-0.5 truncate">{currentSong?.artist || "فنان"}</p>
+              <div className="flex-1 text-center px-3 min-w-0">
+                <h2 className="text-white font-black text-[21px] leading-tight truncate">{currentSong?.title || "—"}</h2>
+                <p className="text-neutral-400 text-[13px] font-medium mt-1 truncate">{currentSong?.artist || "فنان"}</p>
               </div>
-              <button onClick={onDownload} className="p-2 rounded-full hover:bg-white/5 active:scale-90 transition-transform shrink-0">
-                <DownloadCloud className="w-5 h-5 text-neutral-500 hover:text-white transition-colors" />
+              <button onClick={onDownload} className="p-2 rounded-full bg-white/[0.05] border border-white/10 hover:bg-white/10 active:scale-90 transition-transform shrink-0">
+                <DownloadCloud className="w-6 h-6 text-neutral-400 hover:text-white transition-colors" />
               </button>
             </div>
 
@@ -790,7 +791,7 @@ function FullPlayer({
             </div>
 
             {/* Seek Bar + Times */}
-            <div className="w-full px-1 mb-1 shrink-0">
+            <div className="w-full shrink-0">
               <SeekBar
                 progress={state.currentTime}
                 duration={state.duration}
@@ -801,28 +802,28 @@ function FullPlayer({
                 isPremium={isPremium}
                 onPremiumClick={() => { setPremiumFeatureName("تقديم وتأخير الأغنية"); setIsPremiumModalOpen(true); }}
               />
-              <div className="flex justify-between mt-1 text-[11px] font-bold text-neutral-400 tabular-nums" dir="ltr">
+              <div className="flex justify-between mt-1.5 text-[12px] font-bold text-neutral-400 tabular-nums" dir="ltr">
                 <span>{fmtTime(state.currentTime)}</span>
                 <span>-{fmtTime(Math.max(0, state.duration - state.currentTime))}</span>
               </div>
             </div>
 
             {/* Playback Controls */}
-            <div className="flex items-center justify-between w-full max-w-[310px] mx-auto px-1 pb-1 shrink-0">
+            <div className="flex items-center justify-between w-full max-w-[330px] mx-auto shrink-0 mt-1">
               <button
                 onClick={() => setShuffle(!state.shuffle)}
-                className={`p-2 rounded-full transition-colors active:scale-90 ${state.shuffle ? "text-cyan-400 drop-shadow-[0_0_8px_rgba(0,242,254,0.6)]" : "text-neutral-500 hover:text-white"}`}
+                className={`p-2.5 rounded-full bg-white/[0.05] border border-white/10 transition-colors active:scale-90 ${state.shuffle ? "text-cyan-400 border-cyan-400/40 drop-shadow-[0_0_8px_rgba(0,242,254,0.6)]" : "text-neutral-400 hover:text-white"}`}
               >
                 <Shuffle className="w-5 h-5" />
               </button>
 
               <button onClick={prev} className="active:scale-90 transition-transform p-2 text-white hover:text-neutral-200">
-                <SkipBack className="w-7 h-7 fill-current" />
+                <SkipBack className="w-8 h-8 fill-current" />
               </button>
 
               <button
                 onClick={togglePlay}
-                className="relative w-16 h-16 rounded-full flex items-center justify-center bg-white text-black active:scale-95 transition-transform shrink-0"
+                className="relative w-[70px] h-[70px] rounded-full flex items-center justify-center bg-white text-black active:scale-95 transition-transform shrink-0"
                 style={{ boxShadow: `0 0 0 1px rgba(255,255,255,0.1), 0 10px 34px rgba(0,0,0,0.85), 0 0 38px ${accent}55` }}
               >
                 {state.isPlaying && (
@@ -836,19 +837,19 @@ function FullPlayer({
                 {state.isBuffering ? (
                   <div className="w-7 h-7 border-3 border-neutral-300 border-t-black rounded-full animate-spin" />
                 ) : state.isPlaying ? (
-                  <Pause className="w-7 h-7 fill-current text-black" />
+                  <Pause className="w-8 h-8 fill-current text-black" />
                 ) : (
-                  <Play className="w-7 h-7 fill-current text-black ml-0.5" />
+                  <Play className="w-8 h-8 fill-current text-black ml-0.5" />
                 )}
               </button>
 
               <button onClick={next} className="active:scale-90 transition-transform p-2 text-white hover:text-neutral-200">
-                <SkipForward className="w-7 h-7 fill-current" />
+                <SkipForward className="w-8 h-8 fill-current" />
               </button>
 
               <button
                 onClick={cycleRepeat}
-                className={`relative p-2 rounded-full transition-colors active:scale-90 ${state.repeat !== "off" ? "text-cyan-400 drop-shadow-[0_0_8px_rgba(0,242,254,0.6)]" : "text-neutral-500 hover:text-white"}`}
+                className={`relative p-2.5 rounded-full bg-white/[0.05] border transition-colors active:scale-90 ${state.repeat !== "off" ? "text-cyan-400 border-cyan-400/40 drop-shadow-[0_0_8px_rgba(0,242,254,0.6)]" : "text-neutral-400 border-white/10 hover:text-white"}`}
               >
                 <Repeat className="w-5 h-5" />
                 {state.repeat === "one" && (
@@ -1155,6 +1156,12 @@ export function PlayerBar() {
   const [isPremiumModalOpen, setIsPremiumModalOpen] = useState(false);
   const [premiumFeatureName, setPremiumFeatureName] = useState("");
   const { addToast } = useToastStore();
+
+  // The global refresh FAB floats over the player's seek bar once it is expanded.
+  useEffect(() => {
+    document.body.classList.toggle("player-full-open", fullOpen);
+    return () => document.body.classList.remove("player-full-open");
+  }, [fullOpen]);
 
   const isPremium = typeof window !== "undefined" && localStorage.getItem("aura_user_tier") === "premium";
   // Like state: check local store instantly without network call
