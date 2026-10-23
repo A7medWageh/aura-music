@@ -417,21 +417,28 @@ function FullPlayer({
     } catch { /* private mode */ }
   }, [currentSong?.songId]);
 
-  // Helper to parse standard LRC string [mm:ss.xx]
+  // Standard LRC: [mm:ss.xx], repeated tags per line, and the [offset:] metadata
+  // many files carry (ignoring it shifts every line and looks like bad sync).
   const parseLrc = (lrcString: string) => {
-    const lines = lrcString.split("\n");
     const parsed: { timeMs: number; text: string }[] = [];
-    for (const line of lines) {
-      const match = line.match(/^\[(\d{2}):(\d{2}(?:\.\d{2,3})?)\](.*)/);
-      if (match) {
-        const min = parseInt(match[1]);
-        const sec = parseFloat(match[2]);
-        const timeMs = Math.floor((min * 60 + sec) * 1000);
-        const text = match[3].trim();
-        if (text) parsed.push({ timeMs, text });
+    let offsetMs = 0;
+    const stamp = /\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g;
+    for (const line of (lrcString || "").split("\n")) {
+      const meta = line.match(/^\[offset:\s*([+-]?\d+)\]/i);
+      if (meta) {
+        offsetMs = parseInt(meta[1], 10) || 0;
+        continue;
+      }
+      const stamps = [...line.matchAll(stamp)];
+      if (!stamps.length) continue;
+      const text = line.replace(stamp, "").trim();
+      if (!text) continue;
+      for (const s of stamps) {
+        const ms = s[3] ? parseInt(s[3].padEnd(3, "0").slice(0, 3), 10) : 0;
+        parsed.push({ timeMs: Math.max(0, (parseInt(s[1], 10) * 60 + parseInt(s[2], 10)) * 1000 + ms - offsetMs), text });
       }
     }
-    return parsed;
+    return parsed.sort((a, b) => a.timeMs - b.timeMs);
   };
 
   // 1. Immediately check offline IndexedDB cache when currentSong changes
