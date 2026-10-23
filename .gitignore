@@ -43,3 +43,7 @@ VenomMusic-main/
 hayasaka-main/
 test_sub*
 scratch/
+# local MTProto session tooling (contains api credentials)
+tools/tg_user.py
+*.session
+tools/

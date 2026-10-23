@@ -7,8 +7,8 @@
  *  ┌─────────────────────────────────────────────────┐
  *  │  resolveViaMoonBot()                            │
  *  │    1. Send "يوتيوب" → bot posts menu in channel │
- *  │    2. Wait for human press of "بحث اليوتوب صوت"│
- *  │       ↑ detected via webhook (moonbot_mode)     │
+ *  │    2. Press "بحث اليوتوب صوت" via MTProto user │
+ *  │       session (mtprotoPress) — no human needed  │
  *  │    3. Send "تنزيل {title} {artist}" message    │
  *  │    4. Poll Neon DB (moonbot_pending table)       │
  *  │       ↑ populated by /api/telegram/webhook      │
@@ -23,6 +23,7 @@
  */
 
 import { saveTelegramCacheRecord, getTelegramDirectUrl } from "./telegramStorage";
+import { autoPressAudioButton } from "./mtprotoPress";
 import { query } from "@apis/neon";
 
 const BOT_TOKEN =
@@ -245,16 +246,23 @@ export async function resolveViaMoonBot(params: {
   // Ensure DB tables exist
   await ensurePendingTable();
 
-  // The bot only answers song queries in the short window after a HUMAN
-  // presses its "بحث اليوتوب صوت" button. Post "يوتيوب" to bring the menu
-  // up, then wait for the press (recorded by the webhook).
+  // The bot only answers song queries in the short window after its
+  // "بحث اليوتوب صوت" button is pressed. Post "يوتيوب" to bring the menu
+  // up, then press the button ourselves over MTProto (user session). The
+  // bot edits the menu → webhook records the window in moonbot_mode.
   let modeOpen = await isSearchModeActive();
   let triggerMsgId: number | null = null;
   if (!modeOpen) {
     triggerMsgId = await sendMsg("يوتيوب");
     if (!triggerMsgId) return null;
-    console.log(`[L10Bot] Menu posted — waiting for audio-search button press for "${title}"...`);
-    modeOpen = await waitForSearchMode(20000);
+    console.log(`[L10Bot] Menu posted — auto-pressing audio-search button for "${title}"...`);
+    const pressed = await autoPressAudioButton(12000);
+    modeOpen = await waitForSearchMode(pressed ? 8000 : 20000);
+    if (!modeOpen && pressed) {
+      // Click was accepted but the webhook row hasn't landed yet — the
+      // bot window is open regardless; proceed optimistically.
+      modeOpen = true;
+    }
   }
   if (!modeOpen) {
     console.warn(`[L10Bot] No button press within 20s; bot ignores text-only queries — giving up "${title}"`);
