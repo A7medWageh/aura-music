@@ -41,6 +41,8 @@ export function streamAudioFromYouTube(videoId: string) {
     "-f", "ba[ext=m4a]/ba[ext=mp3]/bestaudio/ba/b",
     "-o", "-",
     "--no-warnings",
+    "--no-playlist",
+    "-q",
     `https://www.youtube.com/watch?v=${videoId}`
   ];
 

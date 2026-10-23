@@ -391,7 +391,9 @@ export async function uploadAudioBufferToTelegram(params: {
       const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendAudio`, {
         method: "POST",
         body: formData,
-        signal: AbortSignal.timeout(30000),
+        // The 24/7 worker uploads over a home uplink (~100-150 KB/s), so a
+        // 5-10 MB song legitimately needs over a minute to land.
+        signal: AbortSignal.timeout(180000),
       });
 
       const data = await res.json();
