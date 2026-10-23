@@ -236,6 +236,7 @@ async function geniusWebCandidates(
   searchQuery: string,
   artistName: string,
   trackName: string,
+  state: { blocked: boolean },
   trace?: string[]
 ): Promise<GeniusHit[]> {
   try {
@@ -244,6 +245,8 @@ async function geniusWebCandidates(
     });
     if (!res.ok) {
       trace?.push(`genius_web_search_http_${res.status}`);
+      // A 403 from Genius' CDN means they refuse us, not that the song is missing.
+      if (res.status === 403 || isTransientError(res.status)) state.blocked = true;
       return [];
     }
     const data = await res.json();
@@ -312,6 +315,7 @@ function htmlToLyricText(html: string): string {
 
 async function geniusWebLyrics(
   url: string,
+  state: { blocked: boolean },
   trace?: string[]
 ): Promise<{ cleaned: string; raw: string }> {
   const res = await fetch(url, {
@@ -319,6 +323,7 @@ async function geniusWebLyrics(
   });
   if (!res.ok) {
     trace?.push(`genius_web_page_http_${res.status}`);
+    if (res.status === 403 || isTransientError(res.status)) state.blocked = true;
     return { cleaned: "", raw: "" };
   }
   const page = await res.text();
@@ -419,6 +424,119 @@ function geniusBodyArtists(raw: string, hitTitle: string, hitArtist: string): st
     }
   }
   return [...names];
+}
+
+/**
+ * Genius lookup: search → identity gate → page download → body verification.
+ * Returns null when nothing on Genius can be proven to be this song.
+ */
+async function geniusStage(opts: {
+  searchQuery: string;
+  artistName: string;
+  cleanTrack: string;
+  upstream: { blocked: boolean };
+  wantsArabic: boolean;
+  trace: string[];
+  debug: boolean;
+}): Promise<{ lyrics: string; source: string } | null> {
+  const { searchQuery, artistName, cleanTrack, upstream, trace, debug } = opts;  let useWeb = true;
+  let candidates = await geniusWebCandidates(searchQuery, artistName, cleanTrack, upstream, debug ? trace : undefined);
+  if (candidates.length === 0) {
+    useWeb = false;
+    candidates = await geniusCandidates(searchQuery, artistName, cleanTrack, upstream, debug ? trace : undefined);
+  }
+  for (const cand of candidates) {
+    // Cheap gate first: the search result already names the artist, so a page
+    // only gets downloaded when the metadata could plausibly be this song.
+    const metaArtists = geniusBodyArtists("", cand.title, cand.artist);
+    const metaArtistSim = artistName
+      ? Math.max(0, ...metaArtists.map((a) => nameSimilarity(artistName, a)))
+      : 0;
+    const metaTitleSim = nameSimilarity(cleanTrack, cand.title.replace(/^[^-]*[-–]\s*/, ""));
+    if (metaArtistSim < 0.25 && metaTitleSim < 0.6) {
+      trace?.push(`genius_meta_reject_${cand.id} "${cand.title.slice(0, 30)}" aSim=${metaArtistSim.toFixed(2)} tSim=${metaTitleSim.toFixed(2)}`);
+      continue;
+    }
+
+    const { cleaned, raw } = await (useWeb && cand.url
+      ? geniusWebLyrics(cand.url, upstream, debug ? trace : undefined)
+      : geniusLyrics(cand.id, upstream, debug ? trace : undefined)
+    ).catch(() => ({ cleaned: "", raw: "" }));
+    if (cleaned.length < 30) continue;
+
+    const bodyArtists = geniusBodyArtists(raw, cand.title, cand.artist);
+    const artistSim = artistName ? Math.max(0, ...bodyArtists.map((a) => nameSimilarity(artistName, a))) : 0;
+    const titleSim = nameSimilarity(cleanTrack, cand.title.replace(/^[^-]*[-–]\s*/, ""));
+    if (debug) trace.push(`genius_${cand.id} "${cand.title.slice(0, 40)}" aSim=${artistSim.toFixed(2)} tSim=${titleSim.toFixed(2)} ar=${arabicShare(cleaned).toFixed(2)}`);
+    // A page only counts as this song when the credited singer appears in it,
+    // or its own title is unmistakably the requested track.
+    if (artistSim < 0.25 && titleSim < 0.6) continue;
+
+    if (foreignScriptRatio(cleaned) >= 0.06) {
+      const stripped = stripForeignLines(cleaned);
+      if (stripped.length < 30 || !usableLyrics(stripped, opts.wantsArabic)) continue;
+      return { lyrics: stripped, source: useWeb ? "genius" : "rapidapi-genius" };
+    }
+    if (!usableLyrics(cleaned, opts.wantsArabic)) continue;
+    return { lyrics: cleaned, source: useWeb ? "genius" : "rapidapi-genius" };
+  }
+  return null;
+}
+
+/**
+ * Genius' CDN answers Vercel's datacenter IPs with a 403 challenge. The always-on
+ * worker laptop has a residential address, so production can ask it to run the
+ * Genius stage on its behalf (`?provider=genius` on the same endpoint).
+ */
+let relayUrl: { base: string; at: number } | null = null;
+
+async function relayWorkerUrl(): Promise<string | null> {
+  if (relayUrl && Date.now() - relayUrl.at < 120000) return relayUrl.base;
+  try {
+    const rows = await query<{ value: string }>(
+      "SELECT value FROM system_config WHERE key = 'tunnel_url' LIMIT 1"
+    );
+    const base = rows.rows[0]?.value?.trim();
+    if (!base || !/^https?:\/\//.test(base)) return null;
+    const health = await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(5000) }).catch(() => null);
+    if (!health?.ok) return null;
+    relayUrl = { base, at: Date.now() };
+    return base;
+  } catch {
+    return null;
+  }
+}
+
+async function geniusViaRelay(
+  trackName: string,
+  artistName: string,
+  state: { blocked: boolean },
+  trace?: string[]
+): Promise<string | null> {
+  const base = await relayWorkerUrl();
+  if (!base) {
+    trace?.push("genius_relay_no_worker");
+    state.blocked = true; // worker offline ≠ the song has no lyrics
+    return null;
+  }
+  const params = new URLSearchParams({ provider: "genius", trackName, artistName });
+  const res = await fetch(`${base}/api/lyrics?${params.toString()}`, {
+    signal: AbortSignal.timeout(15000),
+  }).catch(() => null);
+  if (!res) {
+    trace?.push("genius_relay_timeout");
+    state.blocked = true;
+    return null;
+  }
+  if (!res.ok) {
+    trace?.push(`genius_relay_http_${res.status}`);
+    if (res.status === 503) state.blocked = true;
+    return null;
+  }
+  const data = await res.json().catch(() => null);
+  const lyrics = typeof data?.lyrics === "string" ? data.lyrics : "";
+  trace?.push(lyrics.length > 30 ? "genius_relay_ok" : "genius_relay_empty");
+  return lyrics.length > 30 ? lyrics : null;
 }
 
 /** lrclib entries carry duration — pick the one matching this recording. */
@@ -528,6 +646,14 @@ function arabicShare(text: string): number {
   return (ar ? ar.length : 0) / letters.length;
 }
 
+/** A lyric sheet is only usable if it is long enough and in the singer's language. */
+function usableLyrics(text: string, wantsArabic: boolean): boolean {
+  if (!text || text.length < 20) return false;
+  if (foreignScriptRatio(text) >= 0.06) return false;
+  if (wantsArabic && arabicShare(text) < 0.2) return false;
+  return true;
+}
+
 function cachedResponse(row: CacheRow) {  return NextResponse.json(
     {
       lyrics: row.plain_lyrics || undefined,
@@ -549,11 +675,17 @@ export async function GET(req: NextRequest) {
   const durationSec = parseInt(searchParams.get("duration") || "0", 10) || 0;
   const refresh = searchParams.get("refresh") === "true";
   const debug = searchParams.get("debug") === "true";
+  // `provider=genius` is the worker-side relay mode: run only the Genius stage,
+  // touch no cache, and answer 503 when nothing verifiable was found.
+  const geniusOnly = searchParams.get("provider") === "genius";
   const trace: string[] = [];
   const upstream = { blocked: false };
 
   const videoId = /^[a-zA-Z0-9_-]{11}$/.test(videoIdParam) ? videoIdParam : "";
   const cleanTrack = cleanTrackName(trackName || "");
+  // An Arabic-titled request must yield Arabic text, and no source may leak a
+  // Persian/Urdu translation page in place of the original lyrics.
+  const wantsArabic = /[ء-ي]/.test(`${cleanTrack}${artistName || ""}`);
 
   if (!cleanTrack && !videoId) {
     return NextResponse.json({ error: "Missing trackName or videoId" }, { status: 400 });
@@ -562,11 +694,36 @@ export async function GET(req: NextRequest) {
   const keys = cacheKeys(videoId, cleanTrack, artistName || "");
   const searchQuery = `${cleanTrack} ${artistName || ""}`.trim();
 
+  if (geniusOnly) {
+    const only = await geniusStage({
+      searchQuery,
+      artistName: artistName || "",
+      cleanTrack,
+      upstream,
+      wantsArabic,
+      trace,
+      debug,
+    });
+    if (!only) {
+      return NextResponse.json(
+        debug ? { error: "Lyrics not found", trace } : { error: "Lyrics not found" },
+        { status: 503 }
+      );
+    }
+    return NextResponse.json(
+      { lyrics: only.lyrics, source: only.source, cached: false, ...(debug ? { trace } : {}) },
+      { headers: { "Cache-Control": "no-store" } }
+    );
+  }
+
   if (!refresh) {
     const row = await readLyricsCache(keys, videoId);
     if (row) {
       if (row.source === "none") {
-        return NextResponse.json({ error: "Lyrics not found" }, { status: 404 });
+        return NextResponse.json(
+          debug ? { error: "Lyrics not found", trace: ["cache_none"] } : { error: "Lyrics not found" },
+          { status: 404 }
+        );
       }
       return cachedResponse(row);
     }
@@ -597,13 +754,7 @@ export async function GET(req: NextRequest) {
 
   // An Arabic-titled request must yield Arabic text, and no source may leak a
   // Persian/Urdu translation page in place of the original lyrics.
-  const wantsArabic = /[ء-ي]/.test(`${cleanTrack}${artistName || ""}`);
-  const usable = (text: string): boolean => {
-    if (!text || text.length < 20) return false;
-    if (foreignScriptRatio(text) >= 0.06) return false;
-    if (wantsArabic && arabicShare(text) < 0.2) return false;
-    return true;
-  };
+  const usable = (text: string): boolean => usableLyrics(text, wantsArabic);
 
   try {
     // 1. YouTube timed captions — word-accurate for official videos
@@ -665,49 +816,17 @@ export async function GET(req: NextRequest) {
     // 5. Genius — page identity verified against the requested artist.
     // Genius' own (key-free) API is primary; RapidAPI is quota-capped and only
     // covers the case where Genius blocks us.
-    let useWeb = true;
-    let candidates = await geniusWebCandidates(searchQuery, artistName || "", cleanTrack, debug ? trace : undefined);
-    if (candidates.length === 0) {
-      useWeb = false;
-      candidates = await geniusCandidates(searchQuery, artistName || "", cleanTrack, upstream, debug ? trace : undefined);
+    const direct = await geniusStage({ searchQuery, artistName: artistName || "", cleanTrack, upstream, wantsArabic, trace, debug });
+    if (direct) {
+      return await succeed({ lyrics: direct.lyrics, syncedLyrics: null, source: direct.source });
     }
-    for (const cand of candidates) {
-      // Cheap gate first: the search result already names the artist, so a page
-      // only gets downloaded when the metadata could plausibly be this song.
-      const metaArtists = geniusBodyArtists("", cand.title, cand.artist);
-      const metaArtistSim = artistName
-        ? Math.max(0, ...metaArtists.map((a) => nameSimilarity(artistName, a)))
-        : 0;
-      const metaTitleSim = nameSimilarity(cleanTrack, cand.title.replace(/^[^-]*[-–]\s*/, ""));
-      if (metaArtistSim < 0.25 && metaTitleSim < 0.6) {
-        trace?.push(`genius_meta_reject_${cand.id} "${cand.title.slice(0, 30)}" aSim=${metaArtistSim.toFixed(2)} tSim=${metaTitleSim.toFixed(2)}`);
-        continue;
+
+    // Vercel's egress IPs get a 403 from Genius — let the worker laptop fetch it.
+    if (!geniusOnly) {
+      const relayed = await geniusViaRelay(cleanTrack, artistName || "", upstream, debug ? trace : undefined);
+      if (relayed) {
+        return await succeed({ lyrics: relayed, syncedLyrics: null, source: "genius-relay" });
       }
-
-      const { cleaned, raw } = await (useWeb && cand.url
-        ? geniusWebLyrics(cand.url, debug ? trace : undefined)
-        : geniusLyrics(cand.id, upstream, debug ? trace : undefined)
-      ).catch(() => ({ cleaned: "", raw: "" }));
-      if (cleaned.length < 30) continue;
-
-      const bodyArtists = geniusBodyArtists(raw, cand.title, cand.artist);
-      const artistSim = artistName
-        ? Math.max(0, ...bodyArtists.map((a) => nameSimilarity(artistName, a)))
-        : 0;
-      const titleSim = nameSimilarity(cleanTrack, cand.title.replace(/^[^-]*[-–]\s*/, ""));
-      if (debug) trace.push(`genius_${cand.id} "${cand.title.slice(0, 40)}" aSim=${artistSim.toFixed(2)} tSim=${titleSim.toFixed(2)} ar=${arabicShare(cleaned).toFixed(2)}`);
-      // A page only counts as this song when the credited singer appears in it,
-      // or its own title is unmistakably the requested track.
-      if (artistSim < 0.25 && titleSim < 0.6) continue;
-
-      const lyricSource = useWeb ? "genius" : "rapidapi-genius";
-      if (foreignScriptRatio(cleaned) >= 0.06) {
-        const stripped = stripForeignLines(cleaned);
-        if (stripped.length < 30 || !usable(stripped)) continue;
-        return await succeed({ lyrics: stripped, syncedLyrics: null, source: lyricSource });
-      }
-      if (!usable(cleaned)) continue;
-      return await succeed({ lyrics: cleaned, syncedLyrics: null, source: lyricSource });
     }
 
     // 6. Gemini last resort (never for songs that may be copyrighted elsewhere)
