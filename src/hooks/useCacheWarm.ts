@@ -3,9 +3,10 @@
 import { useEffect } from "react";
 
 // ─── Shared cache-warming hook ───────────────────────────────────────
-// Resolves songs in the background via /api/ytdownload?prefetch=true so the
-// first click hits the cache and plays instantly. prefetch keeps @L_10_BOT
-// out of it — no "يوتيوب" menu spam in the channel.
+// Queues songs for the extraction worker via /api/ytdownload?ingestNow=true so
+// the first click hits the Telegram cache and plays instantly. The worker runs
+// the download+upload detached (no serverless time cap) and returns at once,
+// and @L_10_BOT stays out of it — no "يوتيوب" menu spam in the channel.
 // A page-wide seen set avoids re-warming songs the user already saw.
 
 type WarmSong = {
@@ -21,17 +22,18 @@ export function useCacheWarm(songs: WarmSong[] | null | undefined, max = 12, ste
     const seen: Set<string> = ((window as any).__auraWarmed ??= new Set());
     const timers: number[] = [];
     songs.slice(0, max).forEach((s, i) => {
+      const vid = s.youtubeVideoId || (s.songId && /^[a-zA-Z0-9_-]{11}$/.test(s.songId) ? s.songId : "");
+      if (!vid) return;
       const key = String(s.songId || `${s.title}-${s.artist}`);
       if (seen.has(key)) return;
       const id = window.setTimeout(() => {
         if (seen.has(key)) return;
         seen.add(key);
         const p = new URLSearchParams();
-        if (s.youtubeVideoId) p.set("videoId", s.youtubeVideoId);
+        p.set("videoId", vid);
         if (s.title) p.set("title", s.title);
         if (s.artist) p.set("artist", s.artist);
-        p.set("resolveOnly", "true");
-        p.set("prefetch", "true");
+        p.set("ingestNow", "true");
         fetch(`/api/ytdownload?${p.toString()}`).catch(() => {});
       }, 2000 + i * stepMs);
       timers.push(id);

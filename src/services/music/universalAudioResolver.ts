@@ -456,10 +456,15 @@ export async function resolveUniversalAudio(params: {
       `${title} ${artist}`
     );
 
+  // Text-search providers, @L_10_BOT and SoundCloud are useless with no title —
+  // they get posted an empty query, burn their full poll window and leave menu
+  // spam in the channel. videoId-only requests go straight to the id-based path.
+  const hasSearchTitle = Boolean(title.trim());
+
   let arabicResolvedTitle = oembedArabicTitle || null;
   let arabicResolvedArtist = effectiveArtist || null;
 
-  if (isArabicSong && (!arabicResolvedTitle || !/[\u0600-\u06FF]/.test(title))) {
+  if (hasSearchTitle && isArabicSong && (!arabicResolvedTitle || !/[\u0600-\u06FF]/.test(title))) {
     const webArabic = await extractArabicFromWeb(`${artist || ""} ${title}`);
     if (webArabic?.title) {
       arabicResolvedTitle = webArabic.title;
@@ -480,7 +485,7 @@ export async function resolveUniversalAudio(params: {
   // ─────────────────────────────────────────────────────────────────
   let winner: UniversalAudioResult | null = null;
 
-  if (isArabicSong) {
+  if (hasSearchTitle && isArabicSong) {
     const albumatyTitle = arabicResolvedTitle || oembedArabicTitle || title;
     const albumatyArtist = arabicResolvedArtist || effectiveArtist;
 
@@ -497,7 +502,7 @@ export async function resolveUniversalAudio(params: {
     if (!winner && albumatyTitle !== title) {
       winner = await tryAlbumaty(title, effectiveArtist, videoId, 5000);
     }
-  } else {
+  } else if (hasSearchTitle) {
     // Non-Arabic: JioSaavn + Albumaty race, moonbot as parallel backup
     winner = await raceFirst([
       tryJioSaavn(title, effectiveArtist, videoId, 6000),
@@ -513,7 +518,7 @@ export async function resolveUniversalAudio(params: {
   }
 
   // Strategy 3: SoundCloud fallback
-  const scResult = await trySoundCloud(title, effectiveArtist, videoId, 6000);
+  const scResult = hasSearchTitle ? await trySoundCloud(title, effectiveArtist, videoId, 6000) : null;
   if (scResult) {
     return await ingestToTelegram(scResult, cacheKey, title, effectiveArtist, videoId);
   }
@@ -523,6 +528,7 @@ export async function resolveUniversalAudio(params: {
   try {
     const { searchYouTube } = await import("@apis/youtubei.js");
     const q = `${effectiveArtist || ""} ${title}`.trim();
+    if (!q) throw new Error("nothing to search");
     const searchRes = await withTimeout(searchYouTube(q), 4000);
     const songs = (searchRes as any)?.songs || (searchRes as any)?.videos || [];
     const candidates = songs.map((s: any) => ({

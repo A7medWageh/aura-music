@@ -12,7 +12,7 @@ let lastWorkerCheck = 0;
 async function checkWorkerHealth(url: string): Promise<boolean> {
   try {
     const res = await fetch(`${url}/api/health`, {
-      signal: AbortSignal.timeout(3500),
+      signal: AbortSignal.timeout(1800),
       headers: { "User-Agent": "AuraMusic/1.0" },
     });
     return res.ok;
@@ -130,6 +130,61 @@ async function readAudioBuffer(body: ReadableStream<Uint8Array> | null): Promise
 
   if (!totalBytes) throw new Error("Audio source returned an empty file");
   return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)), totalBytes);
+}
+
+// Two players (or a retrying poll) can ask for the same cold song at once.
+// Each un-deduped ingest downloads the whole file and uploads it to Telegram
+// again, which is what filled the channel with duplicate audio messages.
+const ingesting = new Map<string, Promise<void>>();
+const MAX_PARALLEL_INGESTS = 2;
+const ingestWaiters: Array<() => void> = [];
+let runningIngests = 0;
+
+async function ingestOnce(videoId: string, title: string, artist?: string): Promise<void> {
+  const existing = ingesting.get(videoId);
+  if (existing) return existing;
+  const run = (async () => {
+    // One laptop can extract a couple of songs at a time; letting a page of
+    // prefetches all start at once makes every single one of them slower.
+    if (runningIngests >= MAX_PARALLEL_INGESTS) {
+      await new Promise<void>((resolve) => ingestWaiters.push(resolve));
+    }
+    runningIngests++;
+    try {
+      await ingestYouTubeFallback({ videoId, title, artist });
+    } finally {
+      runningIngests--;
+      ingestWaiters.shift()?.();
+    }
+  })()
+    .finally(() => ingesting.delete(videoId));
+  ingesting.set(videoId, run);
+  return run;
+}
+
+async function getTelegramCacheRow(videoId: string, title?: string, artist?: string) {
+  const { getCachedTelegramTrack } = await import("@/services/telegram/telegramStorage");
+  return getCachedTelegramTrack({ videoId, title, artist });
+}
+
+// The laptop extraction worker has no request time cap, so the heavy
+// download+upload runs there in the background and answers immediately.
+async function queueWorkerIngest(workerUrl: string, videoId: string, title?: string, artist?: string): Promise<boolean> {
+  try {
+    const q = new URLSearchParams({ videoId, ingestNow: "true" });
+    if (title) q.set("title", title);
+    if (artist) q.set("artist", artist);
+    const res = await fetch(`${workerUrl.replace(/\/$/, "")}/api/ytdownload?${q.toString()}`, {
+      headers: {
+        "User-Agent": "AuraMusic/1.0",
+        Authorization: `Bearer ${process.env.REMOTE_STREAM_WORKER_TOKEN || ""}`,
+      },
+      signal: AbortSignal.timeout(5000),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
 async function ingestYouTubeFallback(params: {
@@ -339,12 +394,27 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "A valid videoId is required for ingestNow" }, { status: 400 });
     }
     try {
-      const { getCachedTelegramTrack } = await import("@/services/telegram/telegramStorage");
-      const hit = await getCachedTelegramTrack({ videoId: vid, title, artist });
+      const hit = await getTelegramCacheRow(vid, title, artist);
       if (hit?.tgFileId) {
         return NextResponse.json({ ok: true, cached: true }, { headers: NO_CACHE_HEADERS });
       }
-      await ingestYouTubeFallback({ videoId: vid, title: title || vid, artist });
+      if (isYtDlpAvailable()) {
+        // This IS the worker: run the ingest detached from this request. A 5-minute
+        // song needs 60-120s through the tunnel, which a serverless function would
+        // kill mid-way — leaving the song cold forever and the channel half-filled.
+        const background = ingestOnce(vid, title || vid, artist).catch((err) =>
+          console.warn(`[ytdownload] background ingest failed for ${vid}:`, err.message)
+        );
+        void background;
+        console.log(`[ytdownload] ingestNow started locally (background) for ${vid}`);
+        return NextResponse.json({ ok: true, started: true }, { headers: NO_CACHE_HEADERS });
+      }
+      const worker = await getRemoteWorkerUrl();
+      if (worker && (await queueWorkerIngest(worker, vid, title, artist))) {
+        console.log(`[ytdownload] ingestNow delegated to worker for ${vid}`);
+        return NextResponse.json({ ok: true, queued: true }, { headers: NO_CACHE_HEADERS });
+      }
+      await ingestOnce(vid, title || vid, artist);
       console.log(`[ytdownload] ingestNow warm done for ${vid}`);
       return NextResponse.json({ ok: true }, { headers: NO_CACHE_HEADERS });
     } catch (err: any) {
@@ -381,22 +451,38 @@ export async function GET(req: NextRequest) {
     let resolved: UniversalAudioResult;
     try {
       if (resolveOnly && !prefetch && hasValidVid) {
-        // Fresh songs: after ~6s of no cached hit, if the extraction worker is
-        // alive, hand the player its progressive stream now (first sound ~10s)
-        // instead of blocking on full-file Telegram ingestion (~48s).
+        // First-bytes strategy: the live worker pipe is handed out as soon as we
+        // know nothing is cached for this song, instead of burning 6s on resolvers
+        // that would themselves need a full download+upload before playback.
         type RaceOutcome =
           | { kind: "resolved"; result: UniversalAudioResult }
           | { kind: "early"; worker: string }
           | { kind: "timeout" };
+        const never: Promise<RaceOutcome> = new Promise<RaceOutcome>(() => {});
+        const fastLane: Promise<RaceOutcome> = (async () => {
+          const workerPromise = getRemoteWorkerUrl();
+          const cacheLookup = Promise.all([
+            getTelegramCacheRow(activeVid).catch(() => null),
+            title ? getTelegramCacheRow("", title, artist).catch(() => null) : Promise.resolve(null),
+          ]);
+          const [worker, rows] = await Promise.all([
+            workerPromise,
+            Promise.race([cacheLookup, new Promise<null[]>((r) => setTimeout(() => r([]), 2500))]),
+          ]);
+          if (!worker) return never;
+          const [byVid, byTrack] = rows as any[];
+          if (byVid?.tgFileId || byTrack?.tgFileId) {
+            // A stored file exists — the resolver returns its seekable stream in a
+            // moment. Only a row it then rejects (mislabeled upload) can stall us,
+            // so fall back to the live pipe if it hasn't answered within 8s.
+            await new Promise((r) => setTimeout(r, 8000));
+            return { kind: "early" as const, worker };
+          }
+          return { kind: "early" as const, worker };
+        })().catch(() => never);
         const outcome = await Promise.race<RaceOutcome>([
           resolvePromise.then((result) => ({ kind: "resolved" as const, result })),
-          (async () => {
-            await new Promise((r) => setTimeout(r, 6000));
-            const worker = await getRemoteWorkerUrl();
-            if (worker) return { kind: "early" as const, worker };
-            // Worker offline — stay out of the race; providers/timeout path decides.
-            return new Promise<RaceOutcome>(() => {});
-          })(),
+          fastLane,
           new Promise<RaceOutcome>((r) => setTimeout(() => r({ kind: "timeout" as const }), 18000)),
         ]);
 

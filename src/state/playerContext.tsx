@@ -620,10 +620,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           const trySwapToCached = async (): Promise<boolean> => {
             if (swapped || cancelled || !stillOnTempStream()) return false;
             try {
-              const rr = await fetch(toAbsoluteApiUrl(`/api/ytdownload?${params.toString()}`));
+              const rr = await fetch(toAbsoluteApiUrl(`/api/ingest-status?videoId=${encodeURIComponent(vid)}`));
               if (!rr.ok) return false;
               const d2 = await rr.json();
-              if (!d2.url || !d2.url.startsWith("/api/telegram")) return false;
+              if (!d2.cached || !d2.url) return false;
               if (swapped || cancelled || !stillOnTempStream()) return false;
               swapped = true;
               const p = audioRef.current!;
@@ -656,15 +656,37 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
                 warmRetried = true;
                 fetch(warmUrl).catch(() => {});
               }
-              if (ok || ++n >= 20) clearInterval(iv);
-            }, 6000);
+              if (ok || ++n >= 45) clearInterval(iv);
+            }, 4000);
           };
           // The live pipe is not seekable, so as soon as the full file lands in the
           // cache we move playback onto it — no need to wait for the stream to drop.
           fetch(warmUrl).catch(() => {});
           handover();
           player.addEventListener("ended", handover);
-          player.addEventListener("error", handover);
+          let tunnelRetried = false;
+          player.addEventListener("error", () => {
+            handover();
+            if (swapped || cancelled || tunnelRetried || !data.fallbackUrl) return;
+            const p = audioRef.current;
+            if (!p || !stillOnTempStream()) return;
+            tunnelRetried = true;
+            // The direct tunnel can fail on some networks while the same worker is
+            // reachable through Vercel — keep the song playing instead of going silent.
+            const abs = toAbsoluteApiUrl(data.fallbackUrl);
+            console.warn(`[Player] Direct tunnel stream failed for "${song.title}" — using the proxied stream`);
+            const pos = p.currentTime;
+            const wasPlaying = isPlayingRef.current;
+            p.src = abs;
+            p.load();
+            const onCan = () => {
+              p.removeEventListener("canplay", onCan);
+              try { p.currentTime = pos; } catch {}
+              if (wasPlaying) p.play().catch(() => {});
+            };
+            p.addEventListener("canplay", onCan);
+            setState((prev) => ({ ...prev, streamUrl: abs }));
+          });
         }
 
         // If directPlay is true and host allows CORS (like JioSaavn CDN), stream directly.
