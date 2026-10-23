@@ -272,6 +272,24 @@ async function ingestToTelegram(
     return result;
   }
 
+  // The page warm can finish while this resolve is in flight; uploading again
+  // would double-post the track to the channel and burn the worker's uplink.
+  try {
+    const already = videoId ? await getCachedTelegramTrack({ videoId }) : null;
+    if (already?.tgFileId) {
+      const reused: UniversalAudioResult = {
+        ...result,
+        streamUrl: `/api/telegram/stream?fileId=${encodeURIComponent(already.tgFileId)}&title=${encodeURIComponent(already.title || result.title || title)}`,
+        directPlay: false,
+        source: "telegram",
+        mimeType: already.mimeType || result.mimeType,
+        videoId: videoId || result.videoId,
+      };
+      memCache.set(cacheKey, { result: reused, expiresAt: Date.now() + CACHE_TTL_MS });
+      return reused;
+    }
+  } catch {}
+
   try {
     const tgUpload = await uploadAudioUrlToTelegram({
       audioUrl: result.streamUrl,
