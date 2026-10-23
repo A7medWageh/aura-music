@@ -1062,9 +1062,11 @@ export async function getSyncedLyricsYoutube(videoId: string): Promise<SyncedLyr
     const tracks = info.captions?.caption_tracks || [];
 
     if (tracks.length > 0) {
-      // Find Arabic captions first, then English, or the first available track
+      // Find Arabic captions first (incl. ar-EG and auto-generated), then English, or the first available track
       const track =
-        tracks.find((t: any) => t.language_code === "ar" || t.name?.text?.toLowerCase().includes("arabic")) ||
+        tracks.find((t: any) => t.language_code === "ar") ||
+        tracks.find((t: any) => (t.language_code || "").toLowerCase().startsWith("ar")) ||
+        tracks.find((t: any) => t.name?.text?.toLowerCase().includes("arabic")) ||
         tracks.find((t: any) => t.language_code === "en") ||
         tracks[0];
 

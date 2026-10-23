@@ -490,14 +490,31 @@ function FullPlayer({
   // ── Synced Lyrics Auto-scroll ──
   const lyricsContainerRef = useRef<HTMLDivElement>(null);
   const currentTimeMs = state.currentTime * 1000;
-  
+
+  // When only plain lyrics exist, spread the lines across the track duration so
+  // the words keep scrolling with the singer (approximate sync fallback).
+  const effectiveSynced = useMemo(() => {
+    if (syncedLyrics && syncedLyrics.length > 0) return syncedLyrics;
+    if (!lyrics || !state.duration || state.duration < 40) return null;
+    if (/لم نتمكن من العثور|حدث خطأ/.test(lyrics)) return null;
+    const lines = lyrics
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.length > 1);
+    if (lines.length < 4) return null;
+    const totalMs = state.duration * 1000;
+    const startMs = totalMs * 0.07;
+    const stepMs = (totalMs * 0.88 - startMs) / lines.length;
+    return lines.map((text, i) => ({ timeMs: Math.floor(startMs + i * stepMs), text }));
+  }, [syncedLyrics, lyrics, state.duration]);
+
   const activeLineIndex = useMemo(() => {
-    if (!syncedLyrics) return -1;
-    return syncedLyrics.findIndex((line, i) => {
-      const nextLine = syncedLyrics[i + 1];
+    if (!effectiveSynced) return -1;
+    return effectiveSynced.findIndex((line, i) => {
+      const nextLine = effectiveSynced[i + 1];
       return currentTimeMs >= line.timeMs && (!nextLine || currentTimeMs < nextLine.timeMs);
     });
-  }, [syncedLyrics, currentTimeMs]);
+  }, [effectiveSynced, currentTimeMs]);
 
   useEffect(() => {
     if (activeTab === "lyrics" && activeLineIndex !== -1) {
@@ -808,9 +825,9 @@ function FullPlayer({
                 <div className="w-10 h-10 border-4 border-white/20 border-t-white rounded-full animate-spin mb-4" />
                 <p className="text-sm font-bold text-white">جاري البحث عن الكلمات...</p>
               </div>
-            ) : syncedLyrics ? (
+            ) : effectiveSynced ? (
               <div className="flex flex-col gap-6 pb-[50vh] pt-[10vh]">
-                {syncedLyrics.map((line, i) => {
+                {effectiveSynced.map((line, i) => {
                   const isActive = i === activeLineIndex;
                   const isPassed = i < activeLineIndex;
                   return (
