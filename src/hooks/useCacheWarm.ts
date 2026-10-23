@@ -16,7 +16,7 @@ type WarmSong = {
   artist?: string;
 };
 
-export function useCacheWarm(songs: WarmSong[] | null | undefined, max = 12, stepMs = 700) {
+export function useCacheWarm(songs: WarmSong[] | null | undefined, max = 5, stepMs = 900) {
   useEffect(() => {
     if (!songs?.length) return;
     const seen: Set<string> = ((window as any).__auraWarmed ??= new Set());

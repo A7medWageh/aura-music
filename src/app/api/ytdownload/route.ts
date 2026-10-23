@@ -499,6 +499,10 @@ export async function GET(req: NextRequest) {
           if (title) warmParams.set("title", title);
           if (artist) warmParams.set("artist", artist);
           console.log(`[ytdownload] ⚡ Direct worker stream for "${title || activeVid}" — full-file warm queued in background`);
+          // Kick the full-file ingest from the server too, so the download starts
+          // now instead of waiting for the browser to issue warmUrl (the browser
+          // is busy fetching audio bytes at this moment).
+          void queueWorkerIngest(outcome.worker, activeVid, title, artist);
           return NextResponse.json(
             {
               url: `${outcome.worker}/api/ytdownload?${workerParams.toString()}`,
