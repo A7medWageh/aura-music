@@ -645,22 +645,26 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
               return false;
             }
           };
-          fetch(warmUrl).catch(() => {});
-
-          const onStreamDropped = () => {
-            if (swapped || cancelled || !stillOnTempStream()) return;
+          let handoverStarted = false;
+          const handover = () => {
+            if (swapped || cancelled || handoverStarted) return;
+            handoverStarted = true;
             let n = 0;
             const iv = setInterval(async () => {
               const ok = await trySwapToCached();
-              if (!ok && n === 1 && !warmRetried) {
+              if (!ok && n === 2 && !warmRetried) {
                 warmRetried = true;
                 fetch(warmUrl).catch(() => {});
               }
-              if (ok || ++n >= 10) clearInterval(iv);
-            }, 5000);
+              if (ok || ++n >= 20) clearInterval(iv);
+            }, 6000);
           };
-          player.addEventListener("ended", onStreamDropped);
-          player.addEventListener("error", onStreamDropped);
+          // The live pipe is not seekable, so as soon as the full file lands in the
+          // cache we move playback onto it — no need to wait for the stream to drop.
+          fetch(warmUrl).catch(() => {});
+          handover();
+          player.addEventListener("ended", handover);
+          player.addEventListener("error", handover);
         }
 
         // If directPlay is true and host allows CORS (like JioSaavn CDN), stream directly.
