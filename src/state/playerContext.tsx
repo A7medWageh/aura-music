@@ -604,10 +604,59 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         if (!data.url) throw new Error("لم يتم العثور على رابط صوتي للأغنية");
         if (cancelled) return;
 
-        // Fresh-song progressive start: kick off the full-file Telegram ingest
-        // in the background so the next play of this song is instant + seekable.
+        // Fresh-song progressive start: warm the full-file Telegram cache in
+        // the background, then hand the still-playing progressive stream over
+        // to the cached URL (the temporary stream is cut at the 60s function
+        // cap, so this swap is what keeps the song from stopping mid-play).
         if (data.warmUrl) {
-          fetch(toAbsoluteApiUrl(data.warmUrl)).catch(() => {});
+          const warmUrl = toAbsoluteApiUrl(data.warmUrl);
+          let swapped = false;
+          const stillOnTempStream = () => {
+            const p = audioRef.current;
+            return !!p && (p.currentSrc || p.src).includes("streamNow");
+          };
+          const trySwapToCached = async (): Promise<boolean> => {
+            if (swapped || cancelled || !stillOnTempStream()) return false;
+            try {
+              const rr = await fetch(toAbsoluteApiUrl(`/api/ytdownload?${params.toString()}`));
+              if (!rr.ok) return false;
+              const d2 = await rr.json();
+              if (!d2.url || !d2.url.startsWith("/api/telegram")) return false;
+              if (swapped || cancelled || !stillOnTempStream()) return false;
+              swapped = true;
+              const p = audioRef.current!;
+              const pos = p.currentTime;
+              const wasPlaying = isPlayingRef.current;
+              const abs = toAbsoluteApiUrl(d2.url);
+              console.log(`[Player] Progressive→cached swap at ${pos.toFixed(1)}s for "${song.title}"`);
+              p.src = abs;
+              p.load();
+              const onCan = () => {
+                p.removeEventListener("canplay", onCan);
+                try { p.currentTime = pos; } catch {}
+                if (wasPlaying) p.play().catch(() => {});
+              };
+              p.addEventListener("canplay", onCan);
+              setState((prev) => ({ ...prev, streamUrl: abs }));
+              return true;
+            } catch {
+              return false;
+            }
+          };
+          fetch(warmUrl).then(() => trySwapToCached()).catch(() => {});
+
+          // Safety net: if the temporary stream dies before the warm finishes
+          // (or the swap raced), retry the switch as soon as the cache is ready.
+          const onStreamDropped = () => {
+            if (swapped || cancelled || !stillOnTempStream()) return;
+            let n = 0;
+            const iv = setInterval(async () => {
+              const ok = await trySwapToCached();
+              if (ok || ++n >= 8) clearInterval(iv);
+            }, 4000);
+          };
+          player.addEventListener("ended", onStreamDropped);
+          player.addEventListener("error", onStreamDropped);
         }
 
         // If directPlay is true and host allows CORS (like JioSaavn CDN), stream directly.
