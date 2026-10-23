@@ -604,16 +604,18 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         if (!data.url) throw new Error("لم يتم العثور على رابط صوتي للأغنية");
         if (cancelled) return;
 
-        // Fresh-song progressive start: warm the full-file Telegram cache in
-        // the background, then hand the still-playing progressive stream over
-        // to the cached URL (the temporary stream is cut at the 60s function
-        // cap, so this swap is what keeps the song from stopping mid-play).
+        // Fresh-song progressive start: the browser streams straight from the
+        // extraction worker (no time cap) while we ingest the full file into the
+        // Telegram cache in the background. If the temporary stream ever drops
+        // (tunnel hiccup), we re-warm and hand over to the cached file from the
+        // exact position — the song must never stop.
         if (data.warmUrl) {
           const warmUrl = toAbsoluteApiUrl(data.warmUrl);
           let swapped = false;
+          let warmRetried = false;
           const stillOnTempStream = () => {
             const p = audioRef.current;
-            return !!p && (p.currentSrc || p.src).includes("streamNow");
+            return !!p && /forceYtDlp=true|streamNow=true/.test(p.currentSrc || p.src);
           };
           const trySwapToCached = async (): Promise<boolean> => {
             if (swapped || cancelled || !stillOnTempStream()) return false;
@@ -643,17 +645,19 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
               return false;
             }
           };
-          fetch(warmUrl).then(() => trySwapToCached()).catch(() => {});
+          fetch(warmUrl).catch(() => {});
 
-          // Safety net: if the temporary stream dies before the warm finishes
-          // (or the swap raced), retry the switch as soon as the cache is ready.
           const onStreamDropped = () => {
             if (swapped || cancelled || !stillOnTempStream()) return;
             let n = 0;
             const iv = setInterval(async () => {
               const ok = await trySwapToCached();
-              if (ok || ++n >= 8) clearInterval(iv);
-            }, 4000);
+              if (!ok && n === 1 && !warmRetried) {
+                warmRetried = true;
+                fetch(warmUrl).catch(() => {});
+              }
+              if (ok || ++n >= 10) clearInterval(iv);
+            }, 5000);
           };
           player.addEventListener("ended", onStreamDropped);
           player.addEventListener("error", onStreamDropped);
@@ -665,7 +669,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         const isDirect = Boolean(data.directPlay && hasDirectCors && !data.url.includes("googlevideo.com") && !data.url.includes("albumaty.com"));
         
         let playUrl: string;
-        if (data.source === "youtube" || data.url.includes("youtube.com") || data.url.includes("youtu.be")) {
+        if (data.source === "stream") {
+          playUrl = /^https?:/.test(data.url) ? data.url : toAbsoluteApiUrl(data.url);
+        } else if (data.source === "youtube" || data.url.includes("youtube.com") || data.url.includes("youtu.be")) {
           const targetVid = vid || song.youtubeVideoId || song.songId || "";
           playUrl = toAbsoluteApiUrl(`/api/ytdownload?videoId=${encodeURIComponent(targetVid)}&title=${encodeURIComponent(song.title)}&artist=${encodeURIComponent(song.artist || "")}&proxy=true`);
         } else if (isDirect) {

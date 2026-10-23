@@ -386,14 +386,14 @@ export async function GET(req: NextRequest) {
         // instead of blocking on full-file Telegram ingestion (~48s).
         type RaceOutcome =
           | { kind: "resolved"; result: UniversalAudioResult }
-          | { kind: "early" }
+          | { kind: "early"; worker: string }
           | { kind: "timeout" };
         const outcome = await Promise.race<RaceOutcome>([
           resolvePromise.then((result) => ({ kind: "resolved" as const, result })),
           (async () => {
             await new Promise((r) => setTimeout(r, 6000));
-            const workerAlive = await getRemoteWorkerUrl();
-            if (workerAlive) return { kind: "early" as const };
+            const worker = await getRemoteWorkerUrl();
+            if (worker) return { kind: "early" as const, worker };
             // Worker offline — stay out of the race; providers/timeout path decides.
             return new Promise<RaceOutcome>(() => {});
           })(),
@@ -401,16 +401,22 @@ export async function GET(req: NextRequest) {
         ]);
 
         if (outcome.kind === "early") {
-          const streamParams = new URLSearchParams({ videoId: activeVid, streamNow: "true" });
-          if (title) streamParams.set("title", title);
-          if (artist) streamParams.set("artist", artist);
+          // Point the browser straight at the extraction worker's tunnel: it has
+          // no 60s function cap, so the progressive stream plays the whole song.
+          const workerParams = new URLSearchParams({ videoId: activeVid, forceYtDlp: "true" });
+          if (title) workerParams.set("title", title);
+          if (artist) workerParams.set("artist", artist);
+          const proxiedParams = new URLSearchParams({ videoId: activeVid, streamNow: "true" });
+          if (title) proxiedParams.set("title", title);
+          if (artist) proxiedParams.set("artist", artist);
           const warmParams = new URLSearchParams({ videoId: activeVid, ingestNow: "true" });
           if (title) warmParams.set("title", title);
           if (artist) warmParams.set("artist", artist);
-          console.log(`[ytdownload] ⚡ Early progressive stream for "${title || activeVid}" — full-file warm queued in background`);
+          console.log(`[ytdownload] ⚡ Direct worker stream for "${title || activeVid}" — full-file warm queued in background`);
           return NextResponse.json(
             {
-              url: `/api/ytdownload?${streamParams.toString()}`,
+              url: `${outcome.worker}/api/ytdownload?${workerParams.toString()}`,
+              fallbackUrl: `/api/ytdownload?${proxiedParams.toString()}`,
               warmUrl: `/api/ytdownload?${warmParams.toString()}`,
               directPlay: true,
               source: "stream",
