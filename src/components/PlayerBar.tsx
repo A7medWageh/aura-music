@@ -675,10 +675,10 @@ function FullPlayer({
         <div
           className="flex items-end justify-between shrink-0"
           style={{
-            height: "max(38px, env(safe-area-inset-top, 0px))",
-            paddingBottom: "4px",
-            paddingLeft: "max(10px, env(safe-area-inset-left, 0px))",
-            paddingRight: "max(10px, env(safe-area-inset-right, 0px))",
+            height: "max(46px, env(safe-area-inset-top, 0px))",
+            paddingBottom: "5px",
+            paddingLeft: "max(12px, env(safe-area-inset-left, 0px))",
+            paddingRight: "max(12px, env(safe-area-inset-right, 0px))",
           }}
         >
           <button onClick={onClose} className="p-1.5 rounded-full hover:bg-white/10 transition active:scale-90">
@@ -729,7 +729,7 @@ function FullPlayer({
                 initial={{ scale: 0.88, opacity: 0, rotate: -4 }}
                 animate={{ scale: 1, opacity: 1, rotate: 0 }}
                 transition={{ type: "spring", stiffness: 200, damping: 22 }}
-                className="relative max-h-[min(34vh,232px)] w-[min(64vw,232px)] aspect-square flex items-center justify-center mx-auto"
+                className="relative w-[min(64vw,34vh,232px)] aspect-square flex items-center justify-center mx-auto"
               >
                 {bgMode !== "calm" && (
                   <BeatGlow accent={accent} energyRef={energyRef} enabled={state.isPlaying} />
