@@ -56,10 +56,16 @@ async function httpOk(url, timeoutMs = 8000) {
 // ─── Next server ──────────────────────────────────────────────────────────────
 let serverProc = null;
 let serverFails = 0;
+let serverSpawnedAt = 0;
 
 function startServer() {
   if (serverProc && !serverProc.killed && serverProc.exitCode === null) return;
   log("Starting Next server on :" + PORT);
+  // A fresh process needs time to boot ("Ready in ~45s"); without this grace the
+  // health check in the same tick counted the old server's failures against it
+  // and killed it seconds after spawning.
+  serverFails = 0;
+  serverSpawnedAt = Date.now();
   serverProc = spawn("npm", ["start"], { cwd: ROOT, shell: true, windowsHide: true });
   const sink = (data) => {
     try {
@@ -73,6 +79,10 @@ function startServer() {
     serverProc = null;
     serverFails = 3;
   });
+}
+
+function serverBooting() {
+  return Date.now() - serverSpawnedAt < 90000;
 }
 
 // ─── Cloudflare tunnel ────────────────────────────────────────────────────────
@@ -156,7 +166,9 @@ async function tick() {
   startServer();
   startTunnel();
 
-  if (serverProc && (await httpOk(LOCAL_HEALTH))) serverFails = 0;
+  if (serverProc && serverBooting()) {
+    // neither success nor failure while the boot is still in flight
+  } else if (serverProc && (await httpOk(LOCAL_HEALTH))) serverFails = 0;
   else if (serverProc && ++serverFails >= 3) {
     log("Next server unhealthy 3x — restarting.");
     try {
@@ -167,7 +179,9 @@ async function tick() {
   }
 
   if (tunnelProc && tunnelUrl) {
-    if (await httpOk(`${tunnelUrl}/api/health`, 12000)) tunnelFails = 0;
+    if (serverBooting()) {
+      // the tunnel answers 530 while its origin is still booting — that is not a dead tunnel
+    } else if (await httpOk(`${tunnelUrl}/api/health`, 12000)) tunnelFails = 0;
     else if (++tunnelFails >= 3) {
       log("Tunnel unreachable 3x — restarting cloudflared.");
       tunnelFails = 0;
