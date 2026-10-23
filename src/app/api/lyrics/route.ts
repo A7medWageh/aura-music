@@ -198,6 +198,11 @@ async function writeLyricsCache(
 
 /* ────────────────────────── sources ────────────────────────── */
 
+// A provider that refuses us (quota/rate limit) must not be recorded as
+// "this song has no lyrics", so callers track that distinction per request.
+const isTransientError = (status: number) => status === 429 || status === 502 || status === 503;
+
+
 /** Genius translation/annotation pages are never what the user wants. */
 function isJunkGeniusHit(title: string): boolean {
   const t = (title || "").toLowerCase();
@@ -214,14 +219,22 @@ async function geniusCandidates(
   searchQuery: string,
   artistName: string,
   trackName: string,
+  state: { blocked: boolean },
   trace?: string[]
 ): Promise<GeniusHit[]> {
   try {
-    const res = await fetch(`https://${RAPIDAPI_HOST}/search/?q=${encodeURIComponent(searchQuery)}`, {
+    let res = await fetch(`https://${RAPIDAPI_HOST}/search/?q=${encodeURIComponent(searchQuery)}`, {
       headers: { "x-rapidapi-host": RAPIDAPI_HOST, "x-rapidapi-key": RAPIDAPI_KEY },
     });
+    if (!res.ok && isTransientError(res.status)) {
+      await new Promise((r) => setTimeout(r, 1200));
+      res = await fetch(`https://${RAPIDAPI_HOST}/search/?q=${encodeURIComponent(searchQuery)}`, {
+        headers: { "x-rapidapi-host": RAPIDAPI_HOST, "x-rapidapi-key": RAPIDAPI_KEY },
+      });
+    }
     if (!res.ok) {
       trace?.push(`genius_search_http_${res.status}`);
+      if (isTransientError(res.status)) state.blocked = true;
       return [];
     }
     const data = await res.json();
@@ -245,12 +258,13 @@ async function geniusCandidates(
   }
 }
 
-async function geniusLyrics(songId: number, trace?: string[]): Promise<{ cleaned: string; raw: string }> {
+async function geniusLyrics(songId: number, state: { blocked: boolean }, trace?: string[]): Promise<{ cleaned: string; raw: string }> {
   const res = await fetch(`https://${RAPIDAPI_HOST}/song/lyrics/?id=${songId}`, {
     headers: { "x-rapidapi-host": RAPIDAPI_HOST, "x-rapidapi-key": RAPIDAPI_KEY },
   });
   if (!res.ok) {
     trace?.push(`genius_lyrics_${songId}_http_${res.status}`);
+    if (isTransientError(res.status)) state.blocked = true;
     return { cleaned: "", raw: "" };
   }
   const d = await res.json();
@@ -420,6 +434,7 @@ export async function GET(req: NextRequest) {
   const refresh = searchParams.get("refresh") === "true";
   const debug = searchParams.get("debug") === "true";
   const trace: string[] = [];
+  const upstream = { blocked: false };
 
   const videoId = /^[a-zA-Z0-9_-]{11}$/.test(videoIdParam) ? videoIdParam : "";
   const cleanTrack = cleanTrackName(trackName || "");
@@ -442,8 +457,11 @@ export async function GET(req: NextRequest) {
   }
 
   const fail = async () => {
-    await writeLyricsCache(keys, videoId, cleanTrack, artistName || "", { source: "none" });
-    return NextResponse.json(debug ? { error: "Lyrics not found", trace } : { error: "Lyrics not found" }, { status: 404 });
+    if (!upstream.blocked) await writeLyricsCache(keys, videoId, cleanTrack, artistName || "", { source: "none" });
+    return NextResponse.json(
+      debug ? { error: "Lyrics not found", trace, blocked: upstream.blocked } : { error: "Lyrics not found" },
+      { status: upstream.blocked ? 503 : 404 }
+    );
   };
 
   const succeed = async (payload: { lyrics?: string | null; syncedLyrics?: string | null; source: string }) => {
@@ -529,9 +547,9 @@ export async function GET(req: NextRequest) {
     }
 
     // 5. Genius via RapidAPI — page identity verified against the requested artist
-    const candidates = await geniusCandidates(searchQuery, artistName || "", cleanTrack, debug ? trace : undefined);
+    const candidates = await geniusCandidates(searchQuery, artistName || "", cleanTrack, upstream, debug ? trace : undefined);
     for (const cand of candidates) {
-      const { cleaned, raw } = await geniusLyrics(cand.id, debug ? trace : undefined).catch(() => ({ cleaned: "", raw: "" }));
+      const { cleaned, raw } = await geniusLyrics(cand.id, upstream, debug ? trace : undefined).catch(() => ({ cleaned: "", raw: "" }));
       if (cleaned.length < 30) continue;
 
       const bodyArtists = geniusBodyArtists(raw, cand.title, cand.artist);
