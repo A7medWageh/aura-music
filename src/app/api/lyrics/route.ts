@@ -213,6 +213,105 @@ interface GeniusHit {
   id: number;
   title: string;
   artist: string;
+  url?: string;
+}
+
+const GENIUS_UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
+/** Genius' own search API — free, and unlike RapidAPI it returns the credited artist. */
+async function geniusWebCandidates(
+  searchQuery: string,
+  artistName: string,
+  trackName: string,
+  trace?: string[]
+): Promise<GeniusHit[]> {
+  try {
+    const res = await fetch(`https://genius.com/api/search/multi?q=${encodeURIComponent(searchQuery)}`, {
+      headers: { "User-Agent": GENIUS_UA, Accept: "application/json" },
+    });
+    if (!res.ok) {
+      trace?.push(`genius_web_search_http_${res.status}`);
+      return [];
+    }
+    const data = await res.json();
+    const sections: any[] = data?.response?.sections || [];
+    const seen = new Set<number>();
+    const hits: GeniusHit[] = [];
+    for (const section of sections) {
+      for (const entry of section?.hits || []) {
+        const r = entry?.result;
+        if (!r || r._type !== "song" || !r.url || !r.id || seen.has(r.id)) continue;
+        seen.add(r.id);
+        hits.push({ id: r.id, title: r.title || "", artist: r?.primary_artist?.name || "", url: r.url });
+      }
+    }
+    trace?.push(`genius_web_hits=${hits.length}`);
+    return hits
+      .filter((r) => !isJunkGeniusHit(r.title))
+      .map((r) => ({ r, score: geniusHitScore(r, trackName, artistName) }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 4)
+      .map((x) => x.r);
+  } catch {
+    return [];
+  }
+}
+
+function geniusLyricsHtml(page: string): string {
+  const blocks: string[] = [];
+  const openRe = /<div[^>]*data-lyrics-container="true"[^>]*>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = openRe.exec(page))) {
+    const from = match.index + match[0].length;
+    const scan = /<div\b|<\/div>/gi;
+    scan.lastIndex = from;
+    let depth = 1;
+    let end = -1;
+    let tag: RegExpExecArray | null;
+    while ((tag = scan.exec(page))) {
+      depth += tag[0].toLowerCase().startsWith("<div") ? 1 : -1;
+      if (depth === 0) {
+        end = tag.index;
+        break;
+      }
+    }
+    if (end === -1) break;
+    blocks.push(page.slice(from, end));
+    openRe.lastIndex = end;
+  }
+  return blocks.join("\n");
+}
+
+function htmlToLyricText(html: string): string {
+  return html
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#x27;/gi, "'")
+    .replace(/\u00a0|\u205f|\u2060/g, " ")
+    .replace(/[\u200b-\u200f]/g, "");
+}
+
+async function geniusWebLyrics(
+  url: string,
+  trace?: string[]
+): Promise<{ cleaned: string; raw: string }> {
+  const res = await fetch(url, {
+    headers: { "User-Agent": GENIUS_UA, Accept: "text/html,application/xhtml+xml" },
+  });
+  if (!res.ok) {
+    trace?.push(`genius_web_page_http_${res.status}`);
+    return { cleaned: "", raw: "" };
+  }
+  const page = await res.text();
+  const raw = htmlToLyricText(geniusLyricsHtml(page));
+  return { cleaned: cleanGeniusLyrics(raw), raw };
 }
 
 async function geniusCandidates(
@@ -293,7 +392,12 @@ async function geniusLyrics(songId: number, state: { blocked: boolean }, trace?:
  */
 function geniusBodyArtists(raw: string, hitTitle: string, hitArtist: string): string[] {
   const names = new Set<string>();
-  if (hitArtist) names.add(hitArtist);
+  // Genius credits bilingual artists as "Hamza Namira - حمزة نمرة"; each half is
+  // a usable identity on its own.
+  for (const part of (hitArtist || "").split(/\s*[-–&+,]\s*|\s+ft\.?\s+|\s*\(\s*\)/i)) {
+    const t = part.trim();
+    if (t.length > 1) names.add(t);
+  }
   const prefix = /^([^-–]{2,50})[-–]\s/.exec(hitTitle || "");
   if (prefix) names.add(prefix[1]);
   for (const m of (raw || "").matchAll(/\[([^\]\n]{0,70}):([^\]\n]{0,70})\]/g)) {
@@ -546,10 +650,32 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // 5. Genius via RapidAPI — page identity verified against the requested artist
-    const candidates = await geniusCandidates(searchQuery, artistName || "", cleanTrack, upstream, debug ? trace : undefined);
+    // 5. Genius — page identity verified against the requested artist.
+    // Genius' own (key-free) API is primary; RapidAPI is quota-capped and only
+    // covers the case where Genius blocks us.
+    let useWeb = true;
+    let candidates = await geniusWebCandidates(searchQuery, artistName || "", cleanTrack, debug ? trace : undefined);
+    if (candidates.length === 0) {
+      useWeb = false;
+      candidates = await geniusCandidates(searchQuery, artistName || "", cleanTrack, upstream, debug ? trace : undefined);
+    }
     for (const cand of candidates) {
-      const { cleaned, raw } = await geniusLyrics(cand.id, upstream, debug ? trace : undefined).catch(() => ({ cleaned: "", raw: "" }));
+      // Cheap gate first: the search result already names the artist, so a page
+      // only gets downloaded when the metadata could plausibly be this song.
+      const metaArtists = geniusBodyArtists("", cand.title, cand.artist);
+      const metaArtistSim = artistName
+        ? Math.max(0, ...metaArtists.map((a) => nameSimilarity(artistName, a)))
+        : 0;
+      const metaTitleSim = nameSimilarity(cleanTrack, cand.title.replace(/^[^-]*[-–]\s*/, ""));
+      if (metaArtistSim < 0.25 && metaTitleSim < 0.6) {
+        trace?.push(`genius_meta_reject_${cand.id} "${cand.title.slice(0, 30)}" aSim=${metaArtistSim.toFixed(2)} tSim=${metaTitleSim.toFixed(2)}`);
+        continue;
+      }
+
+      const { cleaned, raw } = await (useWeb && cand.url
+        ? geniusWebLyrics(cand.url, debug ? trace : undefined)
+        : geniusLyrics(cand.id, upstream, debug ? trace : undefined)
+      ).catch(() => ({ cleaned: "", raw: "" }));
       if (cleaned.length < 30) continue;
 
       const bodyArtists = geniusBodyArtists(raw, cand.title, cand.artist);
@@ -562,13 +688,14 @@ export async function GET(req: NextRequest) {
       // or its own title is unmistakably the requested track.
       if (artistSim < 0.25 && titleSim < 0.6) continue;
 
+      const lyricSource = useWeb ? "genius" : "rapidapi-genius";
       if (foreignScriptRatio(cleaned) >= 0.06) {
         const stripped = stripForeignLines(cleaned);
         if (stripped.length < 30 || !usable(stripped)) continue;
-        return await succeed({ lyrics: stripped, syncedLyrics: null, source: "rapidapi-genius" });
+        return await succeed({ lyrics: stripped, syncedLyrics: null, source: lyricSource });
       }
       if (!usable(cleaned)) continue;
-      return await succeed({ lyrics: cleaned, syncedLyrics: null, source: "rapidapi-genius" });
+      return await succeed({ lyrics: cleaned, syncedLyrics: null, source: lyricSource });
     }
 
     // 6. Gemini last resort (never for songs that may be copyrighted elsewhere)
