@@ -210,14 +210,23 @@ interface GeniusHit {
   artist: string;
 }
 
-async function geniusCandidates(searchQuery: string, artistName: string, trackName: string): Promise<GeniusHit[]> {
+async function geniusCandidates(
+  searchQuery: string,
+  artistName: string,
+  trackName: string,
+  trace?: string[]
+): Promise<GeniusHit[]> {
   try {
     const res = await fetch(`https://${RAPIDAPI_HOST}/search/?q=${encodeURIComponent(searchQuery)}`, {
       headers: { "x-rapidapi-host": RAPIDAPI_HOST, "x-rapidapi-key": RAPIDAPI_KEY },
     });
-    if (!res.ok) return [];
+    if (!res.ok) {
+      trace?.push(`genius_search_http_${res.status}`);
+      return [];
+    }
     const data = await res.json();
     const hits: any[] = data?.hits || data?.response?.hits || [];
+    trace?.push(`genius_hits=${hits.length}`);
     return hits
       .map((h) => h.result || h)
       .filter(Boolean)
@@ -236,11 +245,14 @@ async function geniusCandidates(searchQuery: string, artistName: string, trackNa
   }
 }
 
-async function geniusLyrics(songId: number): Promise<{ cleaned: string; raw: string }> {
+async function geniusLyrics(songId: number, trace?: string[]): Promise<{ cleaned: string; raw: string }> {
   const res = await fetch(`https://${RAPIDAPI_HOST}/song/lyrics/?id=${songId}`, {
     headers: { "x-rapidapi-host": RAPIDAPI_HOST, "x-rapidapi-key": RAPIDAPI_KEY },
   });
-  if (!res.ok) return { cleaned: "", raw: "" };
+  if (!res.ok) {
+    trace?.push(`genius_lyrics_${songId}_http_${res.status}`);
+    return { cleaned: "", raw: "" };
+  }
   const d = await res.json();
   const bodyObj = d?.lyrics?.lyrics?.body || d?.lyrics?.body || d?.body;
   let raw = "";
@@ -406,6 +418,8 @@ export async function GET(req: NextRequest) {
   const videoIdParam = searchParams.get("videoId") || "";
   const durationSec = parseInt(searchParams.get("duration") || "0", 10) || 0;
   const refresh = searchParams.get("refresh") === "true";
+  const debug = searchParams.get("debug") === "true";
+  const trace: string[] = [];
 
   const videoId = /^[a-zA-Z0-9_-]{11}$/.test(videoIdParam) ? videoIdParam : "";
   const cleanTrack = cleanTrackName(trackName || "");
@@ -429,7 +443,7 @@ export async function GET(req: NextRequest) {
 
   const fail = async () => {
     await writeLyricsCache(keys, videoId, cleanTrack, artistName || "", { source: "none" });
-    return NextResponse.json({ error: "Lyrics not found" }, { status: 404 });
+    return NextResponse.json(debug ? { error: "Lyrics not found", trace } : { error: "Lyrics not found" }, { status: 404 });
   };
 
   const succeed = async (payload: { lyrics?: string | null; syncedLyrics?: string | null; source: string }) => {
@@ -441,6 +455,7 @@ export async function GET(req: NextRequest) {
         syncedLyrics: payload.syncedLyrics || undefined,
         source: payload.source,
         cached: false,
+        ...(debug ? { trace } : {}),
       },
       { headers: { "Cache-Control": "no-store" } }
     );
@@ -514,9 +529,9 @@ export async function GET(req: NextRequest) {
     }
 
     // 5. Genius via RapidAPI — page identity verified against the requested artist
-    const candidates = await geniusCandidates(searchQuery, artistName || "", cleanTrack);
+    const candidates = await geniusCandidates(searchQuery, artistName || "", cleanTrack, debug ? trace : undefined);
     for (const cand of candidates) {
-      const { cleaned, raw } = await geniusLyrics(cand.id).catch(() => ({ cleaned: "", raw: "" }));
+      const { cleaned, raw } = await geniusLyrics(cand.id, debug ? trace : undefined).catch(() => ({ cleaned: "", raw: "" }));
       if (cleaned.length < 30) continue;
 
       const bodyArtists = geniusBodyArtists(raw, cand.title, cand.artist);
@@ -524,6 +539,7 @@ export async function GET(req: NextRequest) {
         ? Math.max(0, ...bodyArtists.map((a) => nameSimilarity(artistName, a)))
         : 0;
       const titleSim = nameSimilarity(cleanTrack, cand.title.replace(/^[^-]*[-–]\s*/, ""));
+      if (debug) trace.push(`genius_${cand.id} "${cand.title.slice(0, 40)}" aSim=${artistSim.toFixed(2)} tSim=${titleSim.toFixed(2)} ar=${arabicShare(cleaned).toFixed(2)}`);
       // A page only counts as this song when the credited singer appears in it,
       // or its own title is unmistakably the requested track.
       if (artistSim < 0.25 && titleSim < 0.6) continue;
