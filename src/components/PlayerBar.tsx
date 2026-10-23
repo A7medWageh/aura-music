@@ -23,6 +23,17 @@ function fmtTime(s: number) {
   return `${m}:${Math.floor(s % 60).toString().padStart(2, "0")}`;
 }
 
+// Persian/Pashto/Urdu-only letters: their presence means an Arabic song got a
+// translation page instead of its own lyrics (old cached copies must be refetched).
+const FOREIGN_ONLY = /[گچپژۈۉێەۍ]/g;
+function looksForeign(text: string): boolean {
+  if (!text) return false;
+  const letters = text.match(/[ء-ي٠-ٯA-Za-z]/g);
+  if (!letters || letters.length < 20) return false;
+  const hits = text.match(FOREIGN_ONLY);
+  return (hits ? hits.length : 0) / letters.length > 0.05;
+}
+
 // ─── Dynamic Color Extractor from album art (Strict Obsidian Dark Theme) ─
 function useDominantColor(imageUrl: string | undefined) {
   const [colors, setColors] = useState({ bg1: "#0b0d13", bg2: "#050608", accent: "#00e5ff" });
@@ -177,7 +188,7 @@ function LiveVisualizer({
   }, [getAnalyser]);
 
   return (
-    <div className="h-8 w-full px-4">
+    <div className="h-7 w-full px-2">
       <canvas ref={canvasRef} className="w-full h-full block" />
     </div>
   );
@@ -378,6 +389,32 @@ function FullPlayer({
   const [lyrics, setLyrics] = useState<string | null>(null);
   const [syncedLyrics, setSyncedLyrics] = useState<{ timeMs: number; text: string }[] | null>(null);
   const [isLyricsLoading, setIsLyricsLoading] = useState(false);
+  // Manual timing nudge (ms) for songs whose lyrics start early/late, kept per song.
+  const [lyricOffset, setLyricOffset] = useState(0);
+  const manualScrollUntilRef = useRef(0);
+
+  const pauseAutoScroll = useCallback(() => {
+    manualScrollUntilRef.current = Date.now() + 9000;
+  }, []);
+
+  const bumpLyricOffset = useCallback((delta: number) => {
+    setLyricOffset((prev) => {
+      const next = Math.max(-20000, Math.min(20000, prev + delta));
+      if (currentSong?.songId) {
+        try { localStorage.setItem(`aura:lyricOffset:${currentSong.songId}`, String(next)); } catch { /* private mode */ }
+      }
+      return next;
+    });
+  }, [currentSong?.songId]);
+
+  useEffect(() => {
+    setLyricOffset(0);
+    if (!currentSong?.songId) return;
+    try {
+      const saved = localStorage.getItem(`aura:lyricOffset:${currentSong.songId}`);
+      if (saved) setLyricOffset(parseInt(saved, 10) || 0);
+    } catch { /* private mode */ }
+  }, [currentSong?.songId]);
 
   // Helper to parse standard LRC string [mm:ss.xx]
   const parseLrc = (lrcString: string) => {
@@ -411,13 +448,16 @@ function FullPlayer({
     getLyrics(currentSong.songId).then((cached: any) => {
       if (cancelled || !cached) return;
       if (cached.syncedLyrics && Array.isArray(cached.syncedLyrics) && cached.syncedLyrics.length > 0) {
+        if (looksForeign(cached.syncedLyrics.map((l: any) => l.text).join("\n"))) return;
         setSyncedLyrics(cached.syncedLyrics);
         setLyrics(cached.lyrics || null);
       } else if (cached.rawSynced) {
         const parsed = parseLrc(cached.rawSynced);
-        setSyncedLyrics(parsed.length > 0 ? parsed : null);
+        if (looksForeign(cached.rawSynced) || parsed.length === 0) return;
+        setSyncedLyrics(parsed);
         setLyrics(cached.lyrics || null);
       } else if (cached.lyrics && typeof cached.lyrics === "string") {
+        if (looksForeign(cached.lyrics)) return;
         setLyrics(cached.lyrics);
         setSyncedLyrics(null);
       } else if (Array.isArray(cached) && cached.length > 0) {
@@ -434,7 +474,7 @@ function FullPlayer({
       setIsLyricsLoading(true);
 
       getLyrics(currentSong.songId).then((cached: any) => {
-        if (cached && (cached.syncedLyrics || cached.lyrics)) {
+        if (cached && (cached.syncedLyrics || cached.lyrics) && !looksForeign(typeof cached.lyrics === "string" ? cached.lyrics : "")) {
           if (cached.syncedLyrics && Array.isArray(cached.syncedLyrics) && cached.syncedLyrics.length > 0) {
             setSyncedLyrics(cached.syncedLyrics);
             setLyrics(cached.lyrics || null);
@@ -446,7 +486,14 @@ function FullPlayer({
           return;
         }
 
-        const url = `/api/lyrics?trackName=${encodeURIComponent(currentSong.title)}&artistName=${encodeURIComponent(currentSong.artist || "")}&videoId=${currentSong.youtubeVideoId || ""}`;
+        const vid = currentSong.youtubeVideoId || currentSong.songId || "";
+        const lyricParams = new URLSearchParams({
+          trackName: currentSong.title,
+          artistName: currentSong.artist || "",
+          videoId: /^[a-zA-Z0-9_-]{11}$/.test(vid) ? vid : "",
+        });
+        if (state.duration > 0) lyricParams.set("duration", String(Math.round(state.duration)));
+        const url = `/api/lyrics?${lyricParams.toString()}`;
         fetch(url)
           .then(r => r.json())
           .then(async (d) => {
@@ -493,6 +540,8 @@ function FullPlayer({
 
   // When only plain lyrics exist, spread the lines across the track duration so
   // the words keep scrolling with the singer (approximate sync fallback).
+  // Lines are weighted by how much there is to sing, and the window starts after
+  // the intro and stops before the outro — an even split runs ahead of the vocal.
   const effectiveSynced = useMemo(() => {
     if (syncedLyrics && syncedLyrics.length > 0) return syncedLyrics;
     if (!lyrics || !state.duration || state.duration < 40) return null;
@@ -503,45 +552,63 @@ function FullPlayer({
       .filter((l) => l.length > 1);
     if (lines.length < 4) return null;
     const totalMs = state.duration * 1000;
-    const startMs = totalMs * 0.07;
-    const stepMs = (totalMs * 0.88 - startMs) / lines.length;
-    return lines.map((text, i) => ({ timeMs: Math.floor(startMs + i * stepMs), text }));
+    const startMs = totalMs * 0.14;
+    const spanMs = totalMs * 0.82;
+    const weights = lines.map((l) => Math.max(6, l.replace(/\s/g, "").length));
+    const totalWeight = weights.reduce((a, b) => a + b, 0);
+    let acc = 0;
+    return lines.map((text, i) => {
+      const timeMs = startMs + ((acc + weights[i] / 2) / totalWeight) * spanMs;
+      acc += weights[i];
+      return { timeMs: Math.floor(timeMs), text };
+    });
   }, [syncedLyrics, lyrics, state.duration]);
 
   const activeLineIndex = useMemo(() => {
     if (!effectiveSynced) return -1;
+    const pos = currentTimeMs - lyricOffset;
     return effectiveSynced.findIndex((line, i) => {
       const nextLine = effectiveSynced[i + 1];
-      return currentTimeMs >= line.timeMs && (!nextLine || currentTimeMs < nextLine.timeMs);
+      return pos >= line.timeMs && (!nextLine || pos < nextLine.timeMs);
     });
-  }, [effectiveSynced, currentTimeMs]);
+  }, [effectiveSynced, currentTimeMs, lyricOffset]);
 
   useEffect(() => {
-    if (activeTab === "lyrics" && activeLineIndex !== -1) {
-      const activeElement = document.getElementById(`lyrics-line-${activeLineIndex}`);
-      if (activeElement) {
-        activeElement.scrollIntoView({
-          behavior: "smooth",
-          block: "center",
-          inline: "nearest",
-        });
-      }
+    if (activeTab !== "lyrics" || activeLineIndex === -1) return;
+    // After the user scrolls by hand, hold the auto-scroll back so their reading
+    // position isn't yanked away mid-swipe.
+    if (Date.now() < manualScrollUntilRef.current) return;
+    const activeElement = document.getElementById(`lyrics-line-${activeLineIndex}`);
+    if (activeElement) {
+      activeElement.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+        inline: "nearest",
+      });
     }
   }, [activeLineIndex, activeTab]);
 
   // Swipe down to close
   const dragY = useRef(0);
   const startY = useRef(0);
+  const inScrollerRef = useRef(false);
   const [swipeOffset, setSwipeOffset] = useState(0);
 
-  const handleTouchStart = (e: React.TouchEvent) => { startY.current = e.touches[0].clientY; };
+  const handleTouchStart = (e: React.TouchEvent) => {
+    startY.current = e.touches[0].clientY;
+    // A gesture that begins inside a scrollable pane belongs to that pane
+    // (queue list, lyrics scroll) — never turn it into a close-swipe.
+    inScrollerRef.current = !!(e.target as HTMLElement)?.closest?.("[data-scroll]");
+  };
   const handleTouchMove = (e: React.TouchEvent) => {
+    if (inScrollerRef.current) return;
     const dy = e.touches[0].clientY - startY.current;
     if (dy > 0) setSwipeOffset(dy);
   };
   const handleTouchEnd = () => {
-    if (swipeOffset > 120) { onClose(); }
+    if (swipeOffset > 120 && !inScrollerRef.current) { onClose(); }
     setSwipeOffset(0);
+    inScrollerRef.current = false;
   };
 
   return (
@@ -588,28 +655,29 @@ function FullPlayer({
         <AuroraParticles accent={accent} mode={bgMode} isPlaying={state.isPlaying} energyRef={energyRef} />
       </div>
 
-      {/* ── Content ── */}
-      <div className="relative z-10 flex flex-col h-full w-full max-w-sm mx-auto overflow-hidden">
+        {/* ── Content ── */}
+        <div
+          className="relative z-10 flex flex-col h-full w-full max-w-sm mx-auto overflow-hidden"
+          style={{
+            paddingLeft: "env(safe-area-inset-left, 0px)",
+            paddingRight: "env(safe-area-inset-right, 0px)",
+          }}
+        >
 
-        {/* Top drag indicator */}
-        <div className="flex justify-center pt-3 pb-1 shrink-0">
-          <div className="w-10 h-1 rounded-full bg-white/20" />
-        </div>
-
-        {/* Top Bar */}
-        <div className="flex items-center justify-between px-5 py-1.5 shrink-0">
-          <button onClick={onClose} className="p-2 rounded-full hover:bg-white/10 transition active:scale-90">
+        {/* Notch band: controls sit to the right and left of the island, never under it */}
+        <div
+          className="flex items-end justify-between shrink-0"
+          style={{
+            height: "max(38px, env(safe-area-inset-top, 0px))",
+            paddingBottom: "4px",
+            paddingLeft: "max(10px, env(safe-area-inset-left, 0px))",
+            paddingRight: "max(10px, env(safe-area-inset-right, 0px))",
+          }}
+        >
+          <button onClick={onClose} className="p-1.5 rounded-full hover:bg-white/10 transition active:scale-90">
             <ChevronDown className="w-6 h-6 text-white" />
           </button>
-          <div className="flex flex-col items-center">
-            <p className="text-white/50 text-[11px] font-bold uppercase tracking-widest">يعزف الآن</p>
-            {state.isHighQuality && (
-              <span className="text-[10px] font-black text-cyan-300 flex items-center gap-1 bg-cyan-400/10 px-2.5 py-0.5 rounded-full border border-cyan-400/30 shadow-[0_0_12px_rgba(0,229,255,0.2)]">
-                استوديو Master HQ 🎧
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             <button
               onClick={cycleBgMode}
               title="شكل الخلفية"
@@ -624,26 +692,37 @@ function FullPlayer({
                 if (!isPremium) { setPremiumFeatureName("ميكس AI (الدي جي الذكي)"); setIsPremiumModalOpen(true); }
                 else { setIsAiMix(!state.isAiMix); showToast(!state.isAiMix ? "تم تفعيل ميكس AI 🤖✨" : "تم إيقاف ميكس AI"); }
               }}
-              className={`px-3 py-1.5 rounded-full text-xs font-black transition-all border ${state.isAiMix ? "bg-white text-black border-white" : "bg-white/5 text-white/70 border-white/10"}`}
+              title="ميكس AI"
+              className={`p-2 rounded-full border transition-all active:scale-90 ${state.isAiMix ? "bg-white text-black border-white" : "bg-white/5 text-white/70 border-white/10"}`}
             >
-              {!isPremium && <Crown className="w-3 h-3 text-amber-400 inline ml-1" />}
-              ميكس AI
+              {!isPremium && <Crown className="w-3 h-3 text-amber-400 absolute -top-1 -right-1" />}
+              <Sliders className="w-4 h-4" />
             </button>
           </div>
         </div>
 
+        {/* Title row (below the notch) */}
+        <div className="flex items-center justify-center gap-2 shrink-0 py-0.5">
+          <p className="text-white/50 text-[11px] font-bold uppercase tracking-widest">يعزف الآن</p>
+          {state.isHighQuality && (
+            <span className="text-[10px] font-black text-cyan-300 flex items-center gap-1 bg-cyan-400/10 px-2.5 py-0.5 rounded-full border border-cyan-400/30 shadow-[0_0_12px_rgba(0,229,255,0.2)]">
+              استوديو Master HQ 🎧
+            </span>
+          )}
+        </div>
+
         {/* ═══════════ NOW PLAYING TAB ═══════════ */}
         {activeTab === "now" && (
-          <div className="flex-1 flex flex-col items-center justify-between px-5 pb-2 pt-1 overflow-hidden min-h-0 w-full">
+          <div className="flex-1 flex flex-col items-center justify-between px-4 pb-1 pt-0.5 overflow-hidden min-h-0 w-full">
 
             {/* Album Art — immersive, with orbiting aurora ring */}
-            <div className="w-full flex-1 flex items-center justify-center my-auto min-h-0 py-2 shrink">
+            <div className="w-full flex-1 flex items-center justify-center my-auto min-h-0 py-1 shrink">
               <motion.div
                 key={currentSong?.songId}
                 initial={{ scale: 0.88, opacity: 0, rotate: -4 }}
                 animate={{ scale: 1, opacity: 1, rotate: 0 }}
                 transition={{ type: "spring", stiffness: 200, damping: 22 }}
-                className="relative max-h-[min(38vh,260px)] w-[min(72vw,260px)] aspect-square flex items-center justify-center mx-auto"
+                className="relative max-h-[min(34vh,232px)] w-[min(64vw,232px)] aspect-square flex items-center justify-center mx-auto"
               >
                 {bgMode !== "calm" && (
                   <BeatGlow accent={accent} energyRef={energyRef} enabled={state.isPlaying} />
@@ -676,28 +755,28 @@ function FullPlayer({
             </div>
 
             {/* Song Meta (Title + Artist + Heart + Download) */}
-            <div className="w-full flex items-center justify-between px-2 pt-1.5 pb-1 shrink-0">
-              <button onClick={onLike} className="p-2.5 rounded-full hover:bg-white/5 active:scale-90 transition-transform">
+            <div className="w-full flex items-center justify-between px-1 pt-1 pb-0.5 shrink-0">
+              <button onClick={onLike} className="p-2 rounded-full hover:bg-white/5 active:scale-90 transition-transform shrink-0">
                 <Heart
-                  className={`w-6 h-6 transition-all ${isLiked ? "fill-current text-pink-400 scale-110 drop-shadow-[0_0_8px_rgba(244,114,182,0.6)]" : "text-neutral-500 hover:text-white"}`}
+                  className={`w-5 h-5 transition-all ${isLiked ? "fill-current text-pink-400 scale-110 drop-shadow-[0_0_8px_rgba(244,114,182,0.6)]" : "text-neutral-500 hover:text-white"}`}
                 />
               </button>
-              <div className="flex-1 text-center px-3 min-w-0">
-                <h2 className="text-white font-black text-lg sm:text-xl leading-tight truncate">{currentSong?.title || "—"}</h2>
-                <p className="text-neutral-400 text-xs sm:text-sm font-medium mt-1 truncate">{currentSong?.artist || "فنان"}</p>
+              <div className="flex-1 text-center px-2 min-w-0">
+                <h2 className="text-white font-black text-[17px] leading-tight truncate">{currentSong?.title || "—"}</h2>
+                <p className="text-neutral-400 text-xs font-medium mt-0.5 truncate">{currentSong?.artist || "فنان"}</p>
               </div>
-              <button onClick={onDownload} className="p-2.5 rounded-full hover:bg-white/5 active:scale-90 transition-transform">
-                <DownloadCloud className="w-6 h-6 text-neutral-500 hover:text-white transition-colors" />
+              <button onClick={onDownload} className="p-2 rounded-full hover:bg-white/5 active:scale-90 transition-transform shrink-0">
+                <DownloadCloud className="w-5 h-5 text-neutral-500 hover:text-white transition-colors" />
               </button>
             </div>
 
             {/* Live spectrum visualizer — real WebAudio data (accent tinted) */}
-            <div className="w-full my-1 shrink-0">
+            <div className="w-full shrink-0">
               <LiveVisualizer getAnalyser={getAnalyser} isPlaying={state.isPlaying} accent={accent} />
             </div>
 
             {/* Seek Bar + Times */}
-            <div className="w-full px-2 mb-2 shrink-0">
+            <div className="w-full px-1 mb-1 shrink-0">
               <SeekBar
                 progress={state.currentTime}
                 duration={state.duration}
@@ -714,22 +793,22 @@ function FullPlayer({
               </div>
             </div>
 
-            {/* Playback Controls (Coordinated Ergonomic Spacing) */}
-            <div className="flex items-center justify-between w-full max-w-[330px] mx-auto px-2 pb-2 shrink-0">
+            {/* Playback Controls */}
+            <div className="flex items-center justify-between w-full max-w-[310px] mx-auto px-1 pb-1 shrink-0">
               <button
                 onClick={() => setShuffle(!state.shuffle)}
-                className={`p-2.5 rounded-full transition-colors active:scale-90 ${state.shuffle ? "text-cyan-400 drop-shadow-[0_0_8px_rgba(0,242,254,0.6)]" : "text-neutral-500 hover:text-white"}`}
+                className={`p-2 rounded-full transition-colors active:scale-90 ${state.shuffle ? "text-cyan-400 drop-shadow-[0_0_8px_rgba(0,242,254,0.6)]" : "text-neutral-500 hover:text-white"}`}
               >
                 <Shuffle className="w-5 h-5" />
               </button>
 
-              <button onClick={prev} className="active:scale-90 transition-transform p-2.5 text-white hover:text-neutral-200">
+              <button onClick={prev} className="active:scale-90 transition-transform p-2 text-white hover:text-neutral-200">
                 <SkipBack className="w-7 h-7 fill-current" />
               </button>
 
               <button
                 onClick={togglePlay}
-                className="relative w-16 h-16 sm:w-18 sm:h-18 rounded-full flex items-center justify-center bg-white text-black active:scale-95 transition-transform shrink-0"
+                className="relative w-16 h-16 rounded-full flex items-center justify-center bg-white text-black active:scale-95 transition-transform shrink-0"
                 style={{ boxShadow: `0 0 0 1px rgba(255,255,255,0.1), 0 10px 34px rgba(0,0,0,0.85), 0 0 38px ${accent}55` }}
               >
                 {state.isPlaying && (
@@ -749,13 +828,13 @@ function FullPlayer({
                 )}
               </button>
 
-              <button onClick={next} className="active:scale-90 transition-transform p-2.5 text-white hover:text-neutral-200">
+              <button onClick={next} className="active:scale-90 transition-transform p-2 text-white hover:text-neutral-200">
                 <SkipForward className="w-7 h-7 fill-current" />
               </button>
 
               <button
                 onClick={cycleRepeat}
-                className={`relative p-2.5 rounded-full transition-colors active:scale-90 ${state.repeat !== "off" ? "text-cyan-400 drop-shadow-[0_0_8px_rgba(0,242,254,0.6)]" : "text-neutral-500 hover:text-white"}`}
+                className={`relative p-2 rounded-full transition-colors active:scale-90 ${state.repeat !== "off" ? "text-cyan-400 drop-shadow-[0_0_8px_rgba(0,242,254,0.6)]" : "text-neutral-500 hover:text-white"}`}
               >
                 <Repeat className="w-5 h-5" />
                 {state.repeat === "one" && (
@@ -768,7 +847,7 @@ function FullPlayer({
 
         {/* ═══════════ QUEUE TAB ═══════════ */}
         {activeTab === "queue" && (
-          <div className="flex-1 overflow-y-auto no-scrollbar px-4 pb-4" dir="rtl">
+          <div className="flex-1 overflow-y-auto no-scrollbar px-4 pb-4" dir="rtl" data-scroll style={{ WebkitOverflowScrolling: "touch", touchAction: "pan-y" }}>
             <h3 className="text-white font-black text-xl mb-4 text-right">قائمة الاستماع</h3>
             <div className="space-y-2">
               {state.queue.map((song, i) => {
@@ -818,15 +897,32 @@ function FullPlayer({
 
         {/* ═══════════ LYRICS TAB ═══════════ */}
         {activeTab === "lyrics" && (
-          <div className="flex-1 overflow-y-auto no-scrollbar px-6 pb-6 text-center" dir="rtl" ref={lyricsContainerRef}>
-            <h3 className="text-white font-black text-xl mb-6 sticky top-0 bg-gradient-to-b from-black/20 to-transparent pb-4 backdrop-blur-sm z-10 pt-2">كلمات الأغنية</h3>
+          <div
+            className="flex-1 overflow-y-auto no-scrollbar px-4 pb-4 text-center"
+            dir="rtl"
+            ref={lyricsContainerRef}
+            data-scroll
+            onTouchStart={pauseAutoScroll}
+            onWheel={pauseAutoScroll}
+            style={{ WebkitOverflowScrolling: "touch", touchAction: "pan-y", overscrollBehavior: "contain" }}
+          >
+            <div className="sticky top-0 z-10 flex items-center justify-between gap-2 pt-1 pb-3 bg-gradient-to-b from-black/40 to-transparent backdrop-blur-sm">
+              <h3 className="text-white font-black text-lg">كلمات الأغنية</h3>
+              <div className="flex items-center gap-1 shrink-0">
+                <button onClick={() => bumpLyricOffset(-2000)} className="w-7 h-7 rounded-full bg-white/10 border border-white/15 text-white text-sm font-black active:scale-90">−</button>
+                <span className="text-[10px] font-bold text-white/45 tabular-nums w-10 text-center" dir="ltr">
+                  {lyricOffset === 0 ? "توقيت" : `${lyricOffset > 0 ? "+" : ""}${(lyricOffset / 1000).toFixed(0)}s`}
+                </span>
+                <button onClick={() => bumpLyricOffset(2000)} className="w-7 h-7 rounded-full bg-white/10 border border-white/15 text-white text-sm font-black active:scale-90">+</button>
+              </div>
+            </div>
             {isLyricsLoading ? (
               <div className="flex flex-col items-center justify-center mt-20 opacity-50">
                 <div className="w-10 h-10 border-4 border-white/20 border-t-white rounded-full animate-spin mb-4" />
                 <p className="text-sm font-bold text-white">جاري البحث عن الكلمات...</p>
               </div>
             ) : effectiveSynced ? (
-              <div className="flex flex-col gap-6 pb-[50vh] pt-[10vh]">
+              <div className="flex flex-col gap-5 pb-[42vh] pt-[16vh]">
                 {effectiveSynced.map((line, i) => {
                   const isActive = i === activeLineIndex;
                   const isPassed = i < activeLineIndex;
@@ -835,7 +931,7 @@ function FullPlayer({
                       key={i}
                       id={`lyrics-line-${i}`}
                       onClick={() => seekTo(line.timeMs / 1000)}
-                      className={`font-black text-2xl md:text-3xl leading-snug transition-all duration-500 cursor-pointer ${
+                      className={`font-black text-[19px] md:text-2xl leading-snug transition-all duration-500 cursor-pointer ${
                         isActive 
                           ? "text-white scale-105 drop-shadow-lg" 
                           : isPassed 
@@ -861,7 +957,7 @@ function FullPlayer({
 
         {/* ═══════════ AUDIO TAB ═══════════ */}
         {activeTab === "audio" && (
-          <div className="flex-1 overflow-y-auto no-scrollbar p-6 space-y-6" dir="rtl">
+          <div className="flex-1 overflow-y-auto no-scrollbar p-4 space-y-4" dir="rtl" data-scroll style={{ WebkitOverflowScrolling: "touch", touchAction: "pan-y" }}>
             <div className="w-full space-y-3 bg-white/5 p-4 rounded-2xl border border-white/10 backdrop-blur-md">
               <div className="flex items-center justify-between text-white font-bold text-sm">
                 <VolumeX className="w-4 h-4 text-white/50" />
