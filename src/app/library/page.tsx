@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { getAllOfflineSongs, deleteOfflineSong, deleteArtist, deleteAlbum, toggleSongHidden } from "@/offline/indexedDbCache";
 import { usePlayer } from "@/state/playerContext";
 import { motion, AnimatePresence } from "framer-motion";
-import { Play, Trash2, WifiOff, ArrowRight, DownloadCloud, Lock, Unlock, EyeOff, Eye, HardDrive, Music } from "lucide-react";
+import { Play, Trash2, WifiOff, ArrowRight, DownloadCloud, Lock, Unlock, EyeOff, Eye, HardDrive, Music, CheckCircle2, AlertCircle } from "lucide-react";
 import { getProxyUrl } from "@/utils/media";
 
 type Song = {
@@ -196,7 +196,10 @@ export default function LibraryPage() {
 
   const playList = (songs: Song[]) => {
     const ready = songs.filter(s => s.audioReady);
-    if (!ready.length) return;
+    if (!ready.length) {
+      showToast("لا توجد أغانٍ مكتملة التحميل في هذه القائمة للاستماع أوفلاين");
+      return;
+    }
     playNow(ready[0]);
     if (ready.length > 1) enqueueSongs(ready.slice(1));
   };
@@ -312,7 +315,21 @@ export default function LibraryPage() {
           </div>
           <div className="grid gap-2">
             {currentAlbumData.songs.map((song, i) => (
-              <SongRow key={song.songId} song={song} index={i} play={() => playNow(song)} onDelete={(e: any) => handleDeleteSong(e, song.songId)} onToggleHide={(e: any) => handleToggleHide(e, song)} vaultUnlocked={vaultUnlocked} />
+              <SongRow
+                key={song.songId}
+                song={song}
+                index={i}
+                play={() => {
+                  if (!song.audioReady && typeof navigator !== "undefined" && !navigator.onLine) {
+                    showToast("لم يكتمل تنزيل هذه الأغنية بعد. اتصل بالإنترنت لتحميلها للاستماع أوفلاين.");
+                    return;
+                  }
+                  playNow(song);
+                }}
+                onDelete={(e: any) => handleDeleteSong(e, song.songId)}
+                onToggleHide={(e: any) => handleToggleHide(e, song)}
+                vaultUnlocked={vaultUnlocked}
+              />
             ))}
           </div>
         </div>
@@ -358,7 +375,21 @@ export default function LibraryPage() {
                <h3 className="text-xl font-bold text-gray-300 mb-4 border-b border-white/5 pb-2">أغاني منفردة (Singles)</h3>
                <div className="grid gap-2">
                  {currentArtistData.singles.map((song, i) => (
-                   <SongRow key={song.songId} song={song} index={i} play={() => playNow(song)} onDelete={(e: any) => handleDeleteSong(e, song.songId)} onToggleHide={(e: any) => handleToggleHide(e, song)} vaultUnlocked={vaultUnlocked} />
+                   <SongRow
+                     key={song.songId}
+                     song={song}
+                     index={i}
+                     play={() => {
+                       if (!song.audioReady && typeof navigator !== "undefined" && !navigator.onLine) {
+                         showToast("لم يكتمل تنزيل هذه الأغنية بعد. اتصل بالإنترنت لتحميلها للاستماع أوفلاين.");
+                         return;
+                       }
+                       playNow(song);
+                     }}
+                     onDelete={(e: any) => handleDeleteSong(e, song.songId)}
+                     onToggleHide={(e: any) => handleToggleHide(e, song)}
+                     vaultUnlocked={vaultUnlocked}
+                   />
                  ))}
                </div>
              </div>
@@ -396,6 +427,7 @@ export default function LibraryPage() {
 }
 
 function SongRow({ song, index, play, onDelete, onToggleHide, vaultUnlocked }: any) {
+  const isReady = song.audioReady ?? false;
   return (
     <div onClick={play} className="group flex items-center gap-4 p-3 rounded-2xl hover:bg-white/5 transition-colors cursor-pointer border border-transparent hover:border-white/5">
       <div className="w-8 text-center text-gray-500 font-black text-sm">{index + 1}</div>
@@ -410,7 +442,18 @@ function SongRow({ song, index, play, onDelete, onToggleHide, vaultUnlocked }: a
           {song.title}
           {song.isHidden && <Lock className="w-3 h-3 text-indigo-400" />}
         </h4>
-        <p className="text-xs font-bold text-gray-500 truncate">{song.artist}</p>
+        <div className="flex items-center gap-2 mt-0.5">
+          <p className="text-xs font-bold text-gray-500 truncate">{song.artist}</p>
+          {isReady ? (
+            <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full font-semibold">
+              <CheckCircle2 className="w-3 h-3" /> جاهزة أوفلاين
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1 text-[10px] text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full font-semibold" title="لم يكتمل تحميل الملف الصوتي في الجهاز">
+              <AlertCircle className="w-3 h-3" /> لم يكتمل التنزيل
+            </span>
+          )}
+        </div>
       </div>
       <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
         <button onClick={onToggleHide} className="p-2 hover:bg-indigo-500/20 text-indigo-400 rounded-xl" title={song.isHidden ? "إظهار الأغنية" : "إخفاء الأغنية في المجلد السري"}>

@@ -566,18 +566,31 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     (async () => {
       try {
         // 1. Check Offline cache first (instant local play)
-        const cachedBlob = await getAudioBlob(song.songId);
+        let cachedBlob = await getAudioBlob(song.songId);
+        if (!cachedBlob && song.youtubeVideoId && song.youtubeVideoId !== song.songId) {
+          cachedBlob = await getAudioBlob(song.youtubeVideoId);
+        }
+
         if (cachedBlob && !cancelled) {
           console.log("[Player] Playing from offline storage.");
           const blobUrl = URL.createObjectURL(cachedBlob);
-          setState((prev) => ({ ...prev, isBuffering: false, streamUrl: blobUrl }));
+          isPlayingRef.current = true;
+          setState((prev) => ({ ...prev, isBuffering: false, streamUrl: blobUrl, isPlaying: true, error: null }));
           player.src = blobUrl;
           player.load();
-          if (isPlayingRef.current) {
-            const p = player.play();
-            if (p !== undefined) p.catch(() => {});
+          const p = player.play();
+          if (p !== undefined) {
+            p.catch((err) => {
+              console.warn("[Player] Local blob autoplay prevented:", err);
+              armGestureResume(player);
+            });
           }
           return;
+        }
+
+        // Guard: If device has no internet, do not attempt remote network resolution
+        if (typeof navigator !== "undefined" && !navigator.onLine) {
+          throw new Error("هذه الأغنية غير متوفرة في ذاكرة هاتفك الأوفلاين — يرجى الاتصال بالإنترنت أولاً لتنزيلها");
         }
 
         // 2. Resolve stream URL via Universal Audio Resolver (JioSaavn / Albumaty / SoundCloud / YouTube)

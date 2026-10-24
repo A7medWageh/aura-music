@@ -84,15 +84,15 @@ async function markAudioReady(songId: string): Promise<void> {
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
-  if (meta) {
-    const db2 = await openOfflineDb();
-    await new Promise<void>((resolve, reject) => {
-      const tx = db2.transaction(META_STORE, "readwrite");
-      tx.objectStore(META_STORE).put({ ...meta, audioReady: true });
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
-  }
+  
+  const db2 = await openOfflineDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db2.transaction(META_STORE, "readwrite");
+    const record = meta ? { ...meta, audioReady: true } : { songId, title: "أغنية محفوظة", artist: "فنان", savedAt: Date.now(), audioReady: true };
+    tx.objectStore(META_STORE).put(record);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
 }
 
 /** Store audio blob after background download */
@@ -125,6 +125,7 @@ export async function storeAudioBlob(songId: string, blob: Blob): Promise<void> 
 
 /** Get audio blob for offline playback */
 export async function getAudioBlob(songId: string): Promise<Blob | null> {
+  if (!songId) return null;
   const db = await openOfflineDb();
   const record: any = await new Promise((resolve, reject) => {
     const tx = db.transaction(AUDIO_STORE, "readonly");
@@ -132,10 +133,11 @@ export async function getAudioBlob(songId: string): Promise<Blob | null> {
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
-  if (!record) return null;
-  if (record.blob instanceof Blob) return record.blob;
-  if (record.buffer instanceof ArrayBuffer) {
-    return new Blob([record.buffer], { type: record.mimeType || "audio/mpeg" });
+  if (record) {
+    if (record.blob instanceof Blob) return record.blob;
+    if (record.buffer instanceof ArrayBuffer) {
+      return new Blob([record.buffer], { type: record.mimeType || "audio/mpeg" });
+    }
   }
   return null;
 }
@@ -161,14 +163,30 @@ export async function getLyrics(songId: string): Promise<any | null> {
   return record?.lyrics || null;
 }
 
-/** Get all saved songs from library (metadata only, fast) */
+/** Get all saved songs from library (metadata synchronized with actual audio storage) */
 export async function getAllOfflineSongs(): Promise<any[]> {
   const db = await openOfflineDb();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(META_STORE, "readonly");
-    const req = tx.objectStore(META_STORE).getAll();
-    req.onsuccess = () => resolve(req.result || []);
-    req.onerror = () => reject(req.error);
+    const tx = db.transaction([META_STORE, AUDIO_STORE], "readonly");
+    const metaReq = tx.objectStore(META_STORE).getAll();
+    const audioKeysReq = tx.objectStore(AUDIO_STORE).getAllKeys();
+    
+    let songs: any[] = [];
+    let audioKeys = new Set<string>();
+
+    metaReq.onsuccess = () => { songs = metaReq.result || []; };
+    audioKeysReq.onsuccess = () => {
+      audioKeys = new Set((audioKeysReq.result || []).map(k => String(k)));
+    };
+
+    tx.oncomplete = () => {
+      const enriched = songs.map((s) => ({
+        ...s,
+        audioReady: audioKeys.has(s.songId) || (s.youtubeVideoId && audioKeys.has(s.youtubeVideoId)) || Boolean(s.audioReady && audioKeys.has(s.songId)),
+      }));
+      resolve(enriched);
+    };
+    tx.onerror = () => reject(tx.error);
   });
 }
 

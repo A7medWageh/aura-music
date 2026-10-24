@@ -155,3 +155,23 @@ self.addEventListener('notificationclick', (event) => {
     })
   );
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  OFFLINE NAVIGATION FALLBACK
+// ─────────────────────────────────────────────────────────────────────────────
+self.addEventListener('fetch', (event: any) => {
+  if (event.request.mode === 'navigate') {
+    event.respondWith(
+      fetch(event.request).catch(async () => {
+        // When offline, look for matched cached page, root, or /offline.html
+        const cached = await caches.match(event.request);
+        if (cached) return cached;
+        const root = await caches.match('/');
+        if (root) return root;
+        const offline = await caches.match('/offline.html');
+        if (offline) return offline;
+        return new Response('Offline', { status: 503, headers: { 'Content-Type': 'text/plain' } });
+      })
+    );
+  }
+});

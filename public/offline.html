@@ -1,45 +1,91 @@
 <!doctype html>
-<html lang="en">
+<html lang="ar" dir="rtl">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Offline - MusicWeb</title>
+    <title>أنت غير متصل بالإنترنت — Aura Music</title>
     <style>
+      * { box-sizing: border-box; }
       body {
         margin: 0;
-        font-family: Arial, sans-serif;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         background: #090a0f;
         color: #f5f7ff;
         display: grid;
         place-items: center;
         min-height: 100vh;
         padding: 24px;
+        text-align: center;
       }
       .card {
-        max-width: 520px;
-        background: #11131a;
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        border-radius: 12px;
-        padding: 20px;
+        max-width: 440px;
+        width: 100%;
+        background: rgba(18, 20, 29, 0.85);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 24px;
+        padding: 36px 24px;
+        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6);
+      }
+      .icon-box {
+        width: 72px;
+        height: 72px;
+        border-radius: 50%;
+        background: rgba(99, 102, 241, 0.15);
+        border: 1px solid rgba(99, 102, 241, 0.3);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0 auto 20px;
+        font-size: 32px;
       }
       h1 {
         margin: 0 0 10px;
-        font-size: 22px;
+        font-size: 24px;
+        font-weight: 800;
+        color: #fff;
       }
       p {
-        margin: 0;
-        color: rgba(245, 247, 255, 0.75);
-        line-height: 1.5;
+        margin: 0 0 28px;
+        color: rgba(245, 247, 255, 0.7);
+        line-height: 1.6;
+        font-size: 15px;
+      }
+      .btn {
+        display: block;
+        width: 100%;
+        padding: 14px 20px;
+        border-radius: 14px;
+        font-size: 15px;
+        font-weight: 700;
+        text-decoration: none;
+        cursor: pointer;
+        transition: transform 0.15s ease, opacity 0.15s ease;
+      }
+      .btn:active { transform: scale(0.97); }
+      .btn-primary {
+        background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+        color: #fff;
+        margin-bottom: 12px;
+        box-shadow: 0 4px 20px rgba(99, 102, 241, 0.35);
+      }
+      .btn-secondary {
+        background: rgba(255, 255, 255, 0.06);
+        color: #e2e8f0;
+        border: 1px solid rgba(255, 255, 255, 0.08);
       }
     </style>
   </head>
   <body>
-    <section class="card">
-      <h1>You are offline</h1>
+    <main class="card">
+      <div class="icon-box">📶</div>
+      <h1>أنت غير متصل بالإنترنت</h1>
       <p>
-        MusicWeb will keep playing cached audio and sync your offline activity once the network
-        returns.
+        يمكنك الاستمرار في الاستماع إلى أغانيك المحفوظة محلياً على جهازك من خلال مكتبتك الأوفلاين في أي وقت!
       </p>
-    </section>
+      <a href="/library" class="btn btn-primary">فتح مكتبتي الأوفلاين 🎧</a>
+      <button onclick="window.location.reload()" class="btn btn-secondary">إعادة المحاولة 🔄</button>
+    </main>
   </body>
 </html>

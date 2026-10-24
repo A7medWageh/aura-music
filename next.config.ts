@@ -5,19 +5,57 @@ const withPWA = withPWAInit({
   dest: "public",
   disable: process.env.NODE_ENV === "development",
   register: true,
-  cacheStartUrl: false,
-  dynamicStartUrl: false,
+  cacheStartUrl: true,
+  dynamicStartUrl: true,
+  cacheOnFrontEndNav: true,
+  fallbacks: {
+    document: "/offline.html",
+  },
   workboxOptions: {
     runtimeCaching: [
       {
+        urlPattern: ({ request }: any) => request.mode === "navigate",
+        handler: "NetworkFirst",
+        options: {
+          cacheName: "aura-pages-cache",
+          networkTimeoutSeconds: 3,
+          expiration: {
+            maxEntries: 50,
+            maxAgeSeconds: 30 * 24 * 60 * 60,
+          },
+        },
+      },
+      {
+        urlPattern: ({ url }: any) => url.pathname.startsWith("/_next/static/"),
+        handler: "StaleWhileRevalidate",
+        options: {
+          cacheName: "aura-static-chunks",
+          expiration: {
+            maxEntries: 120,
+            maxAgeSeconds: 30 * 24 * 60 * 60,
+          },
+        },
+      },
+      {
+        urlPattern: ({ url }: any) => /\.(?:png|jpg|jpeg|svg|gif|webp|ico|woff|woff2)$/i.test(url.pathname),
+        handler: "StaleWhileRevalidate",
+        options: {
+          cacheName: "aura-static-assets",
+          expiration: {
+            maxEntries: 80,
+            maxAgeSeconds: 30 * 24 * 60 * 60,
+          },
+        },
+      },
+      {
         urlPattern: /^https:\/\/.*\.albumaty\.com\/.*/i,
-        handler: 'NetworkOnly',
+        handler: "NetworkOnly",
       },
       {
         urlPattern: /\/api\/(ytdownload|audio|stream)/i,
-        handler: 'NetworkOnly',
-      }
-    ]
+        handler: "NetworkOnly",
+      },
+    ],
   },
   customWorkerSrc: "worker",
 });

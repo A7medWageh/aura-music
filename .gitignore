@@ -47,3 +47,8 @@ scratch/
 tools/tg_user.py
 *.session
 tools/
+*.log
+*.pid
+.vscode/
+cloudflared.exe
+
