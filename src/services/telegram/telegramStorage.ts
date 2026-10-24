@@ -214,7 +214,11 @@ export async function saveTelegramCacheRecord(params: {
   try {
     await query(
       `INSERT INTO telegram_audio_cache (video_id, song_id, title, artist, tg_file_id, tg_message_id, duration_sec, file_size, mime_type)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       SELECT $1::varchar, $2::varchar, $3::varchar, $4::varchar, $5::varchar, $6::bigint, $7::int, $8::bigint, $9::varchar
+       WHERE NOT EXISTS (
+         SELECT 1 FROM telegram_audio_cache
+         WHERE video_id = $1::varchar AND $1::varchar IS NOT NULL AND tg_file_id IS NOT NULL
+       )
        ON CONFLICT (tg_file_id) DO NOTHING`,
       [
         videoId || null,
@@ -223,8 +227,8 @@ export async function saveTelegramCacheRecord(params: {
         artist?.trim() || null,
         tgFileId,
         tgMessageId || null,
-        durationSec || null,
-        fileSize || null,
+        Number.isFinite(durationSec) ? Math.round(durationSec as number) : null,
+        Number.isFinite(fileSize) ? Math.round(fileSize as number) : null,
         mimeType || "audio/mpeg",
       ]
     );
@@ -237,7 +241,34 @@ export async function saveTelegramCacheRecord(params: {
 /**
  * 4. Upload an audio URL directly to Telegram Storage Channel (Fast Serverless Upload with Buffer Fallback)
  */
+type TelegramUpload = { fileId: string; messageId: number; streamUrl: string; mimeType?: string } | null;
+
+// Two lanes (page warm + live resolve) can reach the uploader for the same
+// track at the same time; only the first may post it to the channel.
+const uploadFlight = new Map<string, Promise<TelegramUpload>>();
+
+function withUploadFlight<T extends TelegramUpload>(videoId: string | undefined, run: () => Promise<T>): Promise<T> {
+  if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) return run();
+  const live = uploadFlight.get(videoId);
+  if (live) return live as Promise<T>;
+  const flight = run().finally(() => uploadFlight.delete(videoId)) as Promise<TelegramUpload>;
+  uploadFlight.set(videoId, flight);
+  return flight as Promise<T>;
+}
+
 export async function uploadAudioUrlToTelegram(params: {
+  audioUrl: string;
+  title: string;
+  artist?: string;
+  duration?: number;
+  videoId?: string;
+  songId?: string;
+  thumbnailUrl?: string;
+}): Promise<{ fileId: string; messageId: number; streamUrl: string; mimeType?: string } | null> {
+  return withUploadFlight(params.videoId, () => uploadAudioUrlOnce(params));
+}
+
+async function uploadAudioUrlOnce(params: {
   audioUrl: string;
   title: string;
   artist?: string;
@@ -354,6 +385,19 @@ export async function uploadAudioUrlToTelegram(params: {
  * 5. Upload Buffer / File to Telegram Storage Channel (for yt-dlp streams or local files)
  */
 export async function uploadAudioBufferToTelegram(params: {
+  buffer: Buffer;
+  filename: string;
+  title: string;
+  mimeType?: string;
+  artist?: string;
+  duration?: number;
+  videoId?: string;
+  songId?: string;
+}): Promise<{ fileId: string; messageId: number; streamUrl: string; mimeType?: string } | null> {
+  return withUploadFlight(params.videoId, () => uploadAudioBufferOnce(params));
+}
+
+async function uploadAudioBufferOnce(params: {
   buffer: Buffer;
   filename: string;
   title: string;
