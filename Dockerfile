@@ -11,22 +11,25 @@ RUN apt-get update && apt-get install -y \
 RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \
     && chmod a+rx /usr/local/bin/yt-dlp
 
-WORKDIR /app
+# Create non-root user (UID 1000) for Hugging Face Spaces compatibility
+RUN useradd -m -u 1000 user
+WORKDIR /home/user/app
 
-# Copy package files
-COPY package*.json ./
-
-# Install production dependencies (fast, minimal RAM)
+# Copy package files and install dependencies
+COPY --chown=user:user package*.json ./
 RUN npm install --omit=dev
 
 # Copy project files
-COPY . .
+COPY --chown=user:user . .
+
+USER user
 
 ENV NODE_ENV=production
 ENV YT_DLP_PATH=/usr/local/bin/yt-dlp
-ENV PORT=3000
+ENV PORT=7860
 ENV HOSTNAME=0.0.0.0
 
+EXPOSE 7860
 EXPOSE 3000
 
 CMD ["node", "cloud-worker.js"]

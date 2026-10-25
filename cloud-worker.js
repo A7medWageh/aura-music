@@ -16,7 +16,7 @@ const fs = require("fs");
 const path = require("path");
 const { Client } = require("pg");
 
-const PORT = parseInt(process.env.PORT || "3000", 10);
+const PORT = parseInt(process.env.PORT || process.env.HF_PORT || "7860", 10);
 const DB_URL =
   process.env.DATABASE_URL ||
   "postgresql://neondb_owner:npg_afv7RLgh1oSF@ep-round-bird-amxcwfry.c-5.us-east-1.aws.neon.tech/neondb?sslmode=require";
@@ -55,6 +55,7 @@ function checkYtDlp() {
 async function registerInNeonDb() {
   let publicUrl =
     process.env.PUBLIC_URL ||
+    (process.env.SPACE_HOST ? `https://${process.env.SPACE_HOST}` : null) ||
     (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : null) ||
     (process.env.RAILWAY_STATIC_URL ? `https://${process.env.RAILWAY_STATIC_URL}` : null) ||
     process.env.RENDER_EXTERNAL_URL ||
