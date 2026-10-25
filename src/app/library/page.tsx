@@ -144,7 +144,16 @@ export default function LibraryPage() {
     setLoading(false);
   };
 
-  useEffect(() => { loadLibrary(); }, [vaultUnlocked]);
+  useEffect(() => { 
+    loadLibrary(); 
+    const handleMigrated = () => {
+      loadLibrary();
+    };
+    window.addEventListener("aura-thumbnails-migrated", handleMigrated);
+    return () => {
+      window.removeEventListener("aura-thumbnails-migrated", handleMigrated);
+    };
+  }, [vaultUnlocked]);
 
   const handleDeleteArtist = async (e: React.MouseEvent, artistName: string) => {
     e.stopPropagation();

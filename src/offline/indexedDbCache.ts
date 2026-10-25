@@ -269,6 +269,18 @@ export async function getAllOfflineSongs(): Promise<any[]> {
   });
 }
 
+/** Get single song metadata from IndexedDB */
+export async function getOfflineSongMeta(songId: string): Promise<any | null> {
+  if (!songId) return null;
+  const db = await openOfflineDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(META_STORE, "readonly");
+    const req = tx.objectStore(META_STORE).get(songId);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = () => reject(req.error);
+  });
+}
+
 let isMigratingThumbnails = false;
 async function migrateRemoteThumbnails(songs: any[]) {
   if (isMigratingThumbnails) return;
@@ -276,27 +288,42 @@ async function migrateRemoteThumbnails(songs: any[]) {
   if (needCache.length === 0) return;
 
   isMigratingThumbnails = true;
+  let migratedCount = 0;
   try {
-    for (const song of needCache.slice(0, 15)) {
-      try {
-        const dataUrl = await fetchImageAsDataUrl(song.thumbnailUrl);
-        if (dataUrl && dataUrl.startsWith("data:")) {
-          const db = await openOfflineDb();
-          const tx = db.transaction(META_STORE, "readwrite");
-          const req = tx.objectStore(META_STORE).get(song.songId);
-          req.onsuccess = () => {
-            const rec = req.result;
-            if (rec) {
-              rec.thumbnailUrl = dataUrl;
-              tx.objectStore(META_STORE).put(rec);
+    // Process in batches of 4 concurrent fetches to quickly cache all images
+    const chunkSize = 4;
+    for (let i = 0; i < needCache.length; i += chunkSize) {
+      const chunk = needCache.slice(i, i + chunkSize);
+      await Promise.all(
+        chunk.map(async (song) => {
+          try {
+            const dataUrl = await fetchImageAsDataUrl(song.thumbnailUrl);
+            if (dataUrl && dataUrl.startsWith("data:")) {
+              const db = await openOfflineDb();
+              await new Promise<void>((resolve) => {
+                const tx = db.transaction(META_STORE, "readwrite");
+                const req = tx.objectStore(META_STORE).get(song.songId);
+                req.onsuccess = () => {
+                  const rec = req.result;
+                  if (rec) {
+                    rec.thumbnailUrl = dataUrl;
+                    tx.objectStore(META_STORE).put(rec);
+                    migratedCount++;
+                  }
+                };
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => resolve();
+              });
             }
-          };
-          await new Promise<void>((r) => { tx.oncomplete = () => r(); tx.onerror = () => r(); });
-        }
-      } catch {}
+          } catch {}
+        })
+      );
     }
   } finally {
     isMigratingThumbnails = false;
+    if (migratedCount > 0 && typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("aura-thumbnails-migrated"));
+    }
   }
 }
 

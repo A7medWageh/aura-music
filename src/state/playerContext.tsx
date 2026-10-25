@@ -2,7 +2,7 @@
 
 import { createContext, ReactNode, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { initialPlayerState, PlayerState, QueueSong, RepeatMode } from "@/state/playerState";
-import { getAudioBlob } from "@/offline/indexedDbCache";
+import { getAudioBlob, getOfflineSongMeta } from "@/offline/indexedDbCache";
 import { downloadSong } from "@/services/offline/downloader";
 import { useToastStore } from "@/state/toastStore";
 import { toAbsoluteApiUrl } from "@/utils/apiBase";
@@ -576,6 +576,19 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           const blobUrl = URL.createObjectURL(cachedBlob);
           isPlayingRef.current = true;
           setState((prev) => ({ ...prev, isBuffering: false, streamUrl: blobUrl, isPlaying: true, error: null }));
+
+          if (song.thumbnailUrl && !song.thumbnailUrl.startsWith("data:")) {
+            getOfflineSongMeta(song.songId).then((meta) => {
+              const metaArt = meta?.thumbnailUrl;
+              if (metaArt && metaArt.startsWith("data:") && !cancelled) {
+                setState((prev) => ({
+                  ...prev,
+                  queue: prev.queue.map(q => q.songId === song.songId ? { ...q, thumbnailUrl: metaArt } : q)
+                }));
+              }
+            }).catch(() => {});
+          }
+
           player.src = blobUrl;
           player.load();
           const p = player.play();
