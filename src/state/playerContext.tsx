@@ -4,6 +4,7 @@ import { createContext, ReactNode, useContext, useEffect, useMemo, useRef, useSt
 import { initialPlayerState, PlayerState, QueueSong, RepeatMode } from "@/state/playerState";
 import { getAudioBlob, getOfflineSongMeta } from "@/offline/indexedDbCache";
 import { downloadSong } from "@/services/offline/downloader";
+import { setMainAudioPlaying } from "@/services/offline/backgroundKeepAlive";
 import { useToastStore } from "@/state/toastStore";
 import { toAbsoluteApiUrl } from "@/utils/apiBase";
 
@@ -469,6 +470,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     isPlayingRef.current = state.isPlaying;
+    setMainAudioPlaying(state.isPlaying);
   }, [state.isPlaying]);
 
   useEffect(() => {

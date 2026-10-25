@@ -5,6 +5,8 @@
  * without React context boilerplate.
  */
 
+import { startBackgroundKeepAlive, stopBackgroundKeepAlive } from "@/services/offline/backgroundKeepAlive";
+
 export type DownloadJob = {
   id: string;              // albumId or songId
   name: string;            // album name or song title
@@ -102,8 +104,13 @@ export function subscribeDownloads(fn: Listener) {
   return () => { listeners.delete(fn); };
 }
 
+export function hasActiveDownloadJobs(): boolean {
+  return Array.from(jobs.values()).some(j => j.status === "downloading");
+}
+
 export function startJob(id: string, name: string, type: "album" | "song", total: number) {
   jobs.set(id, { id, name, type, total, done: 0, currentSong: "", failed: 0, status: "downloading" });
+  try { startBackgroundKeepAlive(name); } catch {}
   notify(true);
 }
 
@@ -119,6 +126,13 @@ export function finishJob(id: string, success: boolean, cancelled = false) {
   if (!job) return;
   jobs.set(id, { ...job, status: cancelled ? "cancelled" : success ? "done" : "error" });
   abortControllers.delete(id);
+
+  // If no other downloads are currently running, release iOS background audio session
+  const remainingActive = Array.from(jobs.values()).some(j => j.id !== id && j.status === "downloading");
+  if (!remainingActive) {
+    try { stopBackgroundKeepAlive(); } catch {}
+  }
+
   notify(true);
   // Auto-remove very fast so the panel hides
   setTimeout(() => { jobs.delete(id); notify(true); }, 2000);
@@ -140,6 +154,10 @@ export function pauseJob(id: string) {
   const job = jobs.get(id);
   if (job && job.status === "downloading") {
     jobs.set(id, { ...job, status: "paused" });
+    const remainingActive = Array.from(jobs.values()).some(j => j.id !== id && j.status === "downloading");
+    if (!remainingActive) {
+      try { stopBackgroundKeepAlive(); } catch {}
+    }
     notify();
   }
 }
@@ -148,6 +166,7 @@ export function resumeJob(id: string) {
   const job = jobs.get(id);
   if (job && job.status === "paused") {
     jobs.set(id, { ...job, status: "downloading" });
+    try { startBackgroundKeepAlive(job.name); } catch {}
     notify();
   }
 }
