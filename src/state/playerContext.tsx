@@ -30,6 +30,7 @@ type PlayerContextValue = {
   setSoundPreset: (preset: "crystal" | "bass" | "vocal" | "spatial" | "noise_cancel") => void;
   getAnalyser: () => AnalyserNode | null;
   closePlayer: () => void;
+  toggleMute: () => void;
 };
 
 const PlayerContext = createContext<PlayerContextValue | null>(null);
@@ -216,8 +217,32 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     setState((prev) => ({ ...prev, shuffle: value }));
   };
 
+  const lastNonZeroVolumeRef = useRef(1);
+
   const setVolume = (value: number) => {
-    setState((prev) => ({ ...prev, volume: Math.max(0, Math.min(1, value)) }));
+    const v = Math.max(0, Math.min(1, value));
+    if (v > 0) lastNonZeroVolumeRef.current = v;
+    const player = audioRef.current;
+    if (player) {
+      try {
+        player.muted = v === 0;
+        player.volume = v;
+      } catch {}
+    }
+    if (postGainRef.current) {
+      try {
+        postGainRef.current.gain.value = v;
+      } catch {}
+    }
+    setState((prev) => ({ ...prev, volume: v }));
+  };
+
+  const toggleMute = () => {
+    if (state.volume > 0) {
+      setVolume(0);
+    } else {
+      setVolume(lastNonZeroVolumeRef.current || 1);
+    }
   };
 
   const setSpeed = (value: number) => {
@@ -477,7 +502,15 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const player = audioRef.current;
     if (!player) return;
-    player.volume = state.volume;
+    try {
+      player.muted = state.volume === 0;
+      player.volume = state.volume;
+    } catch {}
+    if (postGainRef.current) {
+      try {
+        postGainRef.current.gain.value = state.volume;
+      } catch {}
+    }
   }, [state.volume]);
 
   useEffect(() => {
@@ -969,6 +1002,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     setShuffle,
     cycleRepeat,
     setVolume,
+    toggleMute,
     setSpeed,
     seekTo,
     setHighQuality,

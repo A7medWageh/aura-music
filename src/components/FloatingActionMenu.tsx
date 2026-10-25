@@ -1,12 +1,11 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { useRouter, usePathname } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   RefreshCw, 
   ChevronUp, 
-  ChevronDown, 
   ArrowRight, 
   Square, 
   ArrowUp, 
@@ -20,13 +19,25 @@ import { useToastStore } from "@/state/toastStore";
 
 export function FloatingActionMenu() {
   const router = useRouter();
-  const pathname = usePathname();
-  const { currentSong, closePlayer, state, setVolume } = usePlayer();
+  const { currentSong, closePlayer, state, toggleMute } = usePlayer();
   const { addToast } = useToastStore();
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [spinning, setSpinning] = useState(false);
+  const [isFullPlayerOpen, setIsFullPlayerOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  // Monitor if full-screen player is open to hide floating buttons
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const checkFullOpen = () => {
+      setIsFullPlayerOpen(document.body.classList.contains("player-full-open"));
+    };
+    checkFullOpen();
+    const observer = new MutationObserver(checkFullOpen);
+    observer.observe(document.body, { attributes: true, attributeFilter: ["class"] });
+    return () => observer.disconnect();
+  }, []);
 
   // Close menu when clicking outside
   useEffect(() => {
@@ -85,146 +96,153 @@ export function FloatingActionMenu() {
   // Handle Mute / Unmute
   const handleToggleMute = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (state.volume > 0) {
-      setVolume(0);
-      addToast("تم كتم الصوت 🔇");
-    } else {
-      setVolume(1);
-      addToast("تم تشغيل الصوت 🔊");
-    }
+    const willMute = state.volume > 0;
+    toggleMute();
+    addToast(willMute ? "تم كتم الصوت 🔇" : "تم تشغيل الصوت 🔊");
   };
+
+  if (isFullPlayerOpen) {
+    return null; // Do not render floating buttons over full-screen player
+  }
+
+  const isMuted = state.volume === 0;
 
   return (
     <div 
       ref={menuRef}
-      className="fixed z-50 right-4 sm:right-6 bottom-[140px] md:bottom-[105px] flex flex-col items-center gap-2.5 pointer-events-auto select-none"
+      className={`fixed z-50 right-4 sm:right-6 flex flex-col items-end pointer-events-auto select-none transition-all duration-300 ${
+        currentSong 
+          ? "bottom-[calc(env(safe-area-inset-bottom,0px)+150px)] md:bottom-[92px]" 
+          : "bottom-[calc(env(safe-area-inset-bottom,0px)+74px)] md:bottom-6"
+      }`}
     >
-      {/* ─── Expandable Floating Options Menu (Upwards) ─── */}
-      <AnimatePresence>
-        {menuOpen && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.85, y: 15 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.85, y: 15 }}
-            transition={{ type: "spring", stiffness: 420, damping: 28 }}
-            className="flex flex-col gap-2 p-2 rounded-2xl shadow-2xl border border-white/15 backdrop-blur-2xl bg-black/85 min-w-[170px]"
-            style={{
-              boxShadow: "0 12px 40px rgba(0,0,0,0.7), 0 0 25px rgba(99,102,241,0.25)",
-            }}
-          >
-            {/* Header / Title */}
-            <div className="px-2.5 py-1 text-[11px] font-black tracking-wider text-indigo-400 border-b border-white/10 flex items-center justify-between">
-              <span>إجراءات سريعة</span>
-              <Sparkles className="w-3.5 h-3.5 text-indigo-400 animate-pulse" />
-            </div>
-
-            {/* Option 1: Back one step */}
-            <button
-              onClick={handleBack}
-              className="flex items-center gap-2.5 w-full px-3 py-2 rounded-xl text-xs font-bold text-gray-200 hover:text-white hover:bg-white/10 active:scale-95 transition-all text-right group"
+      <div className="relative flex flex-col items-end">
+        {/* ─── Expandable Floating Options Menu (Floats upwards without shifting buttons) ─── */}
+        <AnimatePresence>
+          {menuOpen && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 10 }}
+              transition={{ type: "spring", stiffness: 450, damping: 28 }}
+              className="absolute bottom-full right-0 mb-3 flex flex-col gap-1.5 p-2 rounded-2xl shadow-2xl border border-white/15 backdrop-blur-2xl bg-black/90 min-w-[175px]"
+              style={{
+                boxShadow: "0 16px 48px rgba(0,0,0,0.8), 0 0 28px rgba(99,102,241,0.28)",
+              }}
             >
-              <div className="w-7 h-7 rounded-lg bg-indigo-500/20 text-indigo-400 flex items-center justify-center group-hover:bg-indigo-500 group-hover:text-white transition-colors">
-                <ArrowRight className="w-4 h-4" />
+              {/* Header / Title */}
+              <div className="px-2.5 py-1 text-[11px] font-black tracking-wider text-indigo-400 border-b border-white/10 flex items-center justify-between">
+                <span>إجراءات سريعة</span>
+                <Sparkles className="w-3.5 h-3.5 text-indigo-400 animate-pulse" />
               </div>
-              <span>رجوع خطوة لورا</span>
-            </button>
 
-            {/* Option 2: Close Player (Available if player has current song) */}
-            {currentSong && (
+              {/* Option 1: Back one step */}
               <button
-                onClick={handleClosePlayer}
-                className="flex items-center gap-2.5 w-full px-3 py-2 rounded-xl text-xs font-bold text-rose-300 hover:text-rose-100 hover:bg-rose-500/15 active:scale-95 transition-all text-right group"
-              >
-                <div className="w-7 h-7 rounded-lg bg-rose-500/20 text-rose-400 flex items-center justify-center group-hover:bg-rose-500 group-hover:text-white transition-colors">
-                  <Square className="w-3.5 h-3.5 fill-current" />
-                </div>
-                <span>قفل المشغل تماماً</span>
-              </button>
-            )}
-
-            {/* Option 3: Mute / Unmute (If playing) */}
-            {currentSong && (
-              <button
-                onClick={handleToggleMute}
+                onClick={handleBack}
                 className="flex items-center gap-2.5 w-full px-3 py-2 rounded-xl text-xs font-bold text-gray-200 hover:text-white hover:bg-white/10 active:scale-95 transition-all text-right group"
               >
-                <div className="w-7 h-7 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center group-hover:bg-amber-500 group-hover:text-white transition-colors">
-                  {state.volume === 0 ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+                <div className="w-7 h-7 rounded-lg bg-indigo-500/20 text-indigo-400 flex items-center justify-center group-hover:bg-indigo-500 group-hover:text-white transition-colors">
+                  <ArrowRight className="w-4 h-4" />
                 </div>
-                <span>{state.volume === 0 ? "إلغاء كتم الصوت" : "كتم الصوت"}</span>
+                <span>رجوع خطوة لورا</span>
               </button>
-            )}
 
-            {/* Option 4: Library */}
-            <button
-              onClick={() => { setMenuOpen(false); router.push("/library"); }}
-              className="flex items-center gap-2.5 w-full px-3 py-2 rounded-xl text-xs font-bold text-gray-200 hover:text-white hover:bg-white/10 active:scale-95 transition-all text-right group"
-            >
-              <div className="w-7 h-7 rounded-lg bg-cyan-500/20 text-cyan-400 flex items-center justify-center group-hover:bg-cyan-500 group-hover:text-white transition-colors">
-                <Library className="w-4 h-4" />
-              </div>
-              <span>مكتبتي (الأوفلاين)</span>
-            </button>
+              {/* Option 2: Close Player (Available if player has current song) */}
+              {currentSong && (
+                <button
+                  onClick={handleClosePlayer}
+                  className="flex items-center gap-2.5 w-full px-3 py-2 rounded-xl text-xs font-bold text-rose-300 hover:text-rose-100 hover:bg-rose-500/15 active:scale-95 transition-all text-right group"
+                >
+                  <div className="w-7 h-7 rounded-lg bg-rose-500/20 text-rose-400 flex items-center justify-center group-hover:bg-rose-500 group-hover:text-white transition-colors">
+                    <Square className="w-3.5 h-3.5 fill-current" />
+                  </div>
+                  <span>قفل المشغل تماماً</span>
+                </button>
+              )}
 
-            {/* Option 5: Scroll to Top */}
-            <button
-              onClick={handleScrollTop}
-              className="flex items-center gap-2.5 w-full px-3 py-2 rounded-xl text-xs font-bold text-gray-200 hover:text-white hover:bg-white/10 active:scale-95 transition-all text-right group"
-            >
-              <div className="w-7 h-7 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center group-hover:bg-emerald-500 group-hover:text-white transition-colors">
-                <ArrowUp className="w-4 h-4" />
-              </div>
-              <span>أعلى الصفحة</span>
-            </button>
-          </motion.div>
-        )}
-      </AnimatePresence>
+              {/* Option 3: Mute / Unmute (If playing) */}
+              {currentSong && (
+                <button
+                  onClick={handleToggleMute}
+                  className="flex items-center gap-2.5 w-full px-3 py-2 rounded-xl text-xs font-bold text-gray-200 hover:text-white hover:bg-white/10 active:scale-95 transition-all text-right group"
+                >
+                  <div className="w-7 h-7 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center group-hover:bg-amber-500 group-hover:text-white transition-colors">
+                    {isMuted ? <VolumeX className="w-4 h-4 text-rose-400" /> : <Volume2 className="w-4 h-4" />}
+                  </div>
+                  <span>{isMuted ? "تشغيل الصوت" : "كتم الصوت"}</span>
+                </button>
+              )}
 
-      {/* ─── Stack of: [Options Arrow Button] + [Floating Refresh Button] ─── */}
-      <div className="flex flex-col items-center gap-2">
-        {/* Arrow Button that opens the options menu */}
-        <motion.button
-          onClick={() => setMenuOpen((prev) => !prev)}
-          title="خيارات سريعة"
-          aria-label="خيارات سريعة"
-          whileHover={{ scale: 1.15 }}
-          whileTap={{ scale: 0.9 }}
-          className={`w-9 h-9 rounded-full flex items-center justify-center shadow-lg border transition-all duration-300 ${
-            menuOpen 
-              ? "bg-indigo-600 text-white border-indigo-400 shadow-indigo-500/40" 
-              : "bg-black/75 hover:bg-black/90 text-indigo-300 border-white/20 backdrop-blur-xl shadow-black/60"
-          }`}
-        >
-          <motion.div
-            animate={{ rotate: menuOpen ? 180 : 0 }}
-            transition={{ duration: 0.3 }}
-          >
-            <ChevronUp className="w-4 h-4 stroke-[2.5]" />
-          </motion.div>
-        </motion.button>
+              {/* Option 4: Library */}
+              <button
+                onClick={() => { setMenuOpen(false); router.push("/library"); }}
+                className="flex items-center gap-2.5 w-full px-3 py-2 rounded-xl text-xs font-bold text-gray-200 hover:text-white hover:bg-white/10 active:scale-95 transition-all text-right group"
+              >
+                <div className="w-7 h-7 rounded-lg bg-cyan-500/20 text-cyan-400 flex items-center justify-center group-hover:bg-cyan-500 group-hover:text-white transition-colors">
+                  <Library className="w-4 h-4" />
+                </div>
+                <span>مكتبتي (الأوفلاين)</span>
+              </button>
 
-        {/* Floating Refresh Button (On the Right, Above Player) */}
-        <motion.button
-          id="floating-refresh-btn"
-          onClick={handleRefresh}
-          title="تحديث الصفحة"
-          aria-label="تحديث الصفحة"
-          whileHover={{ scale: 1.12 }}
-          whileTap={{ scale: 0.92 }}
-          className="relative w-12 h-12 rounded-full flex items-center justify-center shadow-2xl group overflow-hidden"
-          style={{
-            background: "linear-gradient(135deg, #6366f1 0%, #8b5cf6 60%, #ec4899 100%)",
-            boxShadow: "0 6px 26px rgba(99,102,241,0.5), 0 2px 8px rgba(0,0,0,0.4)",
-          }}
-        >
-          {/* Subtle pulsating glow border */}
-          <div className="absolute inset-0 rounded-full border border-white/30 group-hover:border-white/60 transition-colors pointer-events-none" />
-          <RefreshCw
-            className={`w-5 h-5 text-white transition-transform duration-500 ${
-              spinning ? "animate-spin" : "group-hover:rotate-45"
+              {/* Option 5: Scroll to Top */}
+              <button
+                onClick={handleScrollTop}
+                className="flex items-center gap-2.5 w-full px-3 py-2 rounded-xl text-xs font-bold text-gray-200 hover:text-white hover:bg-white/10 active:scale-95 transition-all text-right group"
+              >
+                <div className="w-7 h-7 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center group-hover:bg-emerald-500 group-hover:text-white transition-colors">
+                  <ArrowUp className="w-4 h-4" />
+                </div>
+                <span>أعلى الصفحة</span>
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* ─── Fixed-Width Buttons Column (w-12, firmly anchored to right) ─── */}
+        <div className="w-12 flex flex-col items-center gap-2">
+          {/* Arrow Button that opens the options menu */}
+          <motion.button
+            onClick={() => setMenuOpen((prev) => !prev)}
+            title="خيارات سريعة"
+            aria-label="خيارات سريعة"
+            whileHover={{ scale: 1.15 }}
+            whileTap={{ scale: 0.9 }}
+            className={`w-9 h-9 rounded-full flex items-center justify-center shadow-lg border transition-all duration-300 ${
+              menuOpen 
+                ? "bg-indigo-600 text-white border-indigo-400 shadow-indigo-500/40" 
+                : "bg-black/80 hover:bg-black/95 text-indigo-300 border-white/20 backdrop-blur-xl shadow-black/70"
             }`}
-          />
-        </motion.button>
+          >
+            <motion.div
+              animate={{ rotate: menuOpen ? 180 : 0 }}
+              transition={{ duration: 0.28, ease: "easeInOut" }}
+            >
+              <ChevronUp className="w-4 h-4 stroke-[2.5]" />
+            </motion.div>
+          </motion.button>
+
+          {/* Floating Refresh Button */}
+          <motion.button
+            id="floating-refresh-btn"
+            onClick={handleRefresh}
+            title="تحديث الصفحة"
+            aria-label="تحديث الصفحة"
+            whileHover={{ scale: 1.12 }}
+            whileTap={{ scale: 0.92 }}
+            className="relative w-12 h-12 rounded-full flex items-center justify-center shadow-2xl group overflow-hidden"
+            style={{
+              background: "linear-gradient(135deg, #6366f1 0%, #8b5cf6 60%, #ec4899 100%)",
+              boxShadow: "0 8px 28px rgba(99,102,241,0.55), 0 2px 8px rgba(0,0,0,0.4)",
+            }}
+          >
+            <div className="absolute inset-0 rounded-full border border-white/30 group-hover:border-white/60 transition-colors pointer-events-none" />
+            <RefreshCw
+              className={`w-5 h-5 text-white transition-transform duration-500 ${
+                spinning ? "animate-spin" : "group-hover:rotate-45"
+              }`}
+            />
+          </motion.button>
+        </div>
       </div>
     </div>
   );
