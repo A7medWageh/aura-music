@@ -29,6 +29,7 @@ type PlayerContextValue = {
   soundPreset: "crystal" | "bass" | "vocal" | "spatial" | "noise_cancel";
   setSoundPreset: (preset: "crystal" | "bass" | "vocal" | "spatial" | "noise_cancel") => void;
   getAnalyser: () => AnalyserNode | null;
+  closePlayer: () => void;
 };
 
 const PlayerContext = createContext<PlayerContextValue | null>(null);
@@ -975,6 +976,21 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     soundPreset,
     setSoundPreset,
     getAnalyser: () => analyserRef.current,
+    closePlayer: () => {
+      const player = audioRef.current;
+      if (player) {
+        player.pause();
+        player.removeAttribute("src");
+        player.load();
+      }
+      setState(initialPlayerState);
+      if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+        try {
+          navigator.mediaSession.playbackState = "none";
+          navigator.mediaSession.metadata = null;
+        } catch {}
+      }
+    },
     prewarm: (videoId: string) => {
       // Prewarming removed for direct download chunking proxy
     }

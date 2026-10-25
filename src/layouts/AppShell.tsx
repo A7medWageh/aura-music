@@ -13,45 +13,13 @@ import { useArtistNotifications } from "@/services/notifications/artistNotificat
 import { DownloadProgressPanel } from "@/components/DownloadProgressPanel";
 import { GlobalToaster } from "@/components/GlobalToaster";
 import { motion, AnimatePresence } from "framer-motion";
-import { RefreshCw, Search } from "lucide-react";
+import { Search } from "lucide-react";
+import { FloatingActionMenu } from "@/components/FloatingActionMenu";
+import { AndroidEdgeBackGesture } from "@/components/AndroidEdgeBackGesture";
 
 function NotificationsRunner() {
   useArtistNotifications();
   return null;
-}
-
-// ─── Floating Refresh Button ──────────────────────────────────────────
-function FloatingRefreshFAB() {
-  const [spinning, setSpinning] = useState(false);
-
-  const handleRefresh = () => {
-    setSpinning(true);
-    setTimeout(() => {
-      window.location.reload();
-    }, 400);
-  };
-
-  return (
-    <motion.button
-      id="floating-refresh-btn"
-      onClick={handleRefresh}
-      title="تحديث الصفحة"
-      initial={{ scale: 0, opacity: 0 }}
-      animate={{ scale: 1, opacity: 1 }}
-      transition={{ delay: 1, type: "spring", stiffness: 300 }}
-      whileHover={{ scale: 1.12 }}
-      whileTap={{ scale: 0.92 }}
-      className="fixed z-50 left-6 bottom-[130px] md:bottom-[100px] w-12 h-12 rounded-full flex items-center justify-center shadow-2xl"
-      style={{
-        background: "linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)",
-        boxShadow: "0 4px 24px rgba(99,102,241,0.45), 0 1.5px 6px rgba(0,0,0,0.3)",
-      }}
-    >
-      <RefreshCw
-        className={`w-5 h-5 text-white transition-transform duration-500 ${spinning ? "animate-spin" : ""}`}
-      />
-    </motion.button>
-  );
 }
 
 // ─── Mobile Search Bar (visible only on mobile) ───────────────────────
@@ -166,8 +134,11 @@ export function AppShell({ children }: { children: ReactNode }) {
         {/* Mobile Tab Bar */}
         <MobileTabBar />
 
-        {/* Floating Refresh Button */}
-        <FloatingRefreshFAB />
+        {/* Android Edge Back Gesture & Edge Handle */}
+        <AndroidEdgeBackGesture />
+
+        {/* Floating Action Menu (Right-side Refresh + Quick Actions Arrow) */}
+        <FloatingActionMenu />
 
         <GlobalCommandPalette />
         <DownloadProgressPanel />
