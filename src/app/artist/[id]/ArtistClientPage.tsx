@@ -15,6 +15,7 @@ import { FavoriteButton } from "@/components/FavoriteButton";
 import { PremiumModal } from "@/components/PremiumModal";
 import { useCacheWarm } from "@/hooks/useCacheWarm";
 import { runReleaseCheck, releaseAgeLabel } from "@/services/notifications/artistNotifications";
+import { JannatOldSection } from "@/components/JannatOldSection";
 
 export default function ArtistClientPage({ id }: { id: string }) {
   const { playNow, enqueueSongs } = usePlayer();
@@ -103,6 +104,15 @@ export default function ArtistClientPage({ id }: { id: string }) {
   };
 
   const allSongs = artist?.songs || [];
+  const decodedId = decodeURIComponent(id || "");
+  const isJannat = Boolean(
+    id === "UC6o55jcERrN04LwFVcE4ToA" ||
+    id === "yt-جنات" ||
+    decodedId.includes("جنات") ||
+    decodedId.toLowerCase().includes("jannat") ||
+    artist?.artistName?.includes("جنات") ||
+    artist?.artistName?.toLowerCase().includes("jannat")
+  );
   const allAlbums = [...(artist?.newReleases || []), ...(artist?.oldAlbums || [])];
   const chronologicalAlbums = (() => {
     const map = new Map<string, any>();
@@ -277,6 +287,9 @@ export default function ArtistClientPage({ id }: { id: string }) {
       </div>
 
       <div className="px-4 pt-12 space-y-20">
+
+        {/* ═══ Jannat Classics (جنات قديم) ═══ */}
+        {isJannat && <JannatOldSection onToast={showToast} />}
 
         {/* ═══ JUST DROPPED — verified real publish dates ═══ */}
         {freshReleases.length > 0 && (
