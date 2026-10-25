@@ -44,17 +44,26 @@ export default function DownloadAlbumButton({ albumId, songs, metadata }: { albu
       }
     });
 
-    const handleUpdate = () => checkOfflineStatus();
+    let checkTimeout: any = null;
+    const handleUpdate = () => {
+      if (checkTimeout) clearTimeout(checkTimeout);
+      checkTimeout = setTimeout(() => {
+        checkOfflineStatus();
+      }, 350);
+    };
     window.addEventListener("aura-library-updated", handleUpdate);
 
     return () => {
       mounted = false;
+      if (checkTimeout) clearTimeout(checkTimeout);
       unsubscribe();
       window.removeEventListener("aura-library-updated", handleUpdate);
     };
   }, [albumId, songs]);
 
-  const handleDownload = async () => {
+  const handleDownload = async (e?: React.MouseEvent) => {
+    e?.preventDefault();
+    e?.stopPropagation();
     if (downloading || downloaded) return;
     setDownloading(true);
     try {
@@ -69,6 +78,7 @@ export default function DownloadAlbumButton({ albumId, songs, metadata }: { albu
 
   return (
     <button 
+      type="button"
       onClick={handleDownload}
       className="relative p-4 text-gray-400 hover:text-white transition-all text-center rounded-full hover:bg-white/5 disabled:opacity-50"
       title="تحميل الألبوم للأوفلاين"

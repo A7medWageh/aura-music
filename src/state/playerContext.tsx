@@ -36,7 +36,27 @@ type PlayerContextValue = {
 const PlayerContext = createContext<PlayerContextValue | null>(null);
 
 export function PlayerProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<PlayerState>(initialPlayerState);
+  const [state, setState] = useState<PlayerState>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const saved = localStorage.getItem("aura-player-session");
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed.queue && parsed.queue.length > 0 && parsed.currentSongId) {
+            return {
+              ...initialPlayerState,
+              queue: parsed.queue,
+              currentSongId: parsed.currentSongId,
+              currentTime: parsed.currentTime || 0,
+              volume: parsed.volume ?? initialPlayerState.volume,
+              isPlaying: false // keep paused on initial mount so browser autoplay policies are respected
+            };
+          }
+        }
+      } catch {}
+    }
+    return initialPlayerState;
+  });
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const isPlayingRef = useRef(state.isPlaying);
   const isLoadingNewSongRef = useRef(false); // true while fetching stream URL, prevents onPause from clearing isPlaying
@@ -47,14 +67,23 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     [state.currentSongId, state.queue]
   );
 
-  // Persist queue to localStorage so other pages (favorites) can access song info
+  // Persist session to localStorage so active song, queue and progress survive reloads
   useEffect(() => {
-    if (state.queue.length > 0) {
+    if (state.queue.length > 0 && state.currentSongId) {
       try {
+        localStorage.setItem(
+          "aura-player-session",
+          JSON.stringify({
+            queue: state.queue,
+            currentSongId: state.currentSongId,
+            currentTime: Math.floor(state.currentTime || 0),
+            volume: state.volume
+          })
+        );
         localStorage.setItem("aura-player-state", JSON.stringify({ queue: state.queue }));
       } catch { /* ignore */ }
     }
-  }, [state.queue]);
+  }, [state.queue, state.currentSongId, state.volume]);
 
   const setQueue = (songs: QueueSong[], startIndex = 0) => {
     const idx = Math.max(0, Math.min(startIndex, songs.length - 1));
@@ -1079,6 +1108,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       {children}
       <audio
         ref={audioRef}
+        data-main-player="true"
         playsInline
         preload="auto"
         onTimeUpdate={onTimeUpdate}

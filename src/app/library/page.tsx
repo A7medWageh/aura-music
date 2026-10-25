@@ -151,7 +151,7 @@ export default function LibraryPage() {
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
         loadLibrary();
-      }, 100);
+      }, 350);
     };
 
     loadLibrary(); 
@@ -159,8 +159,13 @@ export default function LibraryPage() {
     window.addEventListener("aura-library-updated", scheduleReload);
     window.addEventListener("aura-thumbnails-migrated", scheduleReload);
 
-    const unsubscribe = subscribeDownloads(() => {
-      scheduleReload();
+    let prevJobState = "";
+    const unsubscribe = subscribeDownloads((jobs) => {
+      const summary = jobs.map(j => `${j.id}:${j.status}:${j.done}`).join(",");
+      if (summary !== prevJobState) {
+        prevJobState = summary;
+        scheduleReload();
+      }
     });
 
     return () => {

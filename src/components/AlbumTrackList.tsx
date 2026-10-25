@@ -15,6 +15,7 @@ export default function AlbumTrackList({ songs, albumArtist }: { songs: any[]; a
 
   useEffect(() => {
     let mounted = true;
+    let syncTimer: any = null;
     const syncOffline = () => {
       getAllOfflineSongs()
         .then((offlineSongs) => {
@@ -33,10 +34,17 @@ export default function AlbumTrackList({ songs, albumArtist }: { songs: any[]; a
     };
 
     syncOffline();
-    window.addEventListener("aura-library-updated", syncOffline);
+
+    const debouncedSync = () => {
+      if (syncTimer) clearTimeout(syncTimer);
+      syncTimer = setTimeout(syncOffline, 350);
+    };
+
+    window.addEventListener("aura-library-updated", debouncedSync);
     return () => {
       mounted = false;
-      window.removeEventListener("aura-library-updated", syncOffline);
+      if (syncTimer) clearTimeout(syncTimer);
+      window.removeEventListener("aura-library-updated", debouncedSync);
     };
   }, []);
 

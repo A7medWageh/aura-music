@@ -85,15 +85,26 @@ function getOrCreateSilentAudio(): HTMLAudioElement | null {
   return silentAudio;
 }
 
+function isAppAudioActive(): boolean {
+  if (mainAudioIsPlaying) return true;
+  if (typeof document !== "undefined") {
+    const mainEl = document.querySelector("audio[data-main-player='true']") as HTMLAudioElement | null;
+    if (mainEl && (!mainEl.paused || (mainEl.currentTime > 0 && !mainEl.ended))) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function resumeSilentAudio() {
-  if (typeof window === "undefined" || mainAudioIsPlaying) return;
+  if (typeof window === "undefined" || isAppAudioActive()) return;
   const audio = getOrCreateSilentAudio();
   if (!audio) return;
 
   try {
     audio.play().then(() => {
-      // Set lock screen media session indicating active background download
-      if (typeof navigator !== "undefined" && "mediaSession" in navigator && !mainAudioIsPlaying) {
+      // Set lock screen media session indicating active background download only if no real music is active
+      if (typeof navigator !== "undefined" && "mediaSession" in navigator && !isAppAudioActive()) {
         try {
           navigator.mediaSession.metadata = new MediaMetadata({
             title: currentTaskTitle ? `جارٍ التنزيل: ${currentTaskTitle}` : "جارٍ تنزيل الأغاني في الخلفية... ⚡",
@@ -127,11 +138,11 @@ function pauseSilentAudio() {
 export function setMainAudioPlaying(isPlaying: boolean) {
   mainAudioIsPlaying = isPlaying;
   if (isPlaying) {
-    // Real music is playing; pause silent audio so it doesn't conflict
+    // Real music is playing; pause silent audio immediately so it never conflicts
     pauseSilentAudio();
   } else {
     // Real music paused; if downloads are active, resume silent keep-alive
-    if (isKeepAliveActive) {
+    if (isKeepAliveActive && !isAppAudioActive()) {
       resumeSilentAudio();
     }
   }
@@ -158,7 +169,8 @@ export function startBackgroundKeepAlive(title?: string) {
   }
 
   // 2. iOS Audio Session Keep-Alive
-  if (!mainAudioIsPlaying) {
+  // ONLY if user is NOT currently playing real music!
+  if (!isAppAudioActive()) {
     resumeSilentAudio();
   }
 }
@@ -180,8 +192,8 @@ export function stopBackgroundKeepAlive() {
     wakeLockSentinel = null;
   }
 
-  // Clear download media session if main music isn't playing
-  if (typeof navigator !== "undefined" && "mediaSession" in navigator && !mainAudioIsPlaying) {
+  // Clear download media session ONLY if main music isn't active
+  if (typeof navigator !== "undefined" && "mediaSession" in navigator && !isAppAudioActive()) {
     try {
       navigator.mediaSession.metadata = null;
       navigator.mediaSession.playbackState = "none";

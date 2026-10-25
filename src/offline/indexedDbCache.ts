@@ -26,15 +26,19 @@ export async function openOfflineDb(): Promise<IDBDatabase> {
 
 /**
  * Global reactive notification helper.
- * Dispatches an event on window so any UI component (Library, Album, Downloads, Player)
- * updates its state immediately in real time with 0 manual page reloads.
+ * Uses a 300ms debounce to prevent event storms during bulk album downloads.
+ * Dispatches an event on window so UI components update smoothly without memory spikes.
  */
+let notifyLibraryTimeout: any = null;
 export function notifyLibraryUpdated(detail?: any) {
-  if (typeof window !== "undefined") {
+  if (typeof window === "undefined") return;
+  if (notifyLibraryTimeout) clearTimeout(notifyLibraryTimeout);
+  notifyLibraryTimeout = setTimeout(() => {
+    notifyLibraryTimeout = null;
     try {
       window.dispatchEvent(new CustomEvent("aura-library-updated", { detail }));
     } catch {}
-  }
+  }, 300);
 }
 
 /**
@@ -284,11 +288,6 @@ export async function getAllOfflineSongs(): Promise<any[]> {
         audioReady: audioKeys.has(s.songId) || (s.youtubeVideoId && audioKeys.has(s.youtubeVideoId)) || Boolean(s.audioReady && audioKeys.has(s.songId)),
       }));
 
-      // Background migration: auto-cache images for any songs that still have remote HTTP URLs
-      if (typeof window !== "undefined" && typeof navigator !== "undefined" && navigator.onLine) {
-        migrateRemoteThumbnails(enriched).catch(() => {});
-      }
-
       resolve(enriched);
     };
     tx.onerror = () => reject(tx.error);
@@ -308,7 +307,7 @@ export async function getOfflineSongMeta(songId: string): Promise<any | null> {
 }
 
 let isMigratingThumbnails = false;
-async function migrateRemoteThumbnails(songs: any[]) {
+export async function migrateRemoteThumbnails(songs: any[]) {
   if (isMigratingThumbnails) return;
   const needCache = songs.filter(s => s.thumbnailUrl && s.thumbnailUrl.startsWith("http"));
   if (needCache.length === 0) return;
@@ -349,7 +348,6 @@ async function migrateRemoteThumbnails(songs: any[]) {
     isMigratingThumbnails = false;
     if (migratedCount > 0 && typeof window !== "undefined") {
       window.dispatchEvent(new CustomEvent("aura-thumbnails-migrated"));
-      notifyLibraryUpdated({ type: "thumbnails-migrated", count: migratedCount });
     }
   }
 }

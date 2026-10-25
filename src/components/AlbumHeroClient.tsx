@@ -71,11 +71,18 @@ export default function AlbumHeroClient({ albumId, albumTitle, artistName, cover
       }
     });
 
-    const handleUpdate = () => checkOfflineStatus();
+    let checkTimeout: any = null;
+    const handleUpdate = () => {
+      if (checkTimeout) clearTimeout(checkTimeout);
+      checkTimeout = setTimeout(() => {
+        checkOfflineStatus();
+      }, 350);
+    };
     window.addEventListener("aura-library-updated", handleUpdate);
 
     return () => {
       mounted = false;
+      if (checkTimeout) clearTimeout(checkTimeout);
       unsubscribe();
       window.removeEventListener("aura-library-updated", handleUpdate);
     };
@@ -126,7 +133,9 @@ export default function AlbumHeroClient({ albumId, albumTitle, artistName, cover
     setQueue(queue);
   };
 
-  const handleDownload = async () => {
+  const handleDownload = async (e?: React.MouseEvent) => {
+    e?.preventDefault();
+    e?.stopPropagation();
     if (downloading || downloaded) return;
     if (!isPremium) {
       setShowPremiumModal(true);
@@ -277,6 +286,7 @@ export default function AlbumHeroClient({ albumId, albumTitle, artistName, cover
               </button>
 
               <button
+                type="button"
                 onClick={handleDownload}
                 disabled={downloading}
                 className="relative p-4 rounded-full border border-white/10 hover:border-white/30 hover:bg-white/5 transition-all group"
@@ -372,6 +382,7 @@ export default function AlbumHeroClient({ albumId, albumTitle, artistName, cover
                   <Shuffle className="w-5 h-5" />
                 </button>
                 <button
+                  type="button"
                   onClick={handleDownload}
                   disabled={downloading}
                   className="relative w-10 h-10 rounded-full flex items-center justify-center text-gray-400 hover:text-indigo-400 transition-colors"

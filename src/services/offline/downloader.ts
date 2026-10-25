@@ -244,6 +244,7 @@ async function downloadAudioBlob(
 
         const mimeType = res.headers.get("content-type") || "audio/mpeg";
         blob = new Blob(chunks as any, { type: mimeType });
+        chunks.length = 0; // Release chunk references immediately to free memory
       } else {
         // Fallback for iOS / Safari / CapacitorHttp where body.getReader() is not available
         blob = await res.blob();
@@ -253,6 +254,7 @@ async function downloadAudioBlob(
       }
 
       await storeAudioBlob(songId, blob);
+      blob = null as any; // Free blob reference immediately
       return true;
     } catch (err: any) {
       if (err.name === "AbortError" || signal?.aborted) return false;
@@ -406,6 +408,9 @@ export async function downloadAlbum(
     if (ctrl.signal.aborted) break;
     if (ok) doneCount++; else failedCount++;
     updateJob(albumId, { done: doneCount, failed: failedCount });
+
+    // Brief 150ms pause to let GC reclaim memory and prevent mobile WebKit crashes
+    await new Promise(r => setTimeout(r, 150));
   }
 
   if (!ctrl.signal.aborted) {
