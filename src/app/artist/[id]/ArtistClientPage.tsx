@@ -366,12 +366,7 @@ export default function ArtistClientPage({ id }: { id: string }) {
                 <SongRow key={song.songId || i} song={song} index={i} isPremium={isPremium}
                   onPlay={() => playSong(song, allSongs.slice(i + 1))}
                   onDownload={() => {
-                    if (!isPremium) {
-                      setPremiumFeatureName("تحميل الأغاني بدون إنترنت");
-                      setShowPremiumModal(true);
-                      return;
-                    }
-                    showToast(`جاري تحميل "${song.title}"...`);
+                    showToast(`جاري تحميل "${song.title}" للأوفلاين... ⏳`);
                     downloadSong(song.songId, song.youtubeVideoId, {
                       title: song.title, artist: song.artist || artist.name, thumbnailUrl: song.thumbnailUrl
                     }).then(ok => showToast(ok ? "تم الحفظ ✅" : "فشل التحميل ❌"));

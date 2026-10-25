@@ -94,14 +94,10 @@ export default function HomePage() {
 
   const handleDownload = async (e: React.MouseEvent, song: any) => {
     e.stopPropagation();
-    if (!isPremium) {
-      setPremiumFeatureName("تحميل الأغاني بدون إنترنت");
-      setShowPremiumModal(true);
-      return;
-    }
     const cleanArt = (!song.artist || song.artist === "فنان" || song.artist === "فنان غير معروف") ? "" : song.artist;
+    showToast(`جاري تحميل "${song.title}"... ⏳`);
     const ok = await downloadSong(song.songId, song.youtubeVideoId, { title: song.title, artist: cleanArt, thumbnailUrl: song.thumbnailUrl });
-    showToast(ok ? `تم حفظ "${song.title}" ✅` : `فشل التحميل ❌`);
+    showToast(ok ? `تم حفظ "${song.title}" في المكتبة الأوفلاين ✅` : `فشل التحميل ❌`);
   };
 
   const goNext = useCallback(() => setCurrentSlide(s => (s + 1) % totalSlides), [totalSlides]);
@@ -150,7 +146,8 @@ export default function HomePage() {
       .catch(() => {})
       .finally(() => setArtistsLoading(false));
 
-    setIsPremium(localStorage.getItem("aura_user_tier") === "premium");
+    setIsPremium(true);
+    localStorage.setItem("aura_user_tier", "premium");
   }, []);
 
   // Cache warming: resolve trending songs in the background so a click hits

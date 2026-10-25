@@ -34,12 +34,7 @@ function SearchContent() {
 
   const handleDownload = async (e: React.MouseEvent, song: any) => {
     e.stopPropagation();
-    if (!isPremium) {
-      setPremiumFeatureName("تحميل الأغاني بدون إنترنت");
-      setShowPremiumModal(true);
-      return;
-    }
-    showToast(`جاري تحميل "${song.title}" للأوفلاين...`);
+    showToast(`جاري تحميل "${song.title}" للأوفلاين... ⏳`);
     const cleanArt = (!song.artist || song.artist === "فنان" || song.artist === "فنان غير معروف") ? "" : song.artist;
     const success = await downloadSong(song.songId, song.youtubeVideoId, {
       title: song.title,

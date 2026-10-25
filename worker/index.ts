@@ -157,6 +157,28 @@ self.addEventListener('notificationclick', (event) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+//  INSTALL & ACTIVATE LIFECYCLE (Instant update & Precache)
+// ─────────────────────────────────────────────────────────────────────────────
+self.addEventListener('install', (event: any) => {
+  self.skipWaiting();
+  event.waitUntil(
+    caches.open('aura-offline-core').then((cache) => {
+      return cache.addAll([
+        '/',
+        '/library',
+        '/offline.html',
+        '/manifest.json',
+        '/icons/icon-192.png',
+      ]);
+    }).catch((err) => console.warn('[SW] Offline precache error:', err))
+  );
+});
+
+self.addEventListener('activate', (event: any) => {
+  event.waitUntil(self.clients.claim());
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 //  OFFLINE NAVIGATION FALLBACK
 // ─────────────────────────────────────────────────────────────────────────────
 self.addEventListener('fetch', (event: any) => {
@@ -166,6 +188,8 @@ self.addEventListener('fetch', (event: any) => {
         // When offline, look for matched cached page, root, or /offline.html
         const cached = await caches.match(event.request);
         if (cached) return cached;
+        const library = await caches.match('/library');
+        if (library) return library;
         const root = await caches.match('/');
         if (root) return root;
         const offline = await caches.match('/offline.html');
