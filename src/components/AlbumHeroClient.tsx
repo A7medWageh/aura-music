@@ -1,11 +1,13 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Play, Pause, Heart, DownloadCloud, ChevronRight, MoreHorizontal, Shuffle, CheckCircle2, Crown } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { usePlayer } from "@/state/playerContext";
 import { getProxyUrl } from "@/utils/media";
 import { downloadAlbum } from "@/services/offline/downloader";
+import { getAllOfflineSongs } from "@/offline/indexedDbCache";
+import { subscribeDownloads } from "@/state/downloadStore";
 import { PremiumModal } from "@/components/PremiumModal";
 
 interface Song {
@@ -34,6 +36,50 @@ export default function AlbumHeroClient({ albumId, albumTitle, artistName, cover
   const [toast, setToast] = useState<string | null>(null);
   const [isPremium, setIsPremium] = useState(false);
   const [showPremiumModal, setShowPremiumModal] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    const checkOfflineStatus = async () => {
+      try {
+        const offlineSongs = await getAllOfflineSongs();
+        if (!mounted) return;
+        const offlineSet = new Set(
+          offlineSongs.filter((s) => s.audioReady).map((s) => s.songId)
+        );
+        const isFullyDownloaded =
+          songs.length > 0 && songs.every((s) => offlineSet.has(s.songId));
+        if (mounted) {
+          setDownloaded(isFullyDownloaded);
+        }
+      } catch {}
+    };
+
+    checkOfflineStatus();
+
+    const unsubscribe = subscribeDownloads((jobs) => {
+      if (!mounted) return;
+      const albumJob = jobs.find((j) => j.id === albumId);
+      if (albumJob) {
+        if (albumJob.status === "downloading") {
+          setDownloading(true);
+        } else if (albumJob.status === "done") {
+          setDownloading(false);
+          setDownloaded(true);
+        } else {
+          setDownloading(false);
+        }
+      }
+    });
+
+    const handleUpdate = () => checkOfflineStatus();
+    window.addEventListener("aura-library-updated", handleUpdate);
+
+    return () => {
+      mounted = false;
+      unsubscribe();
+      window.removeEventListener("aura-library-updated", handleUpdate);
+    };
+  }, [albumId, songs]);
 
   if (typeof window !== "undefined" && !isPremium && localStorage.getItem("aura_user_tier") === "premium") {
     setIsPremium(true);

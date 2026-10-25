@@ -25,6 +25,19 @@ export async function openOfflineDb(): Promise<IDBDatabase> {
 }
 
 /**
+ * Global reactive notification helper.
+ * Dispatches an event on window so any UI component (Library, Album, Downloads, Player)
+ * updates its state immediately in real time with 0 manual page reloads.
+ */
+export function notifyLibraryUpdated(detail?: any) {
+  if (typeof window !== "undefined") {
+    try {
+      window.dispatchEvent(new CustomEvent("aura-library-updated", { detail }));
+    } catch {}
+  }
+}
+
+/**
  * Convert any image URL (remote HTTPS or proxy) into a self-contained base64 data URL.
  * Also stores the image response into CacheStorage for Service Worker offline access.
  */
@@ -106,7 +119,10 @@ export async function saveSongMeta(song: {
         isHidden: existing.isHidden ?? (song.isHidden || false),
       });
     };
-    tx.oncomplete = () => resolve();
+    tx.oncomplete = () => {
+      notifyLibraryUpdated({ type: "song-meta", songId: song.songId });
+      resolve();
+    };
     tx.onerror = () => reject(tx.error);
   });
 
@@ -123,6 +139,9 @@ export async function saveSongMeta(song: {
             rec.thumbnailUrl = dataUrl;
             tx2.objectStore(META_STORE).put(rec);
           }
+        };
+        tx2.oncomplete = () => {
+          notifyLibraryUpdated({ type: "thumbnail-cached", songId: song.songId });
         };
       }
     }).catch(() => {});
@@ -142,7 +161,10 @@ export async function toggleSongHidden(songId: string, isHidden: boolean): Promi
     await new Promise<void>((resolve, reject) => {
       const tx = db2.transaction(META_STORE, "readwrite");
       tx.objectStore(META_STORE).put({ ...meta, isHidden });
-      tx.oncomplete = () => resolve();
+      tx.oncomplete = () => {
+        notifyLibraryUpdated({ type: "song-visibility", songId, isHidden });
+        resolve();
+      };
       tx.onerror = () => reject(tx.error);
     });
   }
@@ -163,7 +185,10 @@ async function markAudioReady(songId: string): Promise<void> {
     const tx = db2.transaction(META_STORE, "readwrite");
     const record = meta ? { ...meta, audioReady: true } : { songId, title: "أغنية محفوظة", artist: "فنان", savedAt: Date.now(), audioReady: true };
     tx.objectStore(META_STORE).put(record);
-    tx.oncomplete = () => resolve();
+    tx.oncomplete = () => {
+      notifyLibraryUpdated({ type: "audio-ready", songId });
+      resolve();
+    };
     tx.onerror = () => reject(tx.error);
   });
 }
@@ -194,6 +219,7 @@ export async function storeAudioBlob(songId: string, blob: Blob): Promise<void> 
     tx.onerror = () => reject(tx.error);
   });
   await markAudioReady(songId);
+  notifyLibraryUpdated({ type: "audio-stored", songId });
 }
 
 /** Get audio blob for offline playback */
@@ -323,6 +349,7 @@ async function migrateRemoteThumbnails(songs: any[]) {
     isMigratingThumbnails = false;
     if (migratedCount > 0 && typeof window !== "undefined") {
       window.dispatchEvent(new CustomEvent("aura-thumbnails-migrated"));
+      notifyLibraryUpdated({ type: "thumbnails-migrated", count: migratedCount });
     }
   }
 }
@@ -334,7 +361,10 @@ export async function deleteOfflineSong(songId: string): Promise<void> {
     tx.objectStore(META_STORE).delete(songId);
     tx.objectStore(AUDIO_STORE).delete(songId);
     try { tx.objectStore(LYRICS_STORE).delete(songId); } catch {}
-    tx.oncomplete = () => resolve();
+    tx.oncomplete = () => {
+      notifyLibraryUpdated({ type: "deleteOfflineSong", songId });
+      resolve();
+    };
     tx.onerror = () => reject(tx.error);
   });
 }
@@ -345,6 +375,7 @@ export async function deleteArtist(artistName: string): Promise<void> {
   for (const song of toDelete) {
     await deleteOfflineSong(song.songId);
   }
+  notifyLibraryUpdated({ type: "deleteArtist", artistName });
 }
 
 export async function deleteAlbum(albumName: string, artistName: string): Promise<void> {
@@ -353,6 +384,7 @@ export async function deleteAlbum(albumName: string, artistName: string): Promis
   for (const song of toDelete) {
     await deleteOfflineSong(song.songId);
   }
+  notifyLibraryUpdated({ type: "deleteAlbum", albumName, artistName });
 }
 
 export async function clearAllOfflineSongs(): Promise<void> {
@@ -362,7 +394,10 @@ export async function clearAllOfflineSongs(): Promise<void> {
     tx.objectStore(META_STORE).clear();
     tx.objectStore(AUDIO_STORE).clear();
     try { tx.objectStore(LYRICS_STORE).clear(); } catch {}
-    tx.oncomplete = () => resolve();
+    tx.oncomplete = () => {
+      notifyLibraryUpdated({ type: "clearAllOfflineSongs" });
+      resolve();
+    };
     tx.onerror = () => reject(tx.error);
   });
 }

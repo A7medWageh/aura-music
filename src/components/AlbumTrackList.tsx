@@ -14,9 +14,30 @@ export default function AlbumTrackList({ songs, albumArtist }: { songs: any[]; a
   const [downloadedIds, setDownloadedIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    getAllOfflineSongs().then(offlineSongs => {
-      setDownloadedIds(new Set(offlineSongs.map(s => s.songId)));
-    });
+    let mounted = true;
+    const syncOffline = () => {
+      getAllOfflineSongs()
+        .then((offlineSongs) => {
+          if (!mounted) return;
+          const ids = new Set<string>();
+          for (const s of offlineSongs) {
+            if (s.audioReady) {
+              if (s.songId) ids.add(s.songId);
+              if (s.id) ids.add(s.id);
+              if (s.youtubeVideoId) ids.add(s.youtubeVideoId);
+            }
+          }
+          setDownloadedIds(ids);
+        })
+        .catch(() => {});
+    };
+
+    syncOffline();
+    window.addEventListener("aura-library-updated", syncOffline);
+    return () => {
+      mounted = false;
+      window.removeEventListener("aura-library-updated", syncOffline);
+    };
   }, []);
 
   // ── Play song and load the whole album into the queue in order ──
@@ -108,22 +129,27 @@ export default function AlbumTrackList({ songs, albumArtist }: { songs: any[]; a
                   youtubeVideoId={song.youtubeVideoId}
                   size={16}
                 />
-                <button
-                  className={`p-2 transition-colors ${downloadedIds.has(song.songId) ? "text-green-400" : "text-gray-600 hover:text-white"}`}
-                  onClick={(e) => { 
-                    e.stopPropagation(); 
-                    if (downloadedIds.has(song.songId)) return;
-                    setDownloadedIds(prev => new Set(prev).add(song.songId));
-                    downloadSong(song.songId, song.youtubeVideoId, {
-                      title: song.title,
-                      artist: song.artist || song.artistName || albumArtist || "",
-                      thumbnailUrl: song.thumbnailUrl
-                    });
-                  }}
-                  title={downloadedIds.has(song.songId) ? "تم التحميل" : "تحميل"}
-                >
-                  {downloadedIds.has(song.songId) ? <CheckCircle2 className="w-5 h-5" /> : <DownloadCloud className="w-5 h-5" />}
-                </button>
+                {(() => {
+                  const isReady = downloadedIds.has(song.songId) || (song.youtubeVideoId && downloadedIds.has(song.youtubeVideoId));
+                  return (
+                    <button
+                      className={`p-2 transition-colors ${isReady ? "text-green-400" : "text-gray-600 hover:text-white"}`}
+                      onClick={(e) => { 
+                        e.stopPropagation(); 
+                        if (isReady) return;
+                        setDownloadedIds(prev => new Set(prev).add(song.songId));
+                        downloadSong(song.songId, song.youtubeVideoId, {
+                          title: song.title,
+                          artist: song.artist || song.artistName || albumArtist || "",
+                          thumbnailUrl: song.thumbnailUrl
+                        });
+                      }}
+                      title={isReady ? "تم التحميل" : "تحميل"}
+                    >
+                      {isReady ? <CheckCircle2 className="w-5 h-5" /> : <DownloadCloud className="w-5 h-5" />}
+                    </button>
+                  );
+                })()}
               </div>
             </motion.div>
           );
@@ -203,22 +229,27 @@ export default function AlbumTrackList({ songs, albumArtist }: { songs: any[]; a
                           youtubeVideoId={song.youtubeVideoId}
                           size={18}
                         />
-                        <button 
-                          className={`p-2 transition-colors ${downloadedIds.has(song.songId) ? "text-green-400" : "text-gray-500 hover:text-white"}`}
-                          onClick={(e) => { 
-                            e.stopPropagation(); 
-                            if (downloadedIds.has(song.songId)) return;
-                            setDownloadedIds(prev => new Set(prev).add(song.songId));
-                            downloadSong(song.songId, song.youtubeVideoId, {
-                              title: song.title,
-                              artist: song.artist || song.artistName || albumArtist || "",
-                              thumbnailUrl: song.thumbnailUrl
-                            });
-                          }}
-                          title={downloadedIds.has(song.songId) ? "تم التحميل" : "تحميل"}
-                        >
-                          {downloadedIds.has(song.songId) ? <CheckCircle2 className="w-5 h-5" /> : <DownloadCloud className="w-5 h-5" />}
-                        </button>
+                        {(() => {
+                          const isReady = downloadedIds.has(song.songId) || (song.youtubeVideoId && downloadedIds.has(song.youtubeVideoId));
+                          return (
+                            <button 
+                              className={`p-2 transition-colors ${isReady ? "text-green-400" : "text-gray-500 hover:text-white"}`}
+                              onClick={(e) => { 
+                                e.stopPropagation(); 
+                                if (isReady) return;
+                                setDownloadedIds(prev => new Set(prev).add(song.songId));
+                                downloadSong(song.songId, song.youtubeVideoId, {
+                                  title: song.title,
+                                  artist: song.artist || song.artistName || albumArtist || "",
+                                  thumbnailUrl: song.thumbnailUrl
+                                });
+                              }}
+                              title={isReady ? "تم التحميل" : "تحميل"}
+                            >
+                              {isReady ? <CheckCircle2 className="w-5 h-5" /> : <DownloadCloud className="w-5 h-5" />}
+                            </button>
+                          );
+                        })()}
                       </div>
                     </div>
                   </td>

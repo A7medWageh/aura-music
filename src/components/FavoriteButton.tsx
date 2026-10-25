@@ -29,6 +29,11 @@ export function FavoriteButton({
 
   useEffect(() => {
     setIsLiked(isFavoriteLocal(songId));
+    const handleFavUpdate = () => {
+      setIsLiked(isFavoriteLocal(songId));
+    };
+    window.addEventListener("aura-favorites-updated", handleFavUpdate);
+    return () => window.removeEventListener("aura-favorites-updated", handleFavUpdate);
   }, [songId]);
 
   const toggleLike = async (e: React.MouseEvent) => {

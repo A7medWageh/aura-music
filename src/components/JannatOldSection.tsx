@@ -18,24 +18,31 @@ export function JannatOldSection({ onToast }: { onToast: (msg: string) => void }
   const [batchDownloading, setBatchDownloading] = useState(false);
   const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0 });
 
-  // Load already saved songs from IndexedDB on mount
+  // Load already saved songs from IndexedDB on mount & on real-time updates
   useEffect(() => {
     let mounted = true;
-    getAllOfflineSongs()
-      .then((songs) => {
-        if (!mounted) return;
-        const ids = new Set<string>();
-        for (const s of songs) {
-          if (s.audioReady) {
-            ids.add(s.id);
-            if (s.youtubeVideoId) ids.add(s.youtubeVideoId);
+    const syncOffline = () => {
+      getAllOfflineSongs()
+        .then((songs) => {
+          if (!mounted) return;
+          const ids = new Set<string>();
+          for (const s of songs) {
+            if (s.audioReady) {
+              if (s.songId) ids.add(s.songId);
+              if (s.id) ids.add(s.id);
+              if (s.youtubeVideoId) ids.add(s.youtubeVideoId);
+            }
           }
-        }
-        setSavedOfflineIds(ids);
-      })
-      .catch(() => {});
+          setSavedOfflineIds(ids);
+        })
+        .catch(() => {});
+    };
+
+    syncOffline();
+    window.addEventListener("aura-library-updated", syncOffline);
     return () => {
       mounted = false;
+      window.removeEventListener("aura-library-updated", syncOffline);
     };
   }, []);
 

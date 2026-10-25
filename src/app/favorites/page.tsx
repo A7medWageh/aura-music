@@ -4,7 +4,7 @@ import { usePlayer } from "@/state/playerContext";
 import { useEffect, useState } from "react";
 import { Heart, Play, Music, MoreHorizontal, Wifi, WifiOff } from "lucide-react";
 import { getProxyUrl } from "@/utils/media";
-import { getFavoritesMeta, syncFavoriteMeta, removeFavorite, FavoriteSong } from "@/services/user/favoritesStore";
+import { getFavoritesMeta, syncFavoriteMeta, removeFavorite, clearFavorites, FavoriteSong } from "@/services/user/favoritesStore";
 
 export default function FavoritesPage() {
   const [favorites, setFavorites] = useState<FavoriteSong[]>([]);
@@ -35,6 +35,17 @@ export default function FavoritesPage() {
         // Offline or error — still show local data
         setLoading(false);
       });
+
+    // 3. Listen to real-time favorites updates without page reload
+    const handleFavUpdated = (e: any) => {
+      if (e.detail && Array.isArray(e.detail)) {
+        setFavorites(e.detail);
+      } else {
+        setFavorites(getFavoritesMeta());
+      }
+    };
+    window.addEventListener("aura-favorites-updated", handleFavUpdated);
+    return () => window.removeEventListener("aura-favorites-updated", handleFavUpdated);
   }, []);
 
   return (
@@ -50,7 +61,7 @@ export default function FavoritesPage() {
             <p className="text-gray-400 font-medium">{favorites.length} أغنية • مخصصة لك</p>
             {favorites.length > 0 && (
               <button 
-                onClick={() => { if(confirm("هل تريد إفراغ قائمة المفضلة؟")) { localStorage.removeItem("aura_favorites_meta"); window.location.reload(); } }}
+                onClick={() => { if(confirm("هل تريد إفراغ قائمة المفضلة؟")) { clearFavorites(); } }}
                 className="text-[10px] text-white/20 hover:text-red-500 transition-colors uppercase tracking-widest font-bold border border-white/10 px-2 py-0.5 rounded"
               >
                 إفراغ القائمة

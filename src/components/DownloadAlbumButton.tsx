@@ -1,12 +1,58 @@
 "use client";
 
 import { DownloadCloud, CheckCircle2, Loader2 } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { downloadAlbum } from "@/services/offline/downloader";
+import { getAllOfflineSongs } from "@/offline/indexedDbCache";
+import { subscribeDownloads } from "@/state/downloadStore";
 
 export default function DownloadAlbumButton({ albumId, songs, metadata }: { albumId: string, songs: any[], metadata: any }) {
   const [downloading, setDownloading] = useState(false);
   const [downloaded, setDownloaded] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    const checkOfflineStatus = async () => {
+      try {
+        const offlineSongs = await getAllOfflineSongs();
+        if (!mounted) return;
+        const offlineSet = new Set(
+          offlineSongs.filter((s) => s.audioReady).map((s) => s.songId)
+        );
+        const isFullyDownloaded =
+          songs.length > 0 && songs.every((s) => offlineSet.has(s.songId));
+        if (mounted) {
+          setDownloaded(isFullyDownloaded);
+        }
+      } catch {}
+    };
+
+    checkOfflineStatus();
+
+    const unsubscribe = subscribeDownloads((jobs) => {
+      if (!mounted) return;
+      const albumJob = jobs.find((j) => j.id === albumId);
+      if (albumJob) {
+        if (albumJob.status === "downloading") {
+          setDownloading(true);
+        } else if (albumJob.status === "done") {
+          setDownloading(false);
+          setDownloaded(true);
+        } else {
+          setDownloading(false);
+        }
+      }
+    });
+
+    const handleUpdate = () => checkOfflineStatus();
+    window.addEventListener("aura-library-updated", handleUpdate);
+
+    return () => {
+      mounted = false;
+      unsubscribe();
+      window.removeEventListener("aura-library-updated", handleUpdate);
+    };
+  }, [albumId, songs]);
 
   const handleDownload = async () => {
     if (downloading || downloaded) return;

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { getAllOfflineSongs, deleteOfflineSong, deleteArtist, deleteAlbum, toggleSongHidden } from "@/offline/indexedDbCache";
+import { subscribeDownloads } from "@/state/downloadStore";
 import { usePlayer } from "@/state/playerContext";
 import { motion, AnimatePresence } from "framer-motion";
 import { Play, Trash2, WifiOff, ArrowRight, DownloadCloud, Lock, Unlock, EyeOff, Eye, HardDrive, Music, CheckCircle2, AlertCircle } from "lucide-react";
@@ -145,13 +146,28 @@ export default function LibraryPage() {
   };
 
   useEffect(() => { 
-    loadLibrary(); 
-    const handleMigrated = () => {
-      loadLibrary();
+    let timer: any = null;
+    const scheduleReload = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        loadLibrary();
+      }, 100);
     };
-    window.addEventListener("aura-thumbnails-migrated", handleMigrated);
+
+    loadLibrary(); 
+
+    window.addEventListener("aura-library-updated", scheduleReload);
+    window.addEventListener("aura-thumbnails-migrated", scheduleReload);
+
+    const unsubscribe = subscribeDownloads(() => {
+      scheduleReload();
+    });
+
     return () => {
-      window.removeEventListener("aura-thumbnails-migrated", handleMigrated);
+      if (timer) clearTimeout(timer);
+      window.removeEventListener("aura-library-updated", scheduleReload);
+      window.removeEventListener("aura-thumbnails-migrated", scheduleReload);
+      unsubscribe();
     };
   }, [vaultUnlocked]);
 

@@ -31,7 +31,13 @@ function writeStore(songs: FavoriteSong[]) {
   if (typeof window === "undefined") return;
   try {
     localStorage.setItem(STORE_KEY, JSON.stringify(songs));
+    window.dispatchEvent(new CustomEvent("aura-favorites-updated", { detail: songs }));
   } catch {}
+}
+
+/** Clear all favorites */
+export function clearFavorites() {
+  writeStore([]);
 }
 
 /** Return all stored favorite songs */

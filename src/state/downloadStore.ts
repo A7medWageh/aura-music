@@ -6,6 +6,7 @@
  */
 
 import { startBackgroundKeepAlive, stopBackgroundKeepAlive } from "@/services/offline/backgroundKeepAlive";
+import { notifyLibraryUpdated } from "@/offline/indexedDbCache";
 
 export type DownloadJob = {
   id: string;              // albumId or songId
@@ -112,6 +113,7 @@ export function startJob(id: string, name: string, type: "album" | "song", total
   jobs.set(id, { id, name, type, total, done: 0, currentSong: "", failed: 0, status: "downloading" });
   try { startBackgroundKeepAlive(name); } catch {}
   notify(true);
+  notifyLibraryUpdated({ type: "job-started", id, name, jobType: type });
 }
 
 export function updateJob(id: string, update: Partial<DownloadJob>) {
@@ -119,6 +121,9 @@ export function updateJob(id: string, update: Partial<DownloadJob>) {
   if (!job) return;
   jobs.set(id, { ...job, ...update });
   notify();
+  if (update.done !== undefined || update.status !== undefined) {
+    notifyLibraryUpdated({ type: "job-progress", id, done: update.done, status: update.status });
+  }
 }
 
 export function finishJob(id: string, success: boolean, cancelled = false) {
@@ -134,6 +139,7 @@ export function finishJob(id: string, success: boolean, cancelled = false) {
   }
 
   notify(true);
+  notifyLibraryUpdated({ type: "job-finished", id, success, cancelled });
   // Auto-remove very fast so the panel hides
   setTimeout(() => { jobs.delete(id); notify(true); }, 2000);
 }
