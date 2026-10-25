@@ -652,6 +652,7 @@ function FullPlayer({
           style={{ filter: "blur(70px) brightness(0.32) saturate(1.35)", willChange: "transform", transform: "translateZ(0)" }}
           animate={state.isPlaying ? { scale: [1.22, 1.32, 1.22] } : { scale: 1.22 }}
           transition={{ duration: 14, repeat: Infinity, ease: "easeInOut" }}
+          onError={(e) => { (e.target as HTMLImageElement).src = "/placeholder-song.jpg"; }}
         />
         <motion.div
           className="absolute -top-28 -right-24 w-80 h-80 rounded-full"
@@ -759,7 +760,12 @@ function FullPlayer({
                   animate={state.isPlaying ? { scale: [1, 1.015, 1] } : { scale: 1 }}
                   transition={{ duration: 3.2, repeat: Infinity, ease: "easeInOut" }}
                 >
-                  <img src={proxyArt} alt={currentSong?.title} className="w-full h-full object-cover" />
+                  <img
+                    src={proxyArt}
+                    alt={currentSong?.title}
+                    className="w-full h-full object-cover"
+                    onError={(e) => { (e.target as HTMLImageElement).src = "/placeholder-song.jpg"; }}
+                  />
                   {state.isBuffering && (
                     <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px] flex items-center justify-center">
                       <div className="w-9 h-9 rounded-full border-[3px] border-white/20 animate-spin" style={{ borderTopColor: accent }} />
@@ -1269,7 +1275,12 @@ export function PlayerBar() {
               />
             </svg>
             <div className="w-full h-full rounded-full overflow-hidden border border-white/10 shadow-lg">
-              <img src={proxyArt} alt={currentSong.title} className="w-full h-full object-cover" />
+              <img
+                src={proxyArt}
+                alt={currentSong.title}
+                className="w-full h-full object-cover"
+                onError={(e) => { (e.target as HTMLImageElement).src = "/placeholder-song.jpg"; }}
+              />
             </div>
             {state.isPlaying && !state.isBuffering && (
               <motion.div

@@ -1,4 +1,4 @@
-import { saveSongMeta, storeAudioBlob, storeLyrics, getAudioBlob, getAllOfflineSongs } from "@/offline/indexedDbCache";
+import { saveSongMeta, storeAudioBlob, storeLyrics, getAudioBlob, getAllOfflineSongs, fetchImageAsDataUrl } from "@/offline/indexedDbCache";
 import { startJob, updateJob, finishJob, setJobController, isJobPaused } from "@/state/downloadStore";
 import { toAbsoluteApiUrl } from "@/utils/apiBase";
 
@@ -281,12 +281,17 @@ export async function downloadSong(
     const allSongs = await getAllOfflineSongs();
     const smartFolder = getSmartFolderName(metadata?.folderName || displayArtist, allSongs, title);
 
+    // Pre-cache thumbnail as offline dataUrl so image loads with 0 network
+    const cachedArt = metadata?.thumbnailUrl
+      ? await fetchImageAsDataUrl(metadata.thumbnailUrl).catch(() => metadata.thumbnailUrl)
+      : undefined;
+
     await saveSongMeta({
       songId,
       youtubeVideoId: videoId,
       title,
       artist: displayArtist,
-      thumbnailUrl: metadata?.thumbnailUrl,
+      thumbnailUrl: cachedArt || metadata?.thumbnailUrl,
       albumId: metadata?.albumId,
       albumName: metadata?.albumName,
       folderName: smartFolder,
@@ -340,6 +345,11 @@ export async function downloadAlbum(
   const allSongs = await getAllOfflineSongs();
   const smartFolder = getSmartFolderName(metadata.artistName || songs[0]?.artist || "أخرى", allSongs);
 
+  // Pre-cache album cover as dataUrl once for the whole album
+  const cachedCover = metadata.coverUrl
+    ? await fetchImageAsDataUrl(metadata.coverUrl).catch(() => metadata.coverUrl)
+    : undefined;
+
   startJob(albumId, albumName, "album", total);
   updateJob(albumId, { totalBytes: total * 3.5 * 1024 * 1024, progressBytes: 0 });
 
@@ -362,7 +372,7 @@ export async function downloadAlbum(
         youtubeVideoId: song.youtubeVideoId,
         title,
         artist: metadata.artistName || song.artist || "فنان غير معروف",
-        thumbnailUrl: metadata.coverUrl || song.thumbnailUrl,
+        thumbnailUrl: cachedCover || song.thumbnailUrl || metadata.coverUrl,
         albumId,
         albumName,
         folderName: smartFolder,

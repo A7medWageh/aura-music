@@ -169,6 +169,9 @@ self.addEventListener('install', (event: any) => {
         '/offline.html',
         '/manifest.json',
         '/icons/icon-192.png',
+        '/placeholder-song.jpg',
+        '/placeholder-album.jpg',
+        '/placeholder-artist.jpg',
       ]);
     }).catch((err) => console.warn('[SW] Offline precache error:', err))
   );
@@ -179,14 +182,47 @@ self.addEventListener('activate', (event: any) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  OFFLINE NAVIGATION FALLBACK
+//  OFFLINE NAVIGATION & IMAGE CACHE FALLBACK
 // ─────────────────────────────────────────────────────────────────────────────
 self.addEventListener('fetch', (event: any) => {
-  if (event.request.mode === 'navigate') {
+  const req = event.request;
+  const url = new URL(req.url);
+
+  // 1. Image caching & offline fallback
+  const isImage =
+    req.destination === 'image' ||
+    /\.(?:png|jpg|jpeg|svg|gif|webp|ico)$/i.test(url.pathname) ||
+    url.pathname.startsWith('/api/proxy') ||
+    /i\.ytimg\.com|googleusercontent\.com|saavncdn\.com/i.test(url.hostname);
+
+  if (isImage) {
     event.respondWith(
-      fetch(event.request).catch(async () => {
-        // When offline, look for matched cached page, root, or /offline.html
-        const cached = await caches.match(event.request);
+      caches.match(req).then((cached) => {
+        if (cached) return cached;
+        return fetch(req).then(async (response) => {
+          if (response && (response.status === 200 || response.type === 'opaque')) {
+            try {
+              const cache = await caches.open('aura-offline-images');
+              cache.put(req, response.clone()).catch(() => {});
+            } catch {}
+          }
+          return response;
+        }).catch(async () => {
+          // If offline and request fails, fallback to cached placeholder
+          const fallback = await caches.match('/placeholder-song.jpg');
+          if (fallback) return fallback;
+          return new Response('', { status: 404 });
+        });
+      })
+    );
+    return;
+  }
+
+  // 2. Offline HTML navigation
+  if (req.mode === 'navigate') {
+    event.respondWith(
+      fetch(req).catch(async () => {
+        const cached = await caches.match(req);
         if (cached) return cached;
         const library = await caches.match('/library');
         if (library) return library;

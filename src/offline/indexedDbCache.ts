@@ -24,7 +24,61 @@ export async function openOfflineDb(): Promise<IDBDatabase> {
   });
 }
 
-/** Save metadata instantly — shows up in library immediately */
+/**
+ * Convert any image URL (remote HTTPS or proxy) into a self-contained base64 data URL.
+ * Also stores the image response into CacheStorage for Service Worker offline access.
+ */
+export async function fetchImageAsDataUrl(url?: string): Promise<string | undefined> {
+  if (!url) return undefined;
+  if (url.startsWith("data:") || url.startsWith("blob:")) return url;
+
+  try {
+    let res: Response | null = null;
+    // 1. Try direct fetch with timeout
+    try {
+      res = await fetch(url, { mode: "cors", signal: AbortSignal.timeout(6000) });
+    } catch {
+      res = null;
+    }
+
+    // 2. If direct fetch fails (e.g. CORS), fallback to our image proxy
+    if (!res || !res.ok) {
+      const proxyUrl = `/api/proxy?url=${encodeURIComponent(url)}`;
+      try {
+        res = await fetch(proxyUrl, { signal: AbortSignal.timeout(8000) });
+      } catch {
+        res = null;
+      }
+    }
+
+    if (!res || !res.ok) return url;
+
+    // Clone for CacheStorage if available
+    if (typeof window !== "undefined" && "caches" in window) {
+      try {
+        const cache = await caches.open("aura-offline-images");
+        await cache.put(url, res.clone());
+      } catch {}
+    }
+
+    const blob = await res.blob();
+    return await new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const result = reader.result as string;
+        if (result && result.startsWith("data:")) resolve(result);
+        else resolve(url);
+      };
+      reader.onerror = () => resolve(url);
+      reader.readAsDataURL(blob);
+    });
+  } catch (err) {
+    console.warn("[IndexedDB] Could not convert image to dataUrl:", err);
+    return url;
+  }
+}
+
+/** Save metadata instantly — shows up in library immediately with offline image caching */
 export async function saveSongMeta(song: {
   songId: string;
   title: string;
@@ -37,7 +91,7 @@ export async function saveSongMeta(song: {
   isHidden?: boolean;
 }): Promise<void> {
   const db = await openOfflineDb();
-  return new Promise((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(META_STORE, "readwrite");
     const req = tx.objectStore(META_STORE).get(song.songId);
     req.onsuccess = () => {
@@ -45,6 +99,7 @@ export async function saveSongMeta(song: {
       tx.objectStore(META_STORE).put({
         ...existing,
         ...song,
+        thumbnailUrl: (song.thumbnailUrl?.startsWith("data:") ? song.thumbnailUrl : existing.thumbnailUrl?.startsWith("data:") ? existing.thumbnailUrl : song.thumbnailUrl),
         folderName: song.folderName || existing.folderName || song.artist || "أخرى",
         savedAt: existing.savedAt || Date.now(),
         audioReady: existing.audioReady ?? false,
@@ -54,6 +109,24 @@ export async function saveSongMeta(song: {
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
+
+  // Background task: If thumbnailUrl is a remote HTTP URL, fetch it and convert to dataUrl so it renders offline
+  if (song.thumbnailUrl && song.thumbnailUrl.startsWith("http") && typeof window !== "undefined") {
+    fetchImageAsDataUrl(song.thumbnailUrl).then(async (dataUrl) => {
+      if (dataUrl && dataUrl.startsWith("data:")) {
+        const db2 = await openOfflineDb();
+        const tx2 = db2.transaction(META_STORE, "readwrite");
+        const getReq = tx2.objectStore(META_STORE).get(song.songId);
+        getReq.onsuccess = () => {
+          const rec = getReq.result;
+          if (rec) {
+            rec.thumbnailUrl = dataUrl;
+            tx2.objectStore(META_STORE).put(rec);
+          }
+        };
+      }
+    }).catch(() => {});
+  }
 }
 
 export async function toggleSongHidden(songId: string, isHidden: boolean): Promise<void> {
@@ -184,10 +257,47 @@ export async function getAllOfflineSongs(): Promise<any[]> {
         ...s,
         audioReady: audioKeys.has(s.songId) || (s.youtubeVideoId && audioKeys.has(s.youtubeVideoId)) || Boolean(s.audioReady && audioKeys.has(s.songId)),
       }));
+
+      // Background migration: auto-cache images for any songs that still have remote HTTP URLs
+      if (typeof window !== "undefined" && typeof navigator !== "undefined" && navigator.onLine) {
+        migrateRemoteThumbnails(enriched).catch(() => {});
+      }
+
       resolve(enriched);
     };
     tx.onerror = () => reject(tx.error);
   });
+}
+
+let isMigratingThumbnails = false;
+async function migrateRemoteThumbnails(songs: any[]) {
+  if (isMigratingThumbnails) return;
+  const needCache = songs.filter(s => s.thumbnailUrl && s.thumbnailUrl.startsWith("http"));
+  if (needCache.length === 0) return;
+
+  isMigratingThumbnails = true;
+  try {
+    for (const song of needCache.slice(0, 15)) {
+      try {
+        const dataUrl = await fetchImageAsDataUrl(song.thumbnailUrl);
+        if (dataUrl && dataUrl.startsWith("data:")) {
+          const db = await openOfflineDb();
+          const tx = db.transaction(META_STORE, "readwrite");
+          const req = tx.objectStore(META_STORE).get(song.songId);
+          req.onsuccess = () => {
+            const rec = req.result;
+            if (rec) {
+              rec.thumbnailUrl = dataUrl;
+              tx.objectStore(META_STORE).put(rec);
+            }
+          };
+          await new Promise<void>((r) => { tx.oncomplete = () => r(); tx.onerror = () => r(); });
+        }
+      } catch {}
+    }
+  } finally {
+    isMigratingThumbnails = false;
+  }
 }
 
 export async function deleteOfflineSong(songId: string): Promise<void> {

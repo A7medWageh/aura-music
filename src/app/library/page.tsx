@@ -37,10 +37,18 @@ function ArtistAvatar({ artistName, fallbackCover }: { artistName: string, fallb
     } else {
       fetch(`/api/artist-image?artist=${encodeURIComponent(artistName)}`)
         .then(res => res.json())
-        .then(data => {
+        .then(async data => {
            if (data.imageUrl) {
-             localStorage.setItem(cacheKey, data.imageUrl);
-             setImgUrl(data.imageUrl);
+             try {
+               const { fetchImageAsDataUrl } = await import("@/offline/indexedDbCache");
+               const dataUrl = await fetchImageAsDataUrl(data.imageUrl);
+               const toStore = dataUrl || data.imageUrl;
+               localStorage.setItem(cacheKey, toStore);
+               setImgUrl(toStore);
+             } catch {
+               localStorage.setItem(cacheKey, data.imageUrl);
+               setImgUrl(data.imageUrl);
+             }
            } else {
              localStorage.setItem(cacheKey, "null");
            }
@@ -51,7 +59,16 @@ function ArtistAvatar({ artistName, fallbackCover }: { artistName: string, fallb
   const finalImage = imgUrl || fallbackCover;
 
   if (finalImage) {
-    return <img src={getProxyUrl(finalImage)} alt={artistName} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" />;
+    return (
+      <img
+        src={getProxyUrl(finalImage)}
+        alt={artistName}
+        className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"
+        onError={(e) => {
+          (e.target as HTMLImageElement).src = "/placeholder-artist.jpg";
+        }}
+      />
+    );
   }
   return <div className="w-full h-full bg-gradient-to-br from-indigo-500/20 to-purple-600/20 flex items-center justify-center text-4xl">🎤</div>;
 }
@@ -295,7 +312,12 @@ export default function LibraryPage() {
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-4">
                {currentAlbumData.cover ? (
-                  <img src={getProxyUrl(currentAlbumData.cover)} alt={currentAlbumData.name} className="w-16 h-16 rounded-xl object-cover shadow-lg" />
+                  <img
+                    src={getProxyUrl(currentAlbumData.cover)}
+                    alt={currentAlbumData.name}
+                    className="w-16 h-16 rounded-xl object-cover shadow-lg"
+                    onError={(e) => { (e.target as HTMLImageElement).src = "/placeholder-album.jpg"; }}
+                  />
                ) : (
                   <div className="w-16 h-16 rounded-xl bg-white/10 flex items-center justify-center"><Music className="w-6 h-6 text-gray-400" /></div>
                )}
@@ -355,7 +377,16 @@ export default function LibraryPage() {
                  {currentArtistData.albums.map((album) => (
                     <motion.div key={album.name} whileHover={{ y: -5, scale: 1.02 }} onClick={() => setOpenAlbum(album.name)} className="group cursor-pointer">
                       <div className="relative aspect-square mb-3 rounded-2xl overflow-hidden shadow-lg">
-                        {album.cover ? <img src={getProxyUrl(album.cover)} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" /> : <div className="w-full h-full bg-white/5 flex justify-center items-center"><Music className="w-8 h-8 opacity-50"/></div>}
+                        {album.cover ? (
+                          <img
+                            src={getProxyUrl(album.cover)}
+                            alt={album.name}
+                            className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"
+                            onError={(e) => { (e.target as HTMLImageElement).src = "/placeholder-album.jpg"; }}
+                          />
+                        ) : (
+                          <div className="w-full h-full bg-white/5 flex justify-center items-center"><Music className="w-8 h-8 opacity-50"/></div>
+                        )}
                         <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                           <button className="w-12 h-12 bg-indigo-500 rounded-full flex items-center justify-center shadow-2xl scale-0 group-hover:scale-100 transition-transform">
                             <Play className="w-5 h-5 text-white fill-current translate-x-0.5" />
@@ -432,7 +463,16 @@ function SongRow({ song, index, play, onDelete, onToggleHide, vaultUnlocked }: a
     <div onClick={play} className="group flex items-center gap-4 p-3 rounded-2xl hover:bg-white/5 transition-colors cursor-pointer border border-transparent hover:border-white/5">
       <div className="w-8 text-center text-gray-500 font-black text-sm">{index + 1}</div>
       <div className="relative w-12 h-12 rounded-xl overflow-hidden shrink-0">
-        {song.thumbnailUrl ? <img src={getProxyUrl(song.thumbnailUrl)} className="w-full h-full object-cover" /> : <div className="w-full h-full bg-white/10 flex justify-center items-center"><Music className="w-4 h-4 text-gray-400" /></div>}
+        {song.thumbnailUrl ? (
+          <img
+            src={getProxyUrl(song.thumbnailUrl)}
+            alt={song.title}
+            className="w-full h-full object-cover"
+            onError={(e) => { (e.target as HTMLImageElement).src = "/placeholder-song.jpg"; }}
+          />
+        ) : (
+          <div className="w-full h-full bg-white/10 flex justify-center items-center"><Music className="w-4 h-4 text-gray-400" /></div>
+        )}
         <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
           <Play className="w-5 h-5 text-white fill-current" />
         </div>
