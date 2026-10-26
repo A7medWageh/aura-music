@@ -64,9 +64,16 @@ export const BILINGUAL_ARTIST_MAP: Record<string, string> = {
   "abdel halim": "عبد الحليم حافظ",
   "farid al atrache": "فريد الاطرش",
   "warda": "وردة",
-  "warda al jazairia": "وردة",
   "abyusif": "ابيوسف",
   "seif magdy": "سيف مجدي",
+  "jannat": "جنات",
+  "jannat topic": "جنات",
+  "janat": "جنات",
+  "wael jassar": "وائل جسار",
+  "wael gassar": "وائل جسار",
+  "wael jassap": "وائل جسار",
+  "hamada majrashi": "حماده مجرشي",
+  "hamada magrashi": "حماده مجرشي",
 };
 
 // Build reverse map (Arabic -> Latin primary)
@@ -109,6 +116,10 @@ export const ARABIC_TO_LATIN_MAP: Record<string, string> = {
   "وردة": "warda",
   "ابيوسف": "abyusif",
   "أبيوسف": "abyusif",
+  "جنات": "jannat",
+  "وائل جسار": "wael jassar",
+  "حماده مجرشي": "hamada majrashi",
+  "حمادة مجرشي": "hamada majrashi",
 };
 
 export const UNWANTED_TERMS = [
@@ -241,15 +252,24 @@ export function isStrictArtistMatch(requestedArtist: string, candidateArtist: st
   if (!requestedArtist || requestedArtist === "فنان" || requestedArtist === "فنان غير معروف") {
     return true; // No artist filter specified
   }
+  if (!candidateArtist || candidateArtist === "فنان" || candidateArtist === "فنان غير معروف") {
+    return false;
+  }
 
   const { arabic: reqAr, latin: reqLat } = getArtistForms(requestedArtist);
+  const { arabic: candAr, latin: candLat } = getArtistForms(candidateArtist);
   const candClean = cleanText(candidateArtist);
+  const reqClean = cleanText(requestedArtist);
 
+  if (reqAr && candAr && (reqAr === candAr || candAr.includes(reqAr) || reqAr.includes(candAr))) return true;
+  if (reqLat && candLat && (reqLat === candLat || candLat.includes(reqLat) || reqLat.includes(candLat))) return true;
   if (reqAr && (candClean.includes(reqAr) || reqAr.includes(candClean))) return true;
   if (reqLat && (candClean.includes(reqLat) || reqLat.includes(candClean))) return true;
+  if (candAr && (reqClean.includes(candAr) || candAr.includes(reqClean))) return true;
+  if (candLat && (reqClean.includes(candLat) || candLat.includes(reqClean))) return true;
 
   // Word-by-word token overlap
-  const reqWords = cleanText(requestedArtist).split(" ").filter((w) => w.length > 2);
+  const reqWords = reqClean.split(" ").filter((w) => w.length > 2);
   const candWords = candClean.split(" ").filter((w) => w.length > 2);
 
   if (reqWords.length > 0 && reqWords.some((w) => candWords.includes(w))) {

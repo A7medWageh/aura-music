@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getAllOfflineSongs, deleteOfflineSong, deleteArtist, deleteAlbum, toggleSongHidden, consolidateArtistFolders } from "@/offline/indexedDbCache";
+import { getAllOfflineSongs, deleteOfflineSong, deleteArtist, deleteAlbum, toggleSongHidden, consolidateArtistFolders, hasCorruptedJannatTracks, repairCorruptedJannatTracks } from "@/offline/indexedDbCache";
 import { subscribeDownloads } from "@/state/downloadStore";
 import { usePlayer } from "@/state/playerContext";
 import { motion, AnimatePresence } from "framer-motion";
-import { Play, Trash2, WifiOff, ArrowRight, DownloadCloud, Lock, Unlock, EyeOff, Eye, HardDrive, Music, CheckCircle2, AlertCircle, Image as ImageIcon } from "lucide-react";
+import { Play, Trash2, WifiOff, ArrowRight, DownloadCloud, Lock, Unlock, EyeOff, Eye, HardDrive, Music, CheckCircle2, AlertCircle, Image as ImageIcon, RefreshCw, Sparkles, Wrench } from "lucide-react";
 import { getProxyUrl } from "@/utils/media";
 import { openBackgroundCustomizer } from "@/services/theme/customBackgroundStorage";
 import { getCanonicalArtistName } from "@/utils/artistNormalizer";
@@ -96,12 +96,37 @@ export default function LibraryPage() {
   const [loading, setLoading] = useState(() => cachedLibraryArtists.length === 0);
   const [toast, setToast] = useState<string | null>(null);
   const [stats, setStats] = useState(() => cachedLibraryStats);
+  const [isRepairing, setIsRepairing] = useState(false);
+  const [repairStatus, setRepairStatus] = useState<string | null>(null);
+  const [hasJannatIssue, setHasJannatIssue] = useState(false);
 
-  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 3000); };
+  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 3500); };
+
+  const handleRepairJannat = async () => {
+    setIsRepairing(true);
+    setRepairStatus("جاري فحص وتصليح أغاني جنات...");
+    try {
+      const res = await repairCorruptedJannatTracks((msg) => {
+        setRepairStatus(msg);
+      });
+      setHasJannatIssue(false);
+      showToast(`تم بنجاح إصلاح ${res.purged} أغنية وتنزيل ${res.redownloaded} أصلية ✅`);
+      await loadLibrary();
+    } catch (e: any) {
+      showToast("حدث خطأ أثناء الإصلاح: " + e.message);
+    } finally {
+      setIsRepairing(false);
+      setRepairStatus(null);
+    }
+  };
 
   const loadLibrary = async () => {
     if (cachedLibraryArtists.length === 0) setLoading(true);
     const songs: Song[] = await getAllOfflineSongs();
+
+    hasCorruptedJannatTracks().then((issue) => {
+      setHasJannatIssue(issue);
+    }).catch(() => {});
     
     // Filter hidden songs unless vault is unlocked
     const visibleSongs = songs.filter(s => vaultUnlocked ? true : !s.isHidden);
@@ -334,6 +359,50 @@ export default function LibraryPage() {
         </div>
       </div>
 
+      {/* Jannat Issue Detection & Self-Repair Banner */}
+      {hasJannatIssue && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-amber-500/15 via-rose-500/15 to-indigo-500/15 border border-amber-500/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-xl backdrop-blur-xl"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-amber-500/20 flex items-center justify-center shrink-0 shadow-inner">
+              <Sparkles className="w-5 h-5 text-amber-400" />
+            </div>
+            <div>
+              <h4 className="font-bold text-white text-sm">تم رصد ملفات صوتية تحتاج إلى تصليح في أغاني جنات</h4>
+              <p className="text-xs text-amber-200/80 mt-0.5">يمكنك بنقرة واحدة إزالة الملفات الخليجية وتنزيل الأغاني الأصلية عالية الدقة تلقائياً.</p>
+            </div>
+          </div>
+          <button
+            onClick={handleRepairJannat}
+            disabled={isRepairing}
+            className="w-full sm:w-auto px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-rose-500 hover:from-amber-400 hover:to-rose-400 text-black font-black text-xs shrink-0 flex items-center justify-center gap-2 transition-all active:scale-95 shadow-lg shadow-amber-500/20 disabled:opacity-50"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isRepairing ? "animate-spin" : ""}`} />
+            <span>{isRepairing ? "جاري الإصلاح..." : "إصلاح فوري الآن ⚡"}</span>
+          </button>
+        </motion.div>
+      )}
+
+      {/* Repair Progress Modal */}
+      {isRepairing && (
+        <div className="fixed inset-0 z-[110] bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-indigo-500/30 p-6 rounded-3xl w-full max-w-sm text-center space-y-4 shadow-2xl">
+            <RefreshCw className="w-12 h-12 text-amber-400 animate-spin mx-auto" />
+            <h3 className="text-xl font-black text-white">جاري إصلاح أغاني جنات</h3>
+            <p className="text-sm text-gray-300 min-h-[44px] flex items-center justify-center leading-relaxed">
+              {repairStatus || "جاري فحص الملفات واستبدالها بالأصلية..."}
+            </p>
+            <div className="w-full bg-white/10 rounded-full h-2 overflow-hidden">
+              <div className="bg-gradient-to-r from-amber-500 via-rose-500 to-indigo-500 h-full animate-pulse w-full" />
+            </div>
+            <p className="text-xs text-gray-400">يرجى الانتظار لحين اكتمال التحميل والتثبيت</p>
+          </div>
+        </div>
+      )}
+
       {loading ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-5">
           {[...Array(10)].map((_, i) => (
@@ -371,7 +440,18 @@ export default function LibraryPage() {
                   <p className="text-gray-400 text-sm">{currentAlbumData.songs.length} أغنية</p>
                </div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              {(openArtist === "جنات" || openArtist?.toLowerCase().includes("jannat") || hasJannatIssue) && (
+                <button
+                  onClick={handleRepairJannat}
+                  disabled={isRepairing}
+                  className="px-3.5 py-2 bg-gradient-to-r from-amber-500/20 to-rose-500/20 border border-amber-500/40 text-amber-300 rounded-xl font-bold text-xs flex items-center gap-1.5 hover:from-amber-500/30 hover:to-rose-500/30 active:scale-95 transition-all shadow-sm disabled:opacity-50"
+                  title="إصلاح جميع أغاني هذا الألبوم وتنزيل النسخ الأصلية الصحيحة"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isRepairing ? "animate-spin" : ""}`} />
+                  <span>{isRepairing ? "جاري الإصلاح..." : "إصلاح الألبوم 🔄"}</span>
+                </button>
+              )}
               <button onClick={() => playList(currentAlbumData.songs)} className="px-4 py-2 bg-indigo-500 rounded-xl font-bold flex items-center gap-2 hover:bg-indigo-600 transition-colors">
                 <Play className="w-4 h-4 fill-current" /> تشغيل الألبوم
               </button>
@@ -406,7 +486,18 @@ export default function LibraryPage() {
         <div className="space-y-8">
            <div className="flex items-center justify-between p-4 rounded-2xl bg-black/30 backdrop-blur-xl border border-white/10 shadow-lg">
               <h2 className="text-3xl font-black">{currentArtistData.name}</h2>
-              <div className="flex gap-2">
+              <div className="flex gap-2 items-center flex-wrap">
+                {(currentArtistData.name === "جنات" || currentArtistData.name.toLowerCase().includes("jannat") || hasJannatIssue) && (
+                  <button
+                    onClick={handleRepairJannat}
+                    disabled={isRepairing}
+                    className="px-3.5 py-2 bg-gradient-to-r from-amber-500 to-rose-500 hover:from-amber-400 hover:to-rose-400 text-black rounded-xl font-black text-xs flex items-center gap-1.5 shadow-md active:scale-95 transition-all disabled:opacity-50"
+                    title="إصلاح جميع أغاني وألبومات جنات واستبدال أي ملف خليجي بالأغنية الأصلية"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isRepairing ? "animate-spin" : ""}`} />
+                    <span>{isRepairing ? "جاري الإصلاح..." : "إصلاح أغاني جنات 🔄"}</span>
+                  </button>
+                )}
                 <button onClick={() => playList([...currentArtistData.albums.flatMap(a=>a.songs), ...currentArtistData.singles])} className="px-4 py-2 bg-indigo-500 rounded-xl font-bold flex items-center gap-2">
                   <Play className="w-4 h-4 fill-current" /> تشغيل الكل
                 </button>

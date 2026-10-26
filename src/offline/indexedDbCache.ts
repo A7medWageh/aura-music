@@ -1,4 +1,12 @@
 import { getCanonicalArtistName } from "@/utils/artistNormalizer";
+import { JANNAT_OLD_CLASSICS } from "@/data/jannatClassics";
+
+const JANNAT_CLASSIC_IDS = new Set<string>(
+  JANNAT_OLD_CLASSICS.flatMap((c) => [c.songId, c.youtubeVideoId].filter(Boolean))
+);
+const JANNAT_CLASSIC_TITLES = new Set<string>(
+  JANNAT_OLD_CLASSICS.map((c) => c.title.trim())
+);
 
 const DB_NAME = "music-web-offline";
 const DB_VERSION = 6;
@@ -504,4 +512,342 @@ export async function consolidateArtistFolders(): Promise<number> {
     return 0;
   }
 }
+
+/**
+ * Delete only the audio blob from AUDIO_STORE, leaving metadata intact in META_STORE with audioReady: false.
+ */
+export async function deleteAudioBlobOnly(songId: string): Promise<void> {
+  if (!songId) return;
+  const db = await openOfflineDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction([META_STORE, AUDIO_STORE], "readwrite");
+    tx.objectStore(AUDIO_STORE).delete(songId);
+    const metaReq = tx.objectStore(META_STORE).get(songId);
+    metaReq.onsuccess = () => {
+      const meta = metaReq.result;
+      if (meta) {
+        meta.audioReady = false;
+        tx.objectStore(META_STORE).put(meta);
+      }
+    };
+    tx.oncomplete = () => {
+      notifyLibraryUpdated({ type: "audio-blob-deleted", songId });
+      resolve();
+    };
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+/**
+ * Checks if a song blob matches known corrupted Khaleeji audio or duplicate collision.
+ */
+export function isKhaleejiOrCorruptedJannatBlob(
+  artist: string | undefined,
+  blobSize: number,
+  songIdOrTitle?: string
+): boolean {
+  if (!blobSize) return false;
+  const isJannat = Boolean(
+    (artist && (artist.includes("جنات") || artist.toLowerCase().includes("jannat"))) ||
+    (songIdOrTitle && JANNAT_CLASSIC_IDS.has(songIdOrTitle)) ||
+    (songIdOrTitle && JANNAT_CLASSIC_TITLES.has(songIdOrTitle))
+  );
+  if (!isJannat) return false;
+
+  // Known Khaleeji singer audio blob sizes and ranges:
+  // 5634752 bytes = Hamada Majrashi ("بنسى نفسي")
+  // 6736640 bytes = Hamada Majrashi ("هتسيب")
+  // 6677312 bytes = Hamada Majrashi ("خبر غيابي")
+  // 8419726 bytes = Khaleeji row 466
+  if (
+    blobSize === 5634752 ||
+    blobSize === 6736640 ||
+    blobSize === 6677312 ||
+    blobSize === 8419726 ||
+    (blobSize >= 5500000 && blobSize <= 5750000) ||
+    (blobSize >= 6600000 && blobSize <= 6780000) ||
+    (blobSize >= 8410000 && blobSize <= 8430000)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Automatically purges corrupted/Khaleeji audio blobs from Jannat's songs
+ * in the user's mobile IndexedDB storage.
+ * Detects known Khaleeji sizes and duplicate collision sizes (where multiple Jannat tracks share identical byte lengths).
+ */
+export async function autoPurgeCorruptedJannatBlobs(): Promise<number> {
+  if (typeof window === "undefined" || !("indexedDB" in window)) return 0;
+  try {
+    const db = await openOfflineDb();
+    const { audioRecords, metaRecords } = await new Promise<{ audioRecords: any[]; metaRecords: any[] }>((resolve, reject) => {
+      const tx = db.transaction([AUDIO_STORE, META_STORE], "readonly");
+      const aReq = tx.objectStore(AUDIO_STORE).getAll();
+      const mReq = tx.objectStore(META_STORE).getAll();
+      let audio: any[] = [];
+      let meta: any[] = [];
+      aReq.onsuccess = () => { audio = aReq.result || []; };
+      mReq.onsuccess = () => { meta = mReq.result || []; };
+      tx.oncomplete = () => resolve({ audioRecords: audio, metaRecords: meta });
+      tx.onerror = () => reject(tx.error);
+    });
+
+    if (audioRecords.length === 0) return 0;
+
+    const metaMap = new Map<string, any>();
+    for (const m of metaRecords) {
+      if (m.songId) metaMap.set(m.songId, m);
+      if (m.youtubeVideoId) metaMap.set(m.youtubeVideoId, m);
+    }
+
+    // Filter audio records that belong to Jannat
+    const jannatAudio: { songId: string; size: number }[] = [];
+    for (const rec of audioRecords) {
+      const sid = rec.songId;
+      const meta = metaMap.get(sid);
+      const isJannat =
+        JANNAT_CLASSIC_IDS.has(sid) ||
+        (meta?.artist && (meta.artist.includes("جنات") || meta.artist.toLowerCase().includes("jannat"))) ||
+        meta?.folderName === "جنات" ||
+        (meta?.title && JANNAT_CLASSIC_TITLES.has(meta.title.trim()));
+
+      if (isJannat) {
+        const sz = rec.size || rec.buffer?.byteLength || rec.blob?.size || 0;
+        if (sz > 0) {
+          jannatAudio.push({ songId: sid, size: sz });
+        }
+      }
+    }
+
+    if (jannatAudio.length === 0) return 0;
+
+    // Count byte-size frequencies across Jannat's audio items
+    const sizeCounts = new Map<number, number>();
+    for (const item of jannatAudio) {
+      sizeCounts.set(item.size, (sizeCounts.get(item.size) || 0) + 1);
+    }
+
+    // Determine corrupted keys: either known Khaleeji sizes or duplicate collision across tracks
+    const toDeleteIds = new Set<string>();
+    for (const item of jannatAudio) {
+      const isKnownKhaleeji =
+        item.size === 5634752 ||
+        item.size === 6736640 ||
+        item.size === 6677312 ||
+        item.size === 8419726 ||
+        (item.size >= 5500000 && item.size <= 5750000) ||
+        (item.size >= 6600000 && item.size <= 6780000) ||
+        (item.size >= 8410000 && item.size <= 8430000);
+
+      const isDuplicate = (sizeCounts.get(item.size) || 0) >= 2;
+
+      if (isKnownKhaleeji || isDuplicate) {
+        toDeleteIds.add(item.songId);
+      }
+    }
+
+    if (toDeleteIds.size === 0) return 0;
+
+    console.warn(`[IndexedDB] Auto-purging ${toDeleteIds.size} corrupted/Khaleeji audio blobs for Jannat...`);
+
+    const db2 = await openOfflineDb();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db2.transaction([AUDIO_STORE, META_STORE], "readwrite");
+      const aStore = tx.objectStore(AUDIO_STORE);
+      const mStore = tx.objectStore(META_STORE);
+
+      for (const sid of toDeleteIds) {
+        aStore.delete(sid);
+        const meta = metaMap.get(sid);
+        if (meta) {
+          meta.audioReady = false;
+          mStore.put(meta);
+        }
+      }
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+
+    if (typeof caches !== "undefined") {
+      try { await caches.delete("aura-bg-downloads"); } catch {}
+    }
+
+    notifyLibraryUpdated({ type: "jannat-auto-purged", count: toDeleteIds.size });
+    return toDeleteIds.size;
+  } catch (err) {
+    console.warn("[IndexedDB] autoPurgeCorruptedJannatBlobs error:", err);
+    return 0;
+  }
+}
+
+/**
+ * Quick check to see if the user's offline library has any corrupted Jannat audio files.
+ */
+export async function hasCorruptedJannatTracks(): Promise<boolean> {
+  if (typeof window === "undefined" || !("indexedDB" in window)) return false;
+  try {
+    const db = await openOfflineDb();
+    const { audioRecords, metaRecords } = await new Promise<{ audioRecords: any[]; metaRecords: any[] }>((resolve, reject) => {
+      const tx = db.transaction([AUDIO_STORE, META_STORE], "readonly");
+      const aReq = tx.objectStore(AUDIO_STORE).getAll();
+      const mReq = tx.objectStore(META_STORE).getAll();
+      let audio: any[] = [];
+      let meta: any[] = [];
+      aReq.onsuccess = () => { audio = aReq.result || []; };
+      mReq.onsuccess = () => { meta = mReq.result || []; };
+      tx.oncomplete = () => resolve({ audioRecords: audio, metaRecords: meta });
+      tx.onerror = () => reject(tx.error);
+    });
+
+    const metaMap = new Map<string, any>();
+    for (const m of metaRecords) {
+      if (m.songId) metaMap.set(m.songId, m);
+      if (m.youtubeVideoId) metaMap.set(m.youtubeVideoId, m);
+    }
+
+    const sizes: number[] = [];
+    for (const rec of audioRecords) {
+      const sid = rec.songId;
+      const meta = metaMap.get(sid);
+      const isJannat =
+        JANNAT_CLASSIC_IDS.has(sid) ||
+        (meta?.artist && (meta.artist.includes("جنات") || meta.artist.toLowerCase().includes("jannat"))) ||
+        meta?.folderName === "جنات" ||
+        (meta?.title && JANNAT_CLASSIC_TITLES.has(meta.title.trim()));
+
+      if (isJannat) {
+        const sz = rec.size || rec.buffer?.byteLength || rec.blob?.size || 0;
+        if (sz > 0) {
+          if (
+            sz === 5634752 ||
+            sz === 6736640 ||
+            sz === 6677312 ||
+            sz === 8419726 ||
+            (sz >= 5500000 && sz <= 5750000) ||
+            (sz >= 6600000 && sz <= 6780000) ||
+            (sz >= 8410000 && sz <= 8430000)
+          ) {
+            return true;
+          }
+          sizes.push(sz);
+        }
+      }
+    }
+
+    const sizeCounts = new Map<number, number>();
+    for (const sz of sizes) {
+      sizeCounts.set(sz, (sizeCounts.get(sz) || 0) + 1);
+      if (sizeCounts.get(sz)! >= 2) return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+
+/**
+ * Automatically purges corrupted/Khaleeji audio blobs from Jannat's songs
+ * and re-downloads genuine tracks from Telegram CDN with high fidelity.
+ */
+export async function repairCorruptedJannatTracks(
+  onProgress?: (msg: string, percent: number) => void
+): Promise<{ purged: number; redownloaded: number }> {
+  if (typeof window === "undefined") return { purged: 0, redownloaded: 0 };
+  try {
+    onProgress?.("جاري فحص أغاني جنات في ذاكرة الهاتف...", 10);
+    const allSongs = await getAllOfflineSongs();
+    const jannatSongs = allSongs.filter(
+      (s) =>
+        s.artist?.includes("جنات") ||
+        s.artist?.toLowerCase().includes("jannat") ||
+        s.folderName === "جنات"
+    );
+
+    if (jannatSongs.length === 0) {
+      onProgress?.("لا توجد أغاني محفوظة لجنات", 100);
+      return { purged: 0, redownloaded: 0 };
+    }
+
+    // Inspect each song's audio blob
+    const songBlobs: { song: any; size: number }[] = [];
+    for (const song of jannatSongs) {
+      const blob = await getAudioBlob(song.songId);
+      if (blob) {
+        songBlobs.push({ song, size: blob.size });
+      }
+    }
+
+    // Count sizes to detect duplicate collisions
+    const sizeCounts = new Map<number, number>();
+    for (const { size } of songBlobs) {
+      sizeCounts.set(size, (sizeCounts.get(size) || 0) + 1);
+    }
+
+    // Identify corrupted songs
+    const toPurge: any[] = [];
+    for (const { song, size } of songBlobs) {
+      const isKnownKhaleeji = size === 5634752 || size === 8419726;
+      const isDuplicate = (sizeCounts.get(size) || 0) > 1;
+      if (isKnownKhaleeji || isDuplicate) {
+        toPurge.push(song);
+      }
+    }
+
+    if (toPurge.length === 0) {
+      onProgress?.("جميع أغاني جنات سليمة ولا تحتاج إلى إصلاح ✅", 100);
+      return { purged: 0, redownloaded: 0 };
+    }
+
+    onProgress?.(`تم اكتشاف ${toPurge.length} أغنية تالفة، جاري الحذف والتنظيف...`, 30);
+
+    for (const s of toPurge) {
+      await deleteAudioBlobOnly(s.songId);
+      if (s.youtubeVideoId && s.youtubeVideoId !== s.songId) {
+        await deleteAudioBlobOnly(s.youtubeVideoId);
+      }
+    }
+
+    // Purge obsolete Service Worker background fetch cache if still lingering
+    if (typeof caches !== "undefined") {
+      try { await caches.delete("aura-bg-downloads"); } catch {}
+    }
+
+    let redownloaded = 0;
+    if (typeof navigator !== "undefined" && navigator.onLine) {
+      onProgress?.("جاري إعادة تنزيل الأغاني الأصلية من خوادم جنات السريعة...", 40);
+      const { downloadSong } = await import("@/services/offline/downloader");
+
+      for (let i = 0; i < toPurge.length; i++) {
+        const s = toPurge[i];
+        const pct = 40 + Math.floor(((i + 1) / toPurge.length) * 55);
+        onProgress?.(`جاري تنزيل: ${s.title} (${i + 1}/${toPurge.length})`, pct);
+        try {
+          const success = await downloadSong(s.songId, s.youtubeVideoId, {
+            title: s.title,
+            artist: "جنات",
+            albumId: s.albumId,
+            albumName: s.albumName,
+            folderName: "جنات",
+            thumbnailUrl: s.thumbnailUrl,
+          });
+          if (success) redownloaded++;
+        } catch (e) {
+          console.error(`Failed to redownload "${s.title}":`, e);
+        }
+      }
+    }
+
+    notifyLibraryUpdated({ type: "jannat-repaired", purged: toPurge.length, redownloaded });
+    onProgress?.(`اكتمل الإصلاح بنجاح! تم إصلاح ${toPurge.length} أغنية وتنزيل ${redownloaded} أصلية ✅`, 100);
+    return { purged: toPurge.length, redownloaded };
+  } catch (err: any) {
+    console.error("Error repairing Jannat tracks:", err);
+    onProgress?.("حدث خطأ أثناء الإصلاح: " + err.message, 100);
+    return { purged: 0, redownloaded: 0 };
+  }
+}
+
 

@@ -8,12 +8,14 @@
  */
 
 export type BackgroundScope = "library" | "global";
+export type BackgroundFitMode = "auto-fit" | "cover" | "contain";
 
 export interface CustomBackgroundConfig {
   dataUrl: string;
-  opacity: number;        // Overlay darkness (0.1 to 0.9, default 0.5)
+  opacity: number;        // Overlay darkness (0.1 to 0.9, default 0.55)
   blur: number;           // Blur in px (0 to 30, default 0)
   hasDepth: boolean;      // Subtle 3D parallax depth effect
+  fitMode?: BackgroundFitMode; // "auto-fit" (Intelligent safe viewport sizing), "cover", "contain"
   updatedAt: number;
 }
 
@@ -134,50 +136,8 @@ export function processImageFile(file: File): Promise<string> {
     reader.onload = (e) => {
       const result = e.target?.result as string;
       if (!result) return reject(new Error("ملف فارغ"));
-
-      const img = new Image();
-      img.onerror = () => reject(new Error("صيغة الصورة غير مدعومة"));
-      img.onload = () => {
-        const MAX_DIMENSION = 2560; // Ultra HD / 2K Retina
-        let { width, height } = img;
-
-        if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
-          if (width > height) {
-            height = Math.round((height * MAX_DIMENSION) / width);
-            width = MAX_DIMENSION;
-          } else {
-            width = Math.round((width * MAX_DIMENSION) / height);
-            height = MAX_DIMENSION;
-          }
-        }
-
-        const canvas = document.createElement("canvas");
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) {
-          return resolve(result); // Fallback to raw base64
-        }
-
-        // High quality smoothing
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = "high";
-        ctx.drawImage(img, 0, 0, width, height);
-
-        // Convert to high quality JPEG/WebP
-        try {
-          const optimized = canvas.toDataURL("image/webp", 0.92);
-          resolve(optimized);
-        } catch {
-          try {
-            const fallbackJpeg = canvas.toDataURL("image/jpeg", 0.92);
-            resolve(fallbackJpeg);
-          } catch {
-            resolve(result);
-          }
-        }
-      };
-      img.src = result;
+      // 100% lossless: Keep original photo data untouched without pre-compression
+      resolve(result);
     };
     reader.readAsDataURL(file);
   });

@@ -116,13 +116,23 @@ async function downloadViaBackgroundFetch(
 
         if (e.data.type === "BG_FETCH_DONE" && e.data.fetchId === reg.id) {
           navigator.serviceWorker.removeEventListener("message", progressListener!);
-          // Retrieve from cache and store in IndexedDB
-          caches.open("aura-bg-downloads").then(async (cache) => {
-            const cachedResp = await cache.match(url);
+          // Retrieve from isolated cache and store in IndexedDB
+          const cacheName = `aura-bg-${reg.id}`;
+          caches.open(cacheName).then(async (cache) => {
+            const matches = await cache.matchAll();
+            let cachedResp: Response | undefined = matches[0] || (await cache.match(url));
+            if (!cachedResp) {
+              const legacyCache = await caches.open("aura-bg-downloads").catch(() => null);
+              if (legacyCache) {
+                cachedResp = await legacyCache.match(url);
+              }
+            }
+
             if (cachedResp) {
               const blob = await cachedResp.blob();
               await storeAudioBlob(songId, blob);
-              cache.delete(url); // Free cache space
+              try { await caches.delete(cacheName); } catch {}
+              try { await caches.delete("aura-bg-downloads"); } catch {}
               updateJob(jobId, { done: 1, failed: 0, progressBytes: blob.size, totalBytes: blob.size });
               finishJob(jobId, true);
               resolve(true);

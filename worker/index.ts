@@ -21,8 +21,9 @@ self.addEventListener('backgroundfetchsuccess', (event) => {
   const bgFetch = event.registration;
 
   event.waitUntil(async function () {
-    // Open a cache named after this fetch
-    const cache = await caches.open('aura-bg-downloads');
+    // Open an isolated cache named after this specific fetchId to prevent cross-song collision
+    const cacheName = `aura-bg-${bgFetch.id}`;
+    const cache = await caches.open(cacheName);
     const records = await bgFetch.matchAll();
 
     const meta = JSON.parse(bgFetch.id.startsWith('{')

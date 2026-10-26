@@ -470,20 +470,34 @@ export async function GET(req: NextRequest) {
             Promise.race([cacheLookup, new Promise<null[]>((r) => setTimeout(() => r([]), 2500))]),
           ]);
           if (!worker) return never;
-          const [byVid, byTrack] = rows as any[];
-          if (byVid?.tgFileId || byTrack?.tgFileId) {
-            // A stored file exists — the resolver returns its seekable stream in a
-            // moment. Only a row it then rejects (mislabeled upload) can stall us,
-            // so fall back to the live pipe if it hasn't answered within 8s.
-            await new Promise((r) => setTimeout(r, 8000));
-            return { kind: "early" as const, worker };
+          const [byVid, byTrack] = (rows || []) as any[];
+          const cached = byVid || byTrack;
+          if (cached?.tgFileId) {
+            const streamUrl = `/api/telegram/stream?fileId=${encodeURIComponent(cached.tgFileId)}&title=${encodeURIComponent(cached.title || title || "")}`;
+            console.log(`[ytdownload] ⚡ Instant Telegram cache hit for "${cached.title || title}"`);
+            return {
+              kind: "resolved" as const,
+              result: {
+                streamUrl,
+                directPlay: false,
+                source: "telegram" as const,
+                title: cached.title || title,
+                artist: cached.artist || artist,
+                durationSec: cached.durationSec,
+                bitrate: "320kbps",
+                format: "mp3",
+                mimeType: cached.mimeType || "audio/mpeg",
+                videoId: cached.videoId || activeVid,
+              },
+            };
           }
+          if (!worker) return never;
           return { kind: "early" as const, worker };
         })().catch(() => never);
         const outcome = await Promise.race<RaceOutcome>([
           resolvePromise.then((result) => ({ kind: "resolved" as const, result })),
           fastLane,
-          new Promise<RaceOutcome>((r) => setTimeout(() => r({ kind: "timeout" as const }), 18000)),
+          new Promise<RaceOutcome>((r) => setTimeout(() => r({ kind: "timeout" as const }), 30000)),
         ]);
 
         if (outcome.kind === "early") {
@@ -522,7 +536,7 @@ export async function GET(req: NextRequest) {
         resolved = await Promise.race([
           resolvePromise,
           new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error("resolve_timeout")), 18000)
+            setTimeout(() => reject(new Error("resolve_timeout")), 30000)
           ),
         ]);
       }

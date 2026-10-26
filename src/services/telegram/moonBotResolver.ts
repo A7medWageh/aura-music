@@ -23,7 +23,6 @@
  */
 
 import { saveTelegramCacheRecord, getTelegramDirectUrl } from "./telegramStorage";
-import { autoPressAudioButton } from "./mtprotoPress";
 import { query } from "@apis/neon";
 
 const BOT_TOKEN =
@@ -52,12 +51,12 @@ async function sendMsg(text: string): Promise<number | null> {
     });
     const data = await res.json();
     if (data.ok && data.result?.message_id) {
-      console.log(`[L10Bot] Sent: "${text.slice(0, 40)}" → msg_id=${data.result.message_id}`);
+      console.log(`[WeciBot] Sent: "${text.slice(0, 40)}" → msg_id=${data.result.message_id}`);
       return data.result.message_id;
     }
-    console.warn("[L10Bot] sendMessage failed:", data.description);
+    console.warn("[WeciBot] sendMessage failed:", data.description);
   } catch (err: any) {
-    console.warn("[L10Bot] sendMessage error:", err.message);
+    console.warn("[WeciBot] sendMessage error:", err.message);
   }
   return null;
 }
@@ -93,33 +92,7 @@ async function ensurePendingTable(): Promise<void> {
         received_at TIMESTAMPTZ DEFAULT NOW()
       )
     `);
-    await query(`
-      CREATE TABLE IF NOT EXISTS moonbot_mode (
-        id SMALLINT PRIMARY KEY,
-        active_until TIMESTAMPTZ
-      )
-    `);
   } catch {}
-}
-
-/** True when a human pressed @L_10_BOT's audio-search button recently. */
-async function isSearchModeActive(): Promise<boolean> {
-  try {
-    const res = await query("SELECT 1 FROM moonbot_mode WHERE id = 1 AND active_until > NOW()");
-    return res.rows.length > 0;
-  } catch {
-    return false;
-  }
-}
-
-/** Wait until the webhook records a button press, or timeout. */
-async function waitForSearchMode(maxWaitMs: number): Promise<boolean> {
-  const start = Date.now();
-  while (Date.now() - start < maxWaitMs) {
-    if (await isSearchModeActive()) return true;
-    await new Promise((r) => setTimeout(r, 1000));
-  }
-  return false;
 }
 
 /**
@@ -228,69 +201,12 @@ async function ensureWebhookRegistered(): Promise<void> {
  *   5. Poll Neon DB until webhook delivers the audio (max 90s)
  *   6. Save to main cache → return stream URL
  */
-export async function resolveViaMoonBot(params: {
-  title: string;
-  artist?: string;
-  videoId?: string;
-}): Promise<MoonBotResult | null> {
-  const { title, artist = "", videoId } = params;
-
-  if (!BOT_TOKEN || !CHANNEL_ID) {
-    console.warn("[L10Bot] Missing BOT_TOKEN or CHANNEL_ID");
-    return null;
-  }
-
-  // Register webhook if needed (fast no-op after first call)
-  await ensureWebhookRegistered();
-
-  // Ensure DB tables exist
-  await ensurePendingTable();
-
-  // The bot only answers song queries in the short window after its
-  // "بحث اليوتوب صوت" button is pressed. Post "يوتيوب" to bring the menu
-  // up, then press the button ourselves over MTProto (user session). The
-  // bot edits the menu → webhook records the window in moonbot_mode.
-  let modeOpen = await isSearchModeActive();
-  let triggerMsgId: number | null = null;
-  if (!modeOpen) {
-    triggerMsgId = await sendMsg("يوتيوب");
-    if (!triggerMsgId) return null;
-    console.log(`[L10Bot] Menu posted — auto-pressing audio-search button for "${title}"...`);
-    const pressed = await autoPressAudioButton(12000);
-    modeOpen = await waitForSearchMode(pressed ? 8000 : 20000);
-    if (!modeOpen && pressed) {
-      // Click was accepted but the webhook row hasn't landed yet — the
-      // bot window is open regardless; proceed optimistically.
-      modeOpen = true;
-    }
-  }
-  if (!modeOpen) {
-    console.warn(`[L10Bot] No button press within 20s; bot ignores text-only queries — giving up "${title}"`);
-    if (triggerMsgId) deleteMsg(triggerMsgId).catch(() => {});
-    return null;
-  }
-
-  const queryText = `تنزيل ${title}${artist ? ` ${artist}` : ""}`;
-  const searchMsgId = await sendMsg(queryText);
-  if (!searchMsgId) {
-    if (triggerMsgId) deleteMsg(triggerMsgId).catch(() => {});
-    return null;
-  }
-
-  console.log(`[L10Bot] Search window open, query sent — waiting for webhook audio for "${title}"...`);
-
-  // Poll DB for audio (populated by /api/telegram/webhook)
-  const pending = await pollDbForAudio(searchMsgId, 90000);
-
-  // Cleanup our messages
-  deleteMsg(searchMsgId).catch(() => {});
-  if (triggerMsgId) deleteMsg(triggerMsgId).catch(() => {});
-
-  if (!pending) {
-    console.warn(`[L10Bot] No audio received for "${title}" within 90s`);
-    return null;
-  }
-
+async function processPendingAudio(
+  pending: any,
+  videoId: string | undefined,
+  title: string,
+  artist: string
+): Promise<MoonBotResult | null> {
   const fileId: string = pending.tg_file_id;
   const mimeType: string = pending.mime_type || "audio/mpeg";
   const durationSec: number | undefined = pending.duration_sec;
@@ -334,3 +250,123 @@ export async function resolveViaMoonBot(params: {
     mimeType,
   };
 }
+
+export function cleanQueryForWeciBot(rawTitle: string, rawArtist?: string): string {
+  let title = (rawTitle || "").trim();
+  let artist = (rawArtist || "").trim();
+
+  // Strip video suffixes and tags
+  title = title
+    .replace(/\(Official.*?\)/gi, "")
+    .replace(/\[Official.*?\]/gi, "")
+    .replace(/\(Audio.*?\)/gi, "")
+    .replace(/\[Audio.*?\]/gi, "")
+    .replace(/\(Lyric.*?\)/gi, "")
+    .replace(/\[Lyric.*?\]/gi, "")
+    .replace(/\(Video.*?\)/gi, "")
+    .replace(/\[Video.*?\]/gi, "")
+    .replace(/\|.*$/g, "")
+    .replace(/فيديو كليب/g, "")
+    .replace(/كليب رسمي/g, "")
+    .replace(/الأغنية الرسمية/g, "")
+    .trim();
+
+  // If there's a slash / separating Arabic and English (e.g. "اللي بيني وبينك / Elly Bene"), pick Arabic
+  if (title.includes("/")) {
+    const halves = title.split("/");
+    const arabicHalf = halves.find((h) => /[\u0600-\u06FF]/.test(h));
+    if (arabicHalf && arabicHalf.trim().length >= 2) {
+      title = arabicHalf.trim();
+    } else {
+      title = halves[0].trim();
+    }
+  }
+
+  // If title has "Artist - Title" format (e.g. "جنات - حب امتلاك")
+  if (title.includes("-")) {
+    const parts = title.split("-");
+    if (parts.length === 2) {
+      const p0 = parts[0].trim();
+      const p1 = parts[1].trim();
+      if (artist && (p0.toLowerCase() === artist.toLowerCase() || p0 === artist)) {
+        title = p1;
+      } else if (artist && (p1.toLowerCase() === artist.toLowerCase() || p1 === artist)) {
+        title = p0;
+      } else if (/[\u0600-\u06FF]/.test(p1) && p0.length < 25) {
+        artist = p0;
+        title = p1;
+      }
+    }
+  }
+
+  // Clean generic artist
+  if (
+    !artist ||
+    artist === "فنان" ||
+    artist === "فنان غير معروف" ||
+    artist === "غير معروف" ||
+    artist.toLowerCase().includes("unknown") ||
+    artist === "Aura Music"
+  ) {
+    artist = "";
+  } else {
+    artist = artist
+      .replace(/\s*-\s*topic\b/gi, "")
+      .replace(/\s*vevo\b/gi, "")
+      .replace(/\s*official\b/gi, "")
+      .replace(/\s*channel\b/gi, "")
+      .replace(/\s*records\b/gi, "")
+      .replace(/\s*music\b/gi, "")
+      .trim();
+  }
+
+  const queryParts = [title];
+  if (artist && !title.toLowerCase().includes(artist.toLowerCase())) {
+    queryParts.push(artist);
+  }
+
+  return queryParts.join(" ").replace(/\s+/g, " ").trim();
+}
+
+export async function resolveViaMoonBot(params: {
+  title: string;
+  artist?: string;
+  videoId?: string;
+}): Promise<MoonBotResult | null> {
+  const { title, artist = "", videoId } = params;
+
+  if (!BOT_TOKEN || !CHANNEL_ID) {
+    console.warn("[WeciBot] Missing BOT_TOKEN or CHANNEL_ID");
+    return null;
+  }
+
+  // Register webhook if needed (fast no-op after first call)
+  await ensureWebhookRegistered();
+
+  // Ensure DB tables exist
+  await ensurePendingTable();
+
+  const cleanSongQuery = cleanQueryForWeciBot(title, artist);
+
+  // ── Strategy: @wecibot Direct Single-Message "نزل" (Fastest & No Buttons) ──
+  // Bot command format: "نزل {title} {artist}" in ONE message!
+  console.log(`[WeciBot] Attempting direct single-message "نزل" flow for "${title}" (query: "${cleanSongQuery}")...`);
+  const weciCommand = `نزل ${cleanSongQuery}`;
+  const weciMsgId = await sendMsg(weciCommand);
+  if (weciMsgId) {
+    console.log(`[WeciBot] Sent "${weciCommand}" (msgId=${weciMsgId}) — waiting for audio webhook...`);
+    const pending = await pollDbForAudio(weciMsgId, 28000);
+
+    // Clean up command message asynchronously
+    deleteMsg(weciMsgId).catch(() => {});
+
+    if (pending) {
+      console.log(`[WeciBot] ✅ Audio received successfully from @wecibot for "${title}"!`);
+      return await processPendingAudio(pending, videoId, title, artist);
+    }
+    console.warn(`[WeciBot] No audio from @wecibot within 28s for "${title}"`);
+  }
+
+  return null;
+}
+

@@ -5,7 +5,7 @@ import { Play, DownloadCloud, CheckCircle2, Music, Search, Shuffle, Sparkles, Di
 import { JANNAT_OLD_CLASSICS, JannatClassicTrack } from "@/data/jannatClassics";
 import { usePlayer } from "@/state/playerContext";
 import { downloadSong } from "@/services/offline/downloader";
-import { getAllOfflineSongs } from "@/offline/indexedDbCache";
+import { getAllOfflineSongs, autoPurgeCorruptedJannatBlobs } from "@/offline/indexedDbCache";
 import { getProxyUrl } from "@/utils/media";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -38,6 +38,14 @@ export function JannatOldSection({ onToast }: { onToast: (msg: string) => void }
         })
         .catch(() => {});
     };
+
+    // Auto-clean any corrupted/Khaleeji audio blobs from Jannat on mount
+    autoPurgeCorruptedJannatBlobs().then((purged) => {
+      if (purged > 0 && mounted) {
+        console.log(`[JannatOldSection] Purged ${purged} corrupted audio tracks from device`);
+        syncOffline();
+      }
+    }).catch(() => {});
 
     syncOffline();
 

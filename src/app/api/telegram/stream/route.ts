@@ -32,6 +32,8 @@ export async function GET(req: NextRequest) {
     const clientRange = req.headers.get("Range");
     if (clientRange && !isDownload) {
       upstreamHeaders["Range"] = clientRange;
+    } else if (!isDownload) {
+      upstreamHeaders["Range"] = "bytes=0-";
     }
 
     const upstreamRes = await fetch(directTelegramUrl, {
@@ -55,6 +57,22 @@ export async function GET(req: NextRequest) {
         responseHeaders.set(key, val);
       }
     });
+
+    // Safari / iOS 2-byte probe safeguard (bytes=0-1)
+    if (clientRange === "bytes=0-1" && upstreamRes.status === 200 && upstreamRes.body) {
+      try {
+        const reader = upstreamRes.body.getReader();
+        const { value } = await reader.read();
+        reader.cancel().catch(() => {});
+        if (value && value.length >= 2) {
+          const probeSlice = value.slice(0, 2);
+          const totalLen = responseHeaders.get("content-length") || value.length;
+          responseHeaders.set("Content-Range", `bytes 0-1/${totalLen}`);
+          responseHeaders.set("Content-Length", "2");
+          return new NextResponse(probeSlice, { status: 206, headers: responseHeaders });
+        }
+      } catch {}
+    }
 
     const telegramContentType = responseHeaders.get("content-type");
     if (!telegramContentType || telegramContentType === "application/octet-stream") {

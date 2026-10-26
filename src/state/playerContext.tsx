@@ -2,7 +2,8 @@
 
 import { createContext, ReactNode, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { initialPlayerState, PlayerState, QueueSong, RepeatMode } from "@/state/playerState";
-import { getAudioBlob, getOfflineSongMeta } from "@/offline/indexedDbCache";
+import { getAudioBlob, getOfflineSongMeta, deleteAudioBlobOnly, isKhaleejiOrCorruptedJannatBlob, autoPurgeCorruptedJannatBlobs } from "@/offline/indexedDbCache";
+import { JANNAT_OLD_CLASSICS } from "@/data/jannatClassics";
 import { downloadSong } from "@/services/offline/downloader";
 import { setMainAudioPlaying } from "@/services/offline/backgroundKeepAlive";
 import { useToastStore } from "@/state/toastStore";
@@ -57,6 +58,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }
     return initialPlayerState;
   });
+
+  // Auto-clean any corrupted/duplicate Khaleeji audio blobs from user's device on startup
+  useEffect(() => {
+    autoPurgeCorruptedJannatBlobs().catch(() => {});
+  }, []);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const isPlayingRef = useRef(state.isPlaying);
   const isLoadingNewSongRef = useRef(false); // true while fetching stream URL, prevents onPause from clearing isPlaying
@@ -65,6 +71,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   stateRef.current = state;
   const nextPreloadedRef = useRef<{ songId: string; url: string; isBlob: boolean } | null>(null);
   const lastPreloadRef = useRef<string | null>(null);
+  const isInitialMountRef = useRef(true);
 
   const currentSong = useMemo(
     () => state.queue.find((song) => song.songId === state.currentSongId) ?? null,
@@ -234,12 +241,18 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         player.pause();
         setState((prev) => ({ ...prev, isPlaying: false }));
       } else {
+        // If the audio element has no src loaded yet (e.g. after a page refresh), load and play currentSong
+        if ((!player.src || player.src === "" || player.src === window.location.href) && currentSong) {
+          playNow(currentSong);
+          return;
+        }
         const p = player.play();
         if (p !== undefined) {
           p.then(() => {
             setState((prev) => ({ ...prev, isPlaying: true }));
           }).catch((err) => {
-            console.warn("[Player] Direct play() rejected:", err);
+            console.warn("[Player] Direct play() rejected, falling back to playNow:", err);
+            if (currentSong) playNow(currentSong);
           });
         } else {
           setState((prev) => ({ ...prev, isPlaying: true }));
@@ -580,6 +593,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       if (!cachedBlob && nextSong.youtubeVideoId) {
         cachedBlob = await getAudioBlob(nextSong.youtubeVideoId);
       }
+      if (cachedBlob && isKhaleejiOrCorruptedJannatBlob(nextSong.artist, cachedBlob.size, nextSong.songId || nextSong.title)) {
+        cachedBlob = null;
+      }
       if (cachedBlob) {
         const url = URL.createObjectURL(cachedBlob);
         nextPreloadedRef.current = { songId: nextSong.songId, url, isBlob: true };
@@ -703,6 +719,49 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
     let cancelled = false;
 
+    // Check if this is the initial page load / refresh
+    const isFirstLoad = isInitialMountRef.current;
+    if (isFirstLoad) {
+      isInitialMountRef.current = false;
+      // If refreshed or newly loaded and not explicitly playing, stay paused!
+      if (!stateRef.current.isPlaying) {
+        isLoadingNewSongRef.current = false;
+        player.pause();
+        getAudioBlob(song.songId).then(async (cachedBlob) => {
+          if (cachedBlob && isKhaleejiOrCorruptedJannatBlob(song.artist, cachedBlob.size, song.songId || song.title)) {
+            console.warn(`[Player] Detected corrupted Khaleeji blob (${cachedBlob.size} bytes) on mount for Jannat track "${song.title}". Auto-purging...`);
+            await deleteAudioBlobOnly(song.songId);
+            if (song.youtubeVideoId && song.youtubeVideoId !== song.songId) {
+              await deleteAudioBlobOnly(song.youtubeVideoId);
+            }
+            cachedBlob = null;
+          }
+          if (cachedBlob && !cancelled) {
+            const blobUrl = URL.createObjectURL(cachedBlob);
+            player.src = blobUrl;
+            if (stateRef.current.currentTime > 0) {
+              try { player.currentTime = stateRef.current.currentTime; } catch {}
+            }
+            setState((prev) => ({
+              ...prev,
+              streamUrl: blobUrl,
+              isBuffering: false,
+              isPlaying: false,
+            }));
+          } else {
+            setState((prev) => ({
+              ...prev,
+              isBuffering: false,
+              isPlaying: false,
+            }));
+          }
+        }).catch(() => {
+          setState((prev) => ({ ...prev, isBuffering: false, isPlaying: false }));
+        });
+        return;
+      }
+    }
+
     player.pause();
     gestureResumeCleanupRef.current?.(); // drop stale gesture-resume from a previous song
     isLoadingNewSongRef.current = true; // Block onPause from clearing isPlaying while we load
@@ -715,6 +774,16 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         let cachedBlob = await getAudioBlob(song.songId);
         if (!cachedBlob && song.youtubeVideoId && song.youtubeVideoId !== song.songId) {
           cachedBlob = await getAudioBlob(song.youtubeVideoId);
+        }
+
+        // Automatic self-healing: purge corrupted Khaleeji audio blob (e.g. 5.6MB / 6.7MB / 8.4MB Hamada Majrashi)
+        if (cachedBlob && isKhaleejiOrCorruptedJannatBlob(song.artist, cachedBlob.size, song.songId || song.title)) {
+          console.warn(`[Player] Detected corrupted Khaleeji blob (${cachedBlob.size} bytes) for Jannat track "${song.title}". Auto-purging from storage...`);
+          await deleteAudioBlobOnly(song.songId);
+          if (song.youtubeVideoId && song.youtubeVideoId !== song.songId) {
+            await deleteAudioBlobOnly(song.youtubeVideoId);
+          }
+          cachedBlob = null;
         }
 
         if (cachedBlob && !cancelled) {
@@ -898,7 +967,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         }));
         isPlayingRef.current = true;
 
-        // Attempt play immediately — on iOS this may be deferred until canplay
+        // Attempt play immediately — on iOS/Android start playback as soon as the first chunk arrives
         const tryPlay = () => {
           const playPromise = player.play();
           if (playPromise !== undefined) {
@@ -909,16 +978,19 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           }
         };
 
-        // On iOS, play() before canplay may fail silently; listen for canplay too
-        if (player.readyState >= 3) {
+        // Trigger on loadeddata (instant first frame/chunk) or canplay without waiting for full buffer
+        if (player.readyState >= 2) {
           tryPlay();
         } else {
-          const onCanPlay = () => {
-            player.removeEventListener("canplay", onCanPlay);
+          const onDataReady = () => {
+            player.removeEventListener("loadeddata", onDataReady);
+            player.removeEventListener("canplay", onDataReady);
             if (!cancelled && isPlayingRef.current) tryPlay();
           };
-          player.addEventListener("canplay", onCanPlay);
+          player.addEventListener("loadeddata", onDataReady, { once: true });
+          player.addEventListener("canplay", onDataReady, { once: true });
         }
+        tryPlay();
       } catch (error) {
         if (!cancelled) {
           console.error("[Player] Playback error:", error);
@@ -1041,7 +1113,40 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const onLoadedMetadata = () => {
     const player = audioRef.current;
     if (player) {
-      setState((prev) => ({ ...prev, duration: player.duration || 0 }));
+      const dur = player.duration || 0;
+      setState((prev) => ({ ...prev, duration: dur }));
+
+      // Duration safeguard for Jannat cached tracks
+      if (player.src && player.src.startsWith("blob:") && currentSong) {
+        const isJannat =
+          currentSong.artist?.includes("جنات") ||
+          currentSong.artist?.toLowerCase().includes("jannat");
+        const classic = JANNAT_OLD_CLASSICS.find(
+          (c) =>
+            c.songId === currentSong.songId ||
+            c.youtubeVideoId === currentSong.youtubeVideoId ||
+            c.title === currentSong.title
+        );
+
+        if ((isJannat || classic) && classic?.duration) {
+          const parts = classic.duration.split(":").map(Number);
+          const expectedSec = parts[0] * 60 + parts[1];
+          if (dur > 0 && Math.abs(dur - expectedSec) > 30) {
+            console.warn(`[Player] Duration mismatch detected for "${currentSong.title}": expected ~${expectedSec}s, got ${dur.toFixed(1)}s. Purging corrupted blob...`);
+            deleteAudioBlobOnly(currentSong.songId).catch(() => {});
+            if (currentSong.youtubeVideoId) {
+              deleteAudioBlobOnly(currentSong.youtubeVideoId).catch(() => {});
+            }
+            // Stream the authentic audio directly
+            const targetVid = currentSong.youtubeVideoId || currentSong.songId || "";
+            const streamUrl = toAbsoluteApiUrl(`/api/ytdownload?videoId=${encodeURIComponent(targetVid)}&title=${encodeURIComponent(currentSong.title)}&artist=${encodeURIComponent(currentSong.artist || "")}&proxy=true`);
+            player.src = streamUrl;
+            player.load();
+            player.play().catch(() => {});
+            setState((prev) => ({ ...prev, streamUrl, isBuffering: false, isPlaying: true }));
+          }
+        }
+      }
     }
   };
 

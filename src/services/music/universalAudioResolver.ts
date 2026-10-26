@@ -508,10 +508,9 @@ export async function resolveUniversalAudio(params: {
     const albumatyArtist = arabicResolvedArtist || effectiveArtist;
 
     // All three run in parallel — whoever finds the song first wins instantly.
-    // MoonBot needs a human to press its reply button, so it must never hold
-    // the click path hostage: 15s cap, and its DB row shows up for next time.
+    // @wecibot runs with high priority directly into Telegram CDN.
     winner = await raceFirst([
-      ...(params.skipBot ? [] : [tryMoonBot(albumatyTitle, albumatyArtist, videoId, 15000)]),
+      ...(params.skipBot ? [] : [tryMoonBot(albumatyTitle, albumatyArtist, videoId, 28000)]),
       tryAlbumaty(albumatyTitle, albumatyArtist, videoId, 8000),
       tryJioSaavn(title, effectiveArtist, videoId, 6000),
     ]);
@@ -525,19 +524,32 @@ export async function resolveUniversalAudio(params: {
     winner = await raceFirst([
       tryJioSaavn(title, effectiveArtist, videoId, 6000),
       tryAlbumaty(title, effectiveArtist, videoId, 8000),
-      ...(params.skipBot ? [] : [tryMoonBot(title, effectiveArtist, videoId, 15000)]),
+      ...(params.skipBot ? [] : [tryMoonBot(title, effectiveArtist, videoId, 28000)]),
     ]);
   }
 
   if (winner) {
     // moonbot results are already in Telegram — skip re-upload
     if (winner.source === "moonbot") return winner;
+    if (!params.forDownload) {
+      // ⚡ Instant Playback (Lightning-fast start):
+      // Return stream URL immediately without waiting for full-file ingest.
+      // Ingest to Telegram runs asynchronously in background for future caching.
+      ingestToTelegram(winner, cacheKey, title, effectiveArtist, videoId).catch((err) =>
+        console.warn(`[AudioResolver] Background ingest failed for "${winner?.title}":`, err.message)
+      );
+      return winner;
+    }
     return await ingestToTelegram(winner, cacheKey, title, effectiveArtist, videoId);
   }
 
   // Strategy 3: SoundCloud fallback
   const scResult = hasSearchTitle ? await trySoundCloud(title, effectiveArtist, videoId, 6000) : null;
   if (scResult) {
+    if (!params.forDownload) {
+      ingestToTelegram(scResult, cacheKey, title, effectiveArtist, videoId).catch(() => {});
+      return scResult;
+    }
     return await ingestToTelegram(scResult, cacheKey, title, effectiveArtist, videoId);
   }
 
@@ -568,6 +580,10 @@ export async function resolveUniversalAudio(params: {
         ]);
         winner = a2 || s2;
         if (winner) {
+          if (!params.forDownload) {
+            ingestToTelegram(winner, cacheKey, title, effectiveArtist, videoId).catch(() => {});
+            return winner;
+          }
           return await ingestToTelegram(winner, cacheKey, title, effectiveArtist, videoId);
         }
       }
@@ -604,6 +620,10 @@ export async function resolveUniversalAudio(params: {
           durationSec: pipedData.duration,
           videoId,
         };
+        if (!params.forDownload) {
+          ingestToTelegram(pipedResult, cacheKey, title, effectiveArtist, videoId).catch(() => {});
+          return pipedResult;
+        }
         return await ingestToTelegram(pipedResult, cacheKey, title, effectiveArtist, videoId);
       }
     } catch {}
@@ -620,6 +640,10 @@ export async function resolveUniversalAudio(params: {
           artist,
           videoId,
         };
+        if (!params.forDownload) {
+          ingestToTelegram(ytResult, cacheKey, title, effectiveArtist, videoId).catch(() => {});
+          return ytResult;
+        }
         return await ingestToTelegram(ytResult, cacheKey, title, effectiveArtist, videoId);
       }
     } catch {}

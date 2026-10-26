@@ -57,6 +57,8 @@ export async function GET(req: NextRequest) {
     // Forward Range header for chunked streaming, unless doing a full offline download
     if (rangeHeader && !isDownload) {
       requestHeaders["Range"] = rangeHeader;
+    } else if (!isDownload) {
+      requestHeaders["Range"] = "bytes=0-";
     }
 
     let fetchUrl = url;

@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { 
   BackgroundScope, 
+  BackgroundFitMode,
   getCustomBackground, 
   saveCustomBackground, 
   removeCustomBackground, 
@@ -29,7 +30,7 @@ import {
 } from "@/services/theme/customBackgroundStorage";
 import { useToastStore } from "@/state/toastStore";
 
-type AspectRatioPreset = "9:16" | "3:4" | "16:9" | "1:1";
+type AspectRatioPreset = "mobile" | "9:16" | "3:4" | "16:9" | "1:1";
 
 export function CustomBackgroundModal() {
   const { addToast } = useToastStore();
@@ -43,18 +44,33 @@ export function CustomBackgroundModal() {
   const [opacity, setOpacity] = useState<number>(0.55);
   const [blur, setBlur] = useState<number>(0);
   const [hasDepth, setHasDepth] = useState<boolean>(true);
+  const [fitMode, setFitMode] = useState<BackgroundFitMode>("auto-fit");
 
   // Crop Mode state
   const [isCropping, setIsCropping] = useState<boolean>(false);
-  const [cropAspectRatio, setCropAspectRatio] = useState<AspectRatioPreset>("9:16");
+  const [cropAspectRatio, setCropAspectRatio] = useState<AspectRatioPreset>("mobile");
   const [zoom, setZoom] = useState<number>(1);
   const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const dragStartRef = useRef<{ x: number; y: number; panX: number; panY: number }>({ x: 0, y: 0, panX: 0, panY: 0 });
+  const [naturalDimensions, setNaturalDimensions] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cropFrameRef = useRef<HTMLDivElement>(null);
   const cropImgRef = useRef<HTMLImageElement>(null);
+
+  // Measure natural dimensions of uploaded image
+  useEffect(() => {
+    if (!rawUploadedUrl) return;
+    const img = new Image();
+    img.onload = () => {
+      setNaturalDimensions({
+        width: img.naturalWidth || 800,
+        height: img.naturalHeight || 600,
+      });
+    };
+    img.src = rawUploadedUrl;
+  }, [rawUploadedUrl]);
 
   // Listen for open events from anywhere (Library button or FloatingActionMenu)
   useEffect(() => {
@@ -85,12 +101,14 @@ export function CustomBackgroundModal() {
         setOpacity(typeof config.opacity === "number" ? config.opacity : 0.55);
         setBlur(typeof config.blur === "number" ? config.blur : 0);
         setHasDepth(config.hasDepth ?? true);
+        setFitMode(config.fitMode || "auto-fit");
       } else {
         setDataUrl("");
         setRawUploadedUrl("");
         setOpacity(0.55);
         setBlur(0);
         setHasDepth(true);
+        setFitMode("auto-fit");
       }
     })();
 
@@ -117,13 +135,34 @@ export function CustomBackgroundModal() {
       setZoom(1);
       setPan({ x: 0, y: 0 });
       setIsCropping(true);
-      addToast("حدد واقتص الجزء الذي تريده من صورتك ✂️");
+      addToast("حدد واقتص الجزء الذي تريده من صورتك بدقة ✂️");
     } catch (err: any) {
       addToast(err?.message || "تعذر قراءة ملف الصورة");
     } finally {
       setLoading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
+  };
+
+  const getCropFrameNumbers = (): { width: number; height: number } => {
+    if (cropAspectRatio === "mobile") {
+      if (typeof window !== "undefined") {
+        const vw = window.innerWidth;
+        const vh = Math.max(300, window.innerHeight - 206);
+        const ratio = vw / vh;
+        const h = 295;
+        const w = Math.round(h * ratio);
+        return {
+          width: Math.max(130, Math.min(260, w)),
+          height: h,
+        };
+      }
+      return { width: 165, height: 295 };
+    }
+    if (cropAspectRatio === "9:16") return { width: 170, height: 302 };
+    if (cropAspectRatio === "3:4") return { width: 210, height: 280 };
+    if (cropAspectRatio === "16:9") return { width: 300, height: 169 };
+    return { width: 240, height: 240 };
   };
 
   // Drag / Pan handlers for Cropping
@@ -151,38 +190,50 @@ export function CustomBackgroundModal() {
     setIsDragging(false);
   };
 
-  // Perform High-Resolution Crop based on user's visual frame
+  // Perform High-Resolution Crop based on user's visual frame with ZERO distortion
   const applyCrop = () => {
-    if (!cropFrameRef.current || !cropImgRef.current || !rawUploadedUrl) {
+    if (!rawUploadedUrl) {
       setIsCropping(false);
       return;
     }
 
-    const frameRect = cropFrameRef.current.getBoundingClientRect();
-    const imgRect = cropImgRef.current.getBoundingClientRect();
-
     const img = new Image();
     img.crossOrigin = "anonymous";
     img.onload = () => {
-      // Calculate normalized relative crop bounds
-      const relX = (frameRect.left - imgRect.left) / imgRect.width;
-      const relY = (frameRect.top - imgRect.top) / imgRect.height;
-      const relW = frameRect.width / imgRect.width;
-      const relH = frameRect.height / imgRect.height;
+      const srcW = img.naturalWidth || 1;
+      const srcH = img.naturalHeight || 1;
+      const frame = getCropFrameNumbers();
 
-      // Source coordinates on full-resolution image
-      const sx = Math.max(0, Math.round(relX * img.naturalWidth));
-      const sy = Math.max(0, Math.round(relY * img.naturalHeight));
-      const sWidth = Math.min(img.naturalWidth - sx, Math.round(relW * img.naturalWidth));
-      const sHeight = Math.min(img.naturalHeight - sy, Math.round(relH * img.naturalHeight));
+      const bScale = Math.max(frame.width / srcW, frame.height / srcH);
+      const cScale = bScale * zoom;
+      const dispW = Math.round(srcW * cScale);
+      const dispH = Math.round(srcH * cScale);
 
-      // Output canvas dimensions
-      let targetW = Math.min(2560, Math.max(1080, sWidth));
-      let targetH = Math.round(targetW * (frameRect.height / frameRect.width));
+      const mPanX = Math.max(0, (dispW - frame.width) / 2);
+      const mPanY = Math.max(0, (dispH - frame.height) / 2);
+      const cPanX = Math.max(-mPanX, Math.min(mPanX, pan.x));
+      const cPanY = Math.max(-mPanY, Math.min(mPanY, pan.y));
 
+      const iLeft = Math.round((frame.width - dispW) / 2 + cPanX);
+      const iTop = Math.round((frame.height - dispH) / 2 + cPanY);
+
+      // Map display frame [0, 0, frame.width, frame.height] to source image coordinates
+      const invScale = srcW / dispW;
+      const sx = Math.max(0, Math.min(srcW - 1, Math.round(-iLeft * invScale)));
+      const sy = Math.max(0, Math.min(srcH - 1, Math.round(-iTop * invScale)));
+      const sWidth = Math.min(srcW - sx, Math.round(frame.width * invScale));
+      const sHeight = Math.min(srcH - sy, Math.round(frame.height * invScale));
+
+      if (sWidth <= 0 || sHeight <= 0) {
+        setDataUrl(rawUploadedUrl);
+        setIsCropping(false);
+        return;
+      }
+
+      // Draw onto 1:1 pixel exact canvas - zero stretch, 100% native camera quality
       const canvas = document.createElement("canvas");
-      canvas.width = targetW;
-      canvas.height = targetH;
+      canvas.width = sWidth;
+      canvas.height = sHeight;
       const ctx = canvas.getContext("2d");
       if (!ctx) {
         setDataUrl(rawUploadedUrl);
@@ -192,18 +243,18 @@ export function CustomBackgroundModal() {
 
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = "high";
-      ctx.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, targetW, targetH);
+      ctx.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, sWidth, sHeight);
 
       try {
-        const croppedUrl = canvas.toDataURL("image/webp", 0.92);
+        const croppedUrl = canvas.toDataURL("image/webp", 0.98);
         setDataUrl(croppedUrl);
         setIsCropping(false);
-        addToast("تم اقتصاص الجزء بنجاح! ✨");
+        addToast("تم اقتصاص الجزء بنجاح بأعلى جودة وبدون أي مط! ✨");
       } catch {
-        const fallback = canvas.toDataURL("image/jpeg", 0.92);
+        const fallback = canvas.toDataURL("image/jpeg", 0.98);
         setDataUrl(fallback);
         setIsCropping(false);
-        addToast("تم اقتصاص الجزء بنجاح! ✨");
+        addToast("تم اقتصاص الجزء بنجاح بأعلى جودة وبدون أي مط! ✨");
       }
     };
     img.src = rawUploadedUrl;
@@ -223,6 +274,7 @@ export function CustomBackgroundModal() {
         opacity,
         blur,
         hasDepth,
+        fitMode,
       });
 
       addToast(
@@ -268,6 +320,7 @@ export function CustomBackgroundModal() {
         opacity,
         blur,
         hasDepth,
+        fitMode,
       });
       addToast(
         otherScope === "global"
@@ -280,6 +333,22 @@ export function CustomBackgroundModal() {
   };
 
   if (!isOpen) return null;
+
+  const frameDim = getCropFrameNumbers();
+  const natW = naturalDimensions.width || 800;
+  const natH = naturalDimensions.height || 600;
+  const baseScale = Math.max(frameDim.width / natW, frameDim.height / natH);
+  const currentScale = baseScale * zoom;
+  const displayW = Math.round(natW * currentScale);
+  const displayH = Math.round(natH * currentScale);
+
+  const maxPanX = Math.max(0, (displayW - frameDim.width) / 2);
+  const maxPanY = Math.max(0, (displayH - frameDim.height) / 2);
+  const clampedPanX = Math.max(-maxPanX, Math.min(maxPanX, pan.x));
+  const clampedPanY = Math.max(-maxPanY, Math.min(maxPanY, pan.y));
+
+  const currentImgLeft = Math.round((frameDim.width - displayW) / 2 + clampedPanX);
+  const currentImgTop = Math.round((frameDim.height - displayH) / 2 + clampedPanY);
 
   return (
     <AnimatePresence>
@@ -319,7 +388,7 @@ export function CustomBackgroundModal() {
                 </h3>
                 <p className="text-xs text-gray-400">
                   {isCropping 
-                    ? "اسحب وحرّك الصورة باصبعك لاختيار الجزء الذي تريده" 
+                    ? "اسحب وحرّك الصورة باصبعك لاختيار الجزء الذي تريده بدقة وبدون أي مط" 
                     : "اختر صورتك المفضلة وتحكّم في التباين والعمق"}
                 </p>
               </div>
@@ -341,9 +410,9 @@ export function CustomBackgroundModal() {
           {isCropping && rawUploadedUrl ? (
             <div className="flex-1 flex flex-col overflow-hidden py-3 space-y-3">
               {/* Aspect Ratio Presets */}
-              <div className="flex items-center justify-center gap-2 shrink-0">
-                <span className="text-[11px] text-gray-400 font-bold ml-1">الأبعاد:</span>
-                {(["9:16", "3:4", "16:9", "1:1"] as AspectRatioPreset[]).map((preset) => (
+              <div className="flex items-center justify-start sm:justify-center gap-1.5 overflow-x-auto pb-1 shrink-0 no-scrollbar">
+                <span className="text-[11px] text-gray-400 font-bold ml-1 shrink-0">الأبعاد:</span>
+                {(["mobile", "9:16", "3:4", "16:9", "1:1"] as AspectRatioPreset[]).map((preset) => (
                   <button
                     key={preset}
                     type="button"
@@ -351,13 +420,21 @@ export function CustomBackgroundModal() {
                       setCropAspectRatio(preset);
                       setPan({ x: 0, y: 0 });
                     }}
-                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all ${
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all shrink-0 flex items-center gap-1 ${
                       cropAspectRatio === preset
                         ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/30"
                         : "bg-white/5 text-gray-400 hover:text-white border border-white/5"
                     }`}
                   >
-                    {preset === "9:16" ? "📱 هاتف (9:16)" : preset === "3:4" ? "🖼️ عمودي (3:4)" : preset === "16:9" ? "🖥️ شاشة (16:9)" : "🔲 مربع (1:1)"}
+                    {preset === "mobile"
+                      ? "📱 شاشة هاتفي (تلقائي)"
+                      : preset === "9:16"
+                      ? "هاتف (9:16)"
+                      : preset === "3:4"
+                      ? "عمودي (3:4)"
+                      : preset === "16:9"
+                      ? "أفقي (16:9)"
+                      : "مربع (1:1)"}
                   </button>
                 ))}
               </div>
@@ -367,10 +444,10 @@ export function CustomBackgroundModal() {
                 {/* Crop Viewport Window */}
                 <div
                   ref={cropFrameRef}
-                  className="relative overflow-hidden border-2 border-indigo-400/80 shadow-2xl rounded-2xl cursor-grab active:cursor-grabbing touch-none select-none"
+                  className="relative overflow-hidden border-2 border-indigo-400/80 shadow-2xl rounded-2xl cursor-grab active:cursor-grabbing touch-none select-none transition-all duration-150"
                   style={{
-                    width: cropAspectRatio === "9:16" ? "170px" : cropAspectRatio === "3:4" ? "210px" : cropAspectRatio === "16:9" ? "300px" : "240px",
-                    height: cropAspectRatio === "9:16" ? "302px" : cropAspectRatio === "3:4" ? "280px" : cropAspectRatio === "16:9" ? "169px" : "240px",
+                    width: `${frameDim.width}px`,
+                    height: `${frameDim.height}px`,
                     boxShadow: "0 0 0 9999px rgba(0, 0, 0, 0.75)",
                   }}
                   onMouseDown={(e) => handlePointerDown(e.clientX, e.clientY)}
@@ -386,19 +463,20 @@ export function CustomBackgroundModal() {
                   }}
                   onTouchEnd={handlePointerUp}
                 >
-                  {/* Draggable/Pannable Image */}
+                  {/* Draggable/Pannable Image with ZERO distortion */}
                   <img
                     ref={cropImgRef}
                     src={rawUploadedUrl}
                     alt="قص الصورة"
                     draggable={false}
-                    className="absolute max-w-none pointer-events-none select-none transition-transform duration-75"
+                    className="absolute pointer-events-none select-none max-w-none max-h-none"
                     style={{
-                      transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-                      transformOrigin: "center center",
-                      width: "100%",
-                      height: "100%",
-                      objectFit: "contain",
+                      left: `${currentImgLeft}px`,
+                      top: `${currentImgTop}px`,
+                      width: `${displayW}px`,
+                      height: `${displayH}px`,
+                      maxWidth: "none",
+                      maxHeight: "none",
                     }}
                   />
 
@@ -453,21 +531,35 @@ export function CustomBackgroundModal() {
               </div>
 
               {/* Crop Actions Footer */}
-              <div className="flex items-center gap-2 pt-2 border-t border-white/10 shrink-0">
+              <div className="flex items-center gap-2 pt-2 border-t border-white/10 shrink-0 flex-wrap">
                 <button
                   type="button"
                   onClick={() => setIsCropping(false)}
-                  className="px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-xs font-bold text-gray-300"
+                  className="px-3 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-xs font-bold text-gray-300"
                 >
                   إلغاء
                 </button>
                 <button
                   type="button"
+                  onClick={() => {
+                    setDataUrl(rawUploadedUrl);
+                    setFitMode("auto-fit");
+                    setIsCropping(false);
+                    addToast("تم تطبيق الصورة كاملة بدون قص وتعديل القياس تلقائياً! 📱✨");
+                  }}
+                  className="px-3 py-2.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 text-xs font-black transition-all flex items-center gap-1.5"
+                  title="استخدام الصورة كاملة تلقائياً بدون قص مع ملاءمة أبعاد شاشة الهاتف"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>الصورة كاملة تلقائياً</span>
+                </button>
+                <button
+                  type="button"
                   onClick={applyCrop}
-                  className="flex-1 py-2.5 px-4 rounded-xl text-xs font-black bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white shadow-lg shadow-indigo-500/25 flex items-center justify-center gap-2 active:scale-95 transition-all"
+                  className="flex-1 py-2.5 px-4 rounded-xl text-xs font-black bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white shadow-lg shadow-indigo-500/25 flex items-center justify-center gap-2 active:scale-95 transition-all min-w-[130px]"
                 >
                   <Check className="w-4 h-4 stroke-[2.5]" />
-                  <span>تأكيد واقتصاص الجزء المختار</span>
+                  <span>تأكيد القص</span>
                 </button>
               </div>
             </div>
@@ -663,6 +755,45 @@ export function CustomBackgroundModal() {
                         <span>حادة 100%</span>
                         <span>تمويه ناعم</span>
                         <span>تمويه فني</span>
+                      </div>
+                    </div>
+
+                    {/* Fit Mode Selector (Auto-fit vs Cover) */}
+                    <div className="p-3.5 rounded-2xl bg-white/5 border border-white/10 space-y-2.5">
+                      <div className="flex items-center justify-between text-xs font-bold">
+                        <span className="flex items-center gap-1.5 text-gray-300">
+                          <Sparkles className="w-4 h-4 text-indigo-400" /> قياس الصورة وحساب الشاشة
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setFitMode("auto-fit")}
+                          className={`p-2.5 rounded-xl border text-xs font-bold flex flex-col items-center gap-1 transition-all ${
+                            fitMode === "auto-fit"
+                              ? "bg-indigo-600/25 border-indigo-500 text-white shadow-lg shadow-indigo-600/20"
+                              : "bg-white/5 border-white/10 text-gray-400 hover:text-white"
+                          }`}
+                        >
+                          <span className="font-black text-indigo-300 text-xs">📱 احتواء ذكي (الصورة كاملة)</span>
+                          <span className="text-[10px] text-gray-400 text-center leading-tight">
+                            تحسب الشاشة بدون مط وتترك مساحة للناف بار والمشغل
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setFitMode("cover")}
+                          className={`p-2.5 rounded-xl border text-xs font-bold flex flex-col items-center gap-1 transition-all ${
+                            fitMode === "cover"
+                              ? "bg-indigo-600/25 border-indigo-500 text-white shadow-lg shadow-indigo-600/20"
+                              : "bg-white/5 border-white/10 text-gray-400 hover:text-white"
+                          }`}
+                        >
+                          <span className="font-black text-indigo-300 text-xs">🖼️ ملء الشاشة (Cover)</span>
+                          <span className="text-[10px] text-gray-400 text-center leading-tight">
+                            تمدد كامل لكافة حواف الشاشة مع قص الأطراف الزائدة
+                          </span>
+                        </button>
                       </div>
                     </div>
 

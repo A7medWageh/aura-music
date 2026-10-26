@@ -80,6 +80,12 @@ const ARTIST_NAME_MAP: Record<string, string> = {
   "kalthoum": "ام كلثوم",
   "abdel halim hafez": "عبد الحليم حافظ",
   "abdel halim": "عبد الحليم حافظ",
+  "jannat": "جنات",
+  "janat": "جنات",
+  "wael jassar": "وائل جسار",
+  "wael gassar": "وائل جسار",
+  "hamada majrashi": "حماده مجرشي",
+  "hamada magrashi": "حماده مجرشي",
 };
 
 // Common transliterated song titles
@@ -425,9 +431,12 @@ export async function resolveAlbumatyStream(title: string, artist: string): Prom
                   console.log(`[Albumaty] Rejecting search candidate id=${cand.id} (wrong artist: "${singerNorm}" vs target "${normTargetArtist}")`);
                   continue;
                 }
+              } else {
+                continue;
               }
             } catch {
-              // If page probe fails, proceed
+              console.warn(`[Albumaty] Artist verification timed out for candidate id=${cand.id}, skipping`);
+              continue;
             }
           }
 
