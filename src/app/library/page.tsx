@@ -80,7 +80,7 @@ let cachedLibraryArtists: ArtistFolder[] = [];
 let cachedLibraryStats = { sizeMB: 0, count: 0 };
 
 export default function LibraryPage() {
-  const { playNow, enqueueSongs } = usePlayer();
+  const { playNow, enqueueSongs, setQueue } = usePlayer();
   const [artists, setArtists] = useState<ArtistFolder[]>(() => cachedLibraryArtists);
   
   // Navigation State
@@ -246,14 +246,14 @@ export default function LibraryPage() {
     setVaultPassword("");
   };
 
-  const playList = (songs: Song[]) => {
+  const playList = (songs: Song[], startIndex = 0) => {
     const ready = songs.filter(s => s.audioReady);
     if (!ready.length) {
       showToast("لا توجد أغانٍ مكتملة التحميل في هذه القائمة للاستماع أوفلاين");
       return;
     }
-    playNow(ready[0]);
-    if (ready.length > 1) enqueueSongs(ready.slice(1));
+    const idx = Math.max(0, Math.min(startIndex, ready.length - 1));
+    setQueue(ready as any, idx);
   };
 
   const currentArtistData = artists.find(a => a.name === openArtist);
@@ -391,7 +391,8 @@ export default function LibraryPage() {
                     showToast("لم يكتمل تنزيل هذه الأغنية بعد. اتصل بالإنترنت لتحميلها للاستماع أوفلاين.");
                     return;
                   }
-                  playNow(song);
+                  // Set full album queue starting from this track so it advances automatically
+                  setQueue(currentAlbumData.songs as any, i);
                 }}
                 onDelete={(e: any) => handleDeleteSong(e, song.songId)}
                 onToggleHide={(e: any) => handleToggleHide(e, song)}
@@ -460,7 +461,7 @@ export default function LibraryPage() {
                          showToast("لم يكتمل تنزيل هذه الأغنية بعد. اتصل بالإنترنت لتحميلها للاستماع أوفلاين.");
                          return;
                        }
-                       playNow(song);
+                       setQueue(currentArtistData.singles as any, i);
                      }}
                      onDelete={(e: any) => handleDeleteSong(e, song.songId)}
                      onToggleHide={(e: any) => handleToggleHide(e, song)}

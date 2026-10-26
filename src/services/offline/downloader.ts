@@ -1,4 +1,4 @@
-import { saveSongMeta, storeAudioBlob, storeLyrics, getAudioBlob, getAllOfflineSongs, fetchImageAsDataUrl } from "@/offline/indexedDbCache";
+import { saveSongMeta, storeAudioBlob, storeLyrics, getAudioBlob, getAllOfflineSongs, fetchImageAsDataUrl, detectAudioMimeType } from "@/offline/indexedDbCache";
 import { startJob, updateJob, finishJob, setJobController, isJobPaused } from "@/state/downloadStore";
 import { toAbsoluteApiUrl } from "@/utils/apiBase";
 
@@ -249,7 +249,12 @@ async function downloadAudioBlob(
           updateJob(jobId, { progressBytes: receivedBytes, totalBytes: receivedBytes });
         }
 
-        const mimeType = res.headers.get("content-type") || "audio/mpeg";
+        let mimeType = res.headers.get("content-type");
+        if (chunks[0]) {
+          mimeType = detectAudioMimeType(chunks[0], mimeType || "audio/mp4");
+        } else if (!mimeType || mimeType === "application/octet-stream") {
+          mimeType = "audio/mp4";
+        }
         blob = new Blob(chunks as any, { type: mimeType });
         chunks.length = 0; // Release chunk references immediately to free memory
       } else {

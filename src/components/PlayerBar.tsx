@@ -552,31 +552,14 @@ function FullPlayer({
   const lyricsContainerRef = useRef<HTMLDivElement>(null);
   const currentTimeMs = state.currentTime * 1000;
 
-  // When only plain lyrics exist, spread the lines across the track duration so
-  // the words keep scrolling with the singer (approximate sync fallback).
-  // Lines are weighted by how much there is to sing, and the window starts after
-  // the intro and stops before the outro — an even split runs ahead of the vocal.
+  // Only highlight and auto-scroll when verified timecoded synced lyrics exist.
+  // When only plain lyrics exist, display them in full readable format instead of erratic linear math drift.
   const effectiveSynced = useMemo(() => {
-    if (syncedLyrics && syncedLyrics.length > 0) return syncedLyrics;
-    if (!lyrics || !state.duration || state.duration < 40) return null;
-    if (/لم نتمكن من العثور|حدث خطأ/.test(lyrics)) return null;
-    const lines = lyrics
-      .split("\n")
-      .map((l) => l.trim())
-      .filter((l) => l.length > 1);
-    if (lines.length < 4) return null;
-    const totalMs = state.duration * 1000;
-    const startMs = totalMs * 0.14;
-    const spanMs = totalMs * 0.82;
-    const weights = lines.map((l) => Math.max(6, l.replace(/\s/g, "").length));
-    const totalWeight = weights.reduce((a, b) => a + b, 0);
-    let acc = 0;
-    return lines.map((text, i) => {
-      const timeMs = startMs + ((acc + weights[i] / 2) / totalWeight) * spanMs;
-      acc += weights[i];
-      return { timeMs: Math.floor(timeMs), text };
-    });
-  }, [syncedLyrics, lyrics, state.duration]);
+    if (syncedLyrics && Array.isArray(syncedLyrics) && syncedLyrics.length > 0) {
+      return syncedLyrics;
+    }
+    return null;
+  }, [syncedLyrics]);
 
   const activeLineIndex = useMemo(() => {
     if (!effectiveSynced) return -1;

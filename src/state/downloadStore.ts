@@ -151,9 +151,47 @@ export function setJobController(id: string, ctrl: AbortController) {
 export function cancelJob(id: string) {
   const ctrl = abortControllers.get(id);
   if (ctrl) {
-    ctrl.abort();
+    try { ctrl.abort(); } catch {}
   }
-  finishJob(id, false, true);
+  abortControllers.delete(id);
+  const job = jobs.get(id);
+  if (job) {
+    jobs.set(id, { ...job, status: "cancelled" });
+  }
+  const remainingActive = Array.from(jobs.values()).some(j => j.id !== id && j.status === "downloading");
+  if (!remainingActive) {
+    try { stopBackgroundKeepAlive(); } catch {}
+  }
+  notify(true);
+  notifyLibraryUpdated({ type: "job-finished", id, success: false, cancelled: true });
+}
+
+export function deleteJob(id: string) {
+  const ctrl = abortControllers.get(id);
+  if (ctrl) {
+    try { ctrl.abort(); } catch {}
+    abortControllers.delete(id);
+  }
+  jobs.delete(id);
+  const remainingActive = Array.from(jobs.values()).some(j => j.status === "downloading");
+  if (!remainingActive) {
+    try { stopBackgroundKeepAlive(); } catch {}
+  }
+  notify(true);
+}
+
+export function clearAllJobs() {
+  // Abort any ongoing downloads
+  abortControllers.forEach((ctrl) => {
+    try { ctrl.abort(); } catch {}
+  });
+  abortControllers.clear();
+  jobs.clear();
+  try { stopBackgroundKeepAlive(); } catch {}
+  if (typeof window !== "undefined") {
+    try { localStorage.removeItem("aura-offline-jobs"); } catch {}
+  }
+  notify(true);
 }
 
 export function pauseJob(id: string) {

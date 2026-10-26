@@ -61,6 +61,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const isPlayingRef = useRef(state.isPlaying);
   const isLoadingNewSongRef = useRef(false); // true while fetching stream URL, prevents onPause from clearing isPlaying
   const gestureResumeCleanupRef = useRef<(() => void) | null>(null); // pending "resume on next gesture" listeners
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const nextPreloadedRef = useRef<{ songId: string; url: string; isBlob: boolean } | null>(null);
+  const lastPreloadRef = useRef<string | null>(null);
 
   const currentSong = useMemo(
     () => state.queue.find((song) => song.songId === state.currentSongId) ?? null,
@@ -177,38 +181,50 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   const next = () => {
     primeAudioElement();
-    setState((prev) => {
-      if (!prev.queue.length || !prev.currentSongId) return prev;
-      const index = prev.queue.findIndex((song) => song.songId === prev.currentSongId);
-      const nextIndex = prev.shuffle
-        ? Math.floor(Math.random() * prev.queue.length)
-        : index >= 0
-          ? (index + 1) % prev.queue.length
-          : 0;
-      return { 
-        ...prev, 
-        currentSongId: prev.queue[nextIndex].songId, 
-        isPlaying: true,
-        currentTime: 0,
-        duration: 0
-      };
-    });
+    const currentState = stateRef.current;
+    if (!currentState.queue.length || !currentState.currentSongId) return;
+    const index = currentState.queue.findIndex((song) => song.songId === currentState.currentSongId);
+    const nextIndex = currentState.shuffle
+      ? Math.floor(Math.random() * currentState.queue.length)
+      : index >= 0
+        ? (index + 1) % currentState.queue.length
+        : 0;
+    const nextSong = currentState.queue[nextIndex];
+    if (!nextSong) return;
+
+    const player = audioRef.current;
+    if (player && nextPreloadedRef.current && nextPreloadedRef.current.songId === nextSong.songId) {
+      player.src = nextPreloadedRef.current.url;
+      player.load();
+      player.play().catch(() => {});
+      nextPreloadedRef.current = null;
+    }
+
+    setState((prev) => ({ 
+      ...prev, 
+      currentSongId: nextSong.songId, 
+      isPlaying: true,
+      currentTime: 0,
+      duration: 0
+    }));
   };
 
   const prev = () => {
     primeAudioElement();
-    setState((prevState) => {
-      if (!prevState.queue.length || !prevState.currentSongId) return prevState;
-      const index = prevState.queue.findIndex((song) => song.songId === prevState.currentSongId);
-      const prevIndex = index <= 0 ? prevState.queue.length - 1 : index - 1;
-      return { 
-        ...prevState, 
-        currentSongId: prevState.queue[prevIndex].songId, 
-        isPlaying: true,
-        currentTime: 0,
-        duration: 0
-      };
-    });
+    const currentState = stateRef.current;
+    if (!currentState.queue.length || !currentState.currentSongId) return;
+    const index = currentState.queue.findIndex((song) => song.songId === currentState.currentSongId);
+    const prevIndex = index <= 0 ? currentState.queue.length - 1 : index - 1;
+    const prevSong = currentState.queue[prevIndex];
+    if (!prevSong) return;
+
+    setState((prevState) => ({ 
+      ...prevState, 
+      currentSongId: prevSong.songId, 
+      isPlaying: true,
+      currentTime: 0,
+      duration: 0
+    }));
   };
 
   const togglePlay = () => {
@@ -550,11 +566,49 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
 
 
-  const preloadNext = (currentId: string, queue: QueueSong[]) => {
-    // Preloading disabled to save bandwidth
+  const preloadNext = async (currentId: string, queue: QueueSong[]) => {
+    if (!queue || queue.length <= 1 || !currentId) return;
+    const currentIndex = queue.findIndex(s => s.songId === currentId);
+    if (currentIndex < 0) return;
+    const nextIndex = (currentIndex + 1) % queue.length;
+    const nextSong = queue[nextIndex];
+    if (!nextSong || nextPreloadedRef.current?.songId === nextSong.songId) return;
+
+    try {
+      // 1. Check offline storage first (instant blob URL)
+      let cachedBlob = await getAudioBlob(nextSong.songId);
+      if (!cachedBlob && nextSong.youtubeVideoId) {
+        cachedBlob = await getAudioBlob(nextSong.youtubeVideoId);
+      }
+      if (cachedBlob) {
+        const url = URL.createObjectURL(cachedBlob);
+        nextPreloadedRef.current = { songId: nextSong.songId, url, isBlob: true };
+        console.log(`[Player] Next track "${nextSong.title}" preloaded from offline cache`);
+        return;
+      }
+
+      // 2. Pre-resolve stream URL if online
+      if (typeof navigator !== "undefined" && navigator.onLine) {
+        const params = new URLSearchParams();
+        const vid = nextSong.youtubeVideoId || nextSong.songId || "";
+        if (vid && /^[a-zA-Z0-9_-]{11}$/.test(vid)) params.set("videoId", vid);
+        if (nextSong.title) params.set("title", nextSong.title);
+        if (nextSong.artist) params.set("artist", nextSong.artist);
+        params.set("resolveOnly", "true");
+
+        const res = await fetch(toAbsoluteApiUrl(`/api/ytdownload?${params.toString()}`));
+        if (res.ok) {
+          const data = await res.json();
+          if (data.url) {
+            nextPreloadedRef.current = { songId: nextSong.songId, url: data.url, isBlob: false };
+            console.log(`[Player] Next track "${nextSong.title}" stream URL pre-resolved`);
+          }
+        }
+      }
+    } catch {}
   };
 
-  // ─── Media Session API (Lock Screen Controls) ─────────────────────
+  // ─── Media Session API (Lock Screen & Bluetooth Headset Remote Control) ─────
   useEffect(() => {
     if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
     const song = currentSong;
@@ -587,11 +641,38 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
 
-    navigator.mediaSession.setActionHandler("play",          () => { if (audioRef.current) audioRef.current.play().catch(() => {}); setState(p => ({ ...p, isPlaying: true })); });
-    navigator.mediaSession.setActionHandler("pause",         () => { audioRef.current?.pause(); setState(p => ({ ...p, isPlaying: false })); });
-    navigator.mediaSession.setActionHandler("nexttrack",     () => next());
+    navigator.mediaSession.setActionHandler("play", () => {
+      const player = audioRef.current;
+      if (!player) return;
+      if (audioCtxRef.current && audioCtxRef.current.state === "suspended") {
+        audioCtxRef.current.resume().catch(() => {});
+      }
+      const p = player.play();
+      if (p !== undefined) {
+        p.then(() => {
+          setState(prev => ({ ...prev, isPlaying: true }));
+        }).catch(err => {
+          console.warn("[MediaSession] play() rejected:", err);
+        });
+      } else {
+        setState(prev => ({ ...prev, isPlaying: true }));
+      }
+    });
+
+    navigator.mediaSession.setActionHandler("pause", () => {
+      const player = audioRef.current;
+      if (player) {
+        player.pause();
+      }
+      setState(prev => ({ ...prev, isPlaying: false }));
+    });
+
+    navigator.mediaSession.setActionHandler("nexttrack", () => next());
     navigator.mediaSession.setActionHandler("previoustrack", () => prev());
-    navigator.mediaSession.setActionHandler("stop",          () => { audioRef.current?.pause(); setState(p => ({ ...p, isPlaying: false })); });
+    navigator.mediaSession.setActionHandler("stop", () => {
+      audioRef.current?.pause();
+      setState(p => ({ ...p, isPlaying: false }));
+    });
     navigator.mediaSession.setActionHandler("seekto", (d) => {
       if (d.seekTime != null) seekTo(d.seekTime);
     });
@@ -609,7 +690,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         try { navigator.mediaSession.setActionHandler(a, null); } catch {}
       });
     };
-  }, []);  // Handlers call state setters — stable refs ok
+  }, []);
 
   useEffect(() => {
     const player = audioRef.current;
@@ -895,6 +976,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         lastTimeUpdateRef.current = now;
         setState((prev) => ({ ...prev, currentTime: player.currentTime || 0 }));
 
+        // Trigger preloading for next track once current track is underway
+        if (player.currentTime > 5 && lastPreloadRef.current !== stateRef.current.currentSongId && stateRef.current.currentSongId) {
+          lastPreloadRef.current = stateRef.current.currentSongId;
+          preloadNext(stateRef.current.currentSongId, stateRef.current.queue);
+        }
+
         // Real-time lock screen & Bluetooth position sync
         if (
           typeof navigator !== "undefined" &&
@@ -984,38 +1071,51 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   };
 
   const onEnded = () => {
-    setState((prev) => {
-      if (!prev.queue.length || !prev.currentSongId) return { ...prev, isPlaying: false };
-      
-      // Handle repeat "one"
-      if (prev.repeat === "one") {
-        if (audioRef.current) {
-          audioRef.current.currentTime = 0;
-          audioRef.current.play().catch(() => undefined);
-        }
-        return prev;
+    const currentState = stateRef.current;
+    if (!currentState.queue.length || !currentState.currentSongId) {
+      setState((prev) => ({ ...prev, isPlaying: false }));
+      return;
+    }
+
+    // Handle repeat "one"
+    if (currentState.repeat === "one") {
+      const player = audioRef.current;
+      if (player) {
+        player.currentTime = 0;
+        player.play().catch(() => undefined);
       }
-      
-      const currentIndex = prev.queue.findIndex((song) => song.songId === prev.currentSongId);
-      
-      // Handle queue end
-      if (currentIndex === prev.queue.length - 1 && prev.repeat === "off") {
-        return { ...prev, isPlaying: false };
-      }
-      
-      // Determine next index
-      const nextIndex = prev.shuffle
-        ? Math.floor(Math.random() * prev.queue.length)
-        : (currentIndex + 1) % prev.queue.length;
-        
-      return { 
-        ...prev, 
-        currentSongId: prev.queue[nextIndex]?.songId ?? null, 
-        isPlaying: true,
-        currentTime: 0,
-        duration: 0
-      };
-    });
+      return;
+    }
+
+    const currentIndex = currentState.queue.findIndex((song) => song.songId === currentState.currentSongId);
+    let nextIndex = 0;
+    if (currentState.shuffle) {
+      nextIndex = Math.floor(Math.random() * currentState.queue.length);
+    } else if (currentIndex >= 0) {
+      // Loop album / singles queue seamlessly so music never unexpectedly stops
+      nextIndex = (currentIndex + 1) % currentState.queue.length;
+    }
+
+    const nextSong = currentState.queue[nextIndex];
+    if (!nextSong) return;
+
+    // Fast synchronous media handoff to satisfy iOS & Android background lock screen policies
+    const player = audioRef.current;
+    if (player && nextPreloadedRef.current && nextPreloadedRef.current.songId === nextSong.songId) {
+      player.src = nextPreloadedRef.current.url;
+      player.load();
+      player.play().catch((e) => console.warn("[AutoAdvance] Fast handoff play error:", e));
+      nextPreloadedRef.current = null;
+    }
+
+    setState((prev) => ({
+      ...prev,
+      currentSongId: nextSong.songId,
+      isPlaying: true,
+      currentTime: 0,
+      duration: 0,
+      error: null
+    }));
   };
 
   const value: PlayerContextValue = {

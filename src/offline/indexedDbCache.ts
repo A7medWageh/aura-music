@@ -199,6 +199,49 @@ async function markAudioReady(songId: string): Promise<void> {
   });
 }
 
+/**
+ * Accurately detects audio container type from header magic bytes.
+ * Prevents WebKit & Blink from miscalculating M4A/AAC duration when served with audio/mpeg headers.
+ */
+export function detectAudioMimeType(buffer: ArrayBuffer | Uint8Array, fallback = "audio/mp4"): string {
+  if (!buffer || buffer.byteLength < 8) return fallback;
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer, 0, Math.min(64, buffer.byteLength));
+  
+  // MP4 / M4A: check for "ftyp" in first 16 bytes (usually at index 4)
+  for (let i = 0; i <= Math.min(12, bytes.length - 4); i++) {
+    if (bytes[i] === 0x66 && bytes[i + 1] === 0x74 && bytes[i + 2] === 0x79 && bytes[i + 3] === 0x70) {
+      return "audio/mp4";
+    }
+  }
+
+  // ID3 header (MP3)
+  if (bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33) {
+    return "audio/mpeg";
+  }
+
+  // MPEG sync frame (MP3)
+  if (bytes[0] === 0xFF && (bytes[1] & 0xE0) === 0xE0) {
+    return "audio/mpeg";
+  }
+
+  // OggS (Ogg / Opus)
+  if (bytes[0] === 0x4F && bytes[1] === 0x67 && bytes[2] === 0x67 && bytes[3] === 0x53) {
+    return "audio/ogg";
+  }
+
+  // fLaC
+  if (bytes[0] === 0x66 && bytes[1] === 0x4C && bytes[2] === 0x61 && bytes[3] === 0x43) {
+    return "audio/flac";
+  }
+
+  // RIFF WAVE
+  if (bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46) {
+    return "audio/wav";
+  }
+
+  return fallback;
+}
+
 /** Store audio blob after background download */
 export async function storeAudioBlob(songId: string, blob: Blob): Promise<void> {
   const db = await openOfflineDb();
@@ -207,6 +250,10 @@ export async function storeAudioBlob(songId: string, blob: Blob): Promise<void> 
     buffer = await blob.arrayBuffer();
   } catch {}
 
+  const finalMime = buffer 
+    ? detectAudioMimeType(buffer, blob.type || "audio/mp4")
+    : (blob.type || "audio/mp4");
+
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(AUDIO_STORE, "readwrite");
     if (buffer) {
@@ -214,12 +261,12 @@ export async function storeAudioBlob(songId: string, blob: Blob): Promise<void> 
       tx.objectStore(AUDIO_STORE).put({
         songId,
         buffer,
-        mimeType: blob.type || "audio/mpeg",
+        mimeType: finalMime,
         size: blob.size,
         savedAt: Date.now()
       });
     } else {
-      tx.objectStore(AUDIO_STORE).put({ songId, blob, savedAt: Date.now() });
+      tx.objectStore(AUDIO_STORE).put({ songId, blob, mimeType: finalMime, savedAt: Date.now() });
     }
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
@@ -239,9 +286,12 @@ export async function getAudioBlob(songId: string): Promise<Blob | null> {
     req.onerror = () => reject(req.error);
   });
   if (record) {
-    if (record.blob instanceof Blob) return record.blob;
     if (record.buffer instanceof ArrayBuffer) {
-      return new Blob([record.buffer], { type: record.mimeType || "audio/mpeg" });
+      const accurateType = detectAudioMimeType(record.buffer, record.mimeType || "audio/mp4");
+      return new Blob([record.buffer], { type: accurateType });
+    }
+    if (record.blob instanceof Blob) {
+      return record.blob;
     }
   }
   return null;

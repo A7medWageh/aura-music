@@ -89,7 +89,7 @@ function isAppAudioActive(): boolean {
   if (mainAudioIsPlaying) return true;
   if (typeof document !== "undefined") {
     const mainEl = document.querySelector("audio[data-main-player='true']") as HTMLAudioElement | null;
-    if (mainEl && (!mainEl.paused || (mainEl.currentTime > 0 && !mainEl.ended))) {
+    if (mainEl && (mainEl.src || !mainEl.paused || (mainEl.currentTime > 0 && !mainEl.ended))) {
       return true;
     }
   }
