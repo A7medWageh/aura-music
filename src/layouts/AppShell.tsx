@@ -79,7 +79,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           md:pr-[280px]
           pb-[calc(160px+env(safe-area-inset-bottom,0px))]
           md:pb-[100px]
-          min-h-screen flex flex-col
+          min-h-screen flex flex-col relative z-[1]
         `}>
           {/* Desktop header (hidden on mobile) */}
           <header className="hidden md:flex sticky top-0 z-20 items-center justify-between px-8 py-4 bg-[rgb(var(--surface))/80] backdrop-blur-md border-b border-white/5">

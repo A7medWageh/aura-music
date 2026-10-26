@@ -10,22 +10,26 @@ import {
   Image as ImageIcon, 
   Layers, 
   Sparkles, 
-  Eye, 
   Sun, 
   Sliders, 
   Globe, 
   Library,
-  Copy
+  Copy,
+  Crop,
+  RotateCcw,
+  ZoomIn,
+  Move
 } from "lucide-react";
 import { 
   BackgroundScope, 
-  CustomBackgroundConfig, 
   getCustomBackground, 
   saveCustomBackground, 
   removeCustomBackground, 
   processImageFile 
 } from "@/services/theme/customBackgroundStorage";
 import { useToastStore } from "@/state/toastStore";
+
+type AspectRatioPreset = "9:16" | "3:4" | "16:9" | "1:1";
 
 export function CustomBackgroundModal() {
   const { addToast } = useToastStore();
@@ -35,17 +39,29 @@ export function CustomBackgroundModal() {
 
   // Current scope settings
   const [dataUrl, setDataUrl] = useState<string>("");
+  const [rawUploadedUrl, setRawUploadedUrl] = useState<string>("");
   const [opacity, setOpacity] = useState<number>(0.55);
   const [blur, setBlur] = useState<number>(0);
   const [hasDepth, setHasDepth] = useState<boolean>(true);
 
+  // Crop Mode state
+  const [isCropping, setIsCropping] = useState<boolean>(false);
+  const [cropAspectRatio, setCropAspectRatio] = useState<AspectRatioPreset>("9:16");
+  const [zoom, setZoom] = useState<number>(1);
+  const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState<boolean>(false);
+  const dragStartRef = useRef<{ x: number; y: number; panX: number; panY: number }>({ x: 0, y: 0, panX: 0, panY: 0 });
+
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cropFrameRef = useRef<HTMLDivElement>(null);
+  const cropImgRef = useRef<HTMLImageElement>(null);
 
   // Listen for open events from anywhere (Library button or FloatingActionMenu)
   useEffect(() => {
     const handleOpen = (e: any) => {
       const targetScope = e.detail?.scope || "library";
       setScope(targetScope);
+      setIsCropping(false);
       setIsOpen(true);
     };
 
@@ -65,11 +81,13 @@ export function CustomBackgroundModal() {
       if (!isMounted) return;
       if (config) {
         setDataUrl(config.dataUrl || "");
+        setRawUploadedUrl(config.dataUrl || "");
         setOpacity(typeof config.opacity === "number" ? config.opacity : 0.55);
         setBlur(typeof config.blur === "number" ? config.blur : 0);
         setHasDepth(config.hasDepth ?? true);
       } else {
         setDataUrl("");
+        setRawUploadedUrl("");
         setOpacity(0.55);
         setBlur(0);
         setHasDepth(true);
@@ -81,7 +99,7 @@ export function CustomBackgroundModal() {
     };
   }, [isOpen, scope]);
 
-  // Handle file selection
+  // Handle file selection -> opens directly in interactive Crop Mode
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -94,14 +112,101 @@ export function CustomBackgroundModal() {
     setLoading(true);
     try {
       const processedUrl = await processImageFile(file);
-      setDataUrl(processedUrl);
-      addToast("تمت معالجة الصورة بأعلى دقة ✨");
+      setRawUploadedUrl(processedUrl);
+      // Reset crop params
+      setZoom(1);
+      setPan({ x: 0, y: 0 });
+      setIsCropping(true);
+      addToast("حدد واقتص الجزء الذي تريده من صورتك ✂️");
     } catch (err: any) {
-      addToast(err?.message || "تعذر معالجة الصورة");
+      addToast(err?.message || "تعذر قراءة ملف الصورة");
     } finally {
       setLoading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
+  };
+
+  // Drag / Pan handlers for Cropping
+  const handlePointerDown = (clientX: number, clientY: number) => {
+    setIsDragging(true);
+    dragStartRef.current = {
+      x: clientX,
+      y: clientY,
+      panX: pan.x,
+      panY: pan.y,
+    };
+  };
+
+  const handlePointerMove = (clientX: number, clientY: number) => {
+    if (!isDragging) return;
+    const dx = clientX - dragStartRef.current.x;
+    const dy = clientY - dragStartRef.current.y;
+    setPan({
+      x: dragStartRef.current.panX + dx,
+      y: dragStartRef.current.panY + dy,
+    });
+  };
+
+  const handlePointerUp = () => {
+    setIsDragging(false);
+  };
+
+  // Perform High-Resolution Crop based on user's visual frame
+  const applyCrop = () => {
+    if (!cropFrameRef.current || !cropImgRef.current || !rawUploadedUrl) {
+      setIsCropping(false);
+      return;
+    }
+
+    const frameRect = cropFrameRef.current.getBoundingClientRect();
+    const imgRect = cropImgRef.current.getBoundingClientRect();
+
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      // Calculate normalized relative crop bounds
+      const relX = (frameRect.left - imgRect.left) / imgRect.width;
+      const relY = (frameRect.top - imgRect.top) / imgRect.height;
+      const relW = frameRect.width / imgRect.width;
+      const relH = frameRect.height / imgRect.height;
+
+      // Source coordinates on full-resolution image
+      const sx = Math.max(0, Math.round(relX * img.naturalWidth));
+      const sy = Math.max(0, Math.round(relY * img.naturalHeight));
+      const sWidth = Math.min(img.naturalWidth - sx, Math.round(relW * img.naturalWidth));
+      const sHeight = Math.min(img.naturalHeight - sy, Math.round(relH * img.naturalHeight));
+
+      // Output canvas dimensions
+      let targetW = Math.min(2560, Math.max(1080, sWidth));
+      let targetH = Math.round(targetW * (frameRect.height / frameRect.width));
+
+      const canvas = document.createElement("canvas");
+      canvas.width = targetW;
+      canvas.height = targetH;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        setDataUrl(rawUploadedUrl);
+        setIsCropping(false);
+        return;
+      }
+
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, targetW, targetH);
+
+      try {
+        const croppedUrl = canvas.toDataURL("image/webp", 0.92);
+        setDataUrl(croppedUrl);
+        setIsCropping(false);
+        addToast("تم اقتصاص الجزء بنجاح! ✨");
+      } catch {
+        const fallback = canvas.toDataURL("image/jpeg", 0.92);
+        setDataUrl(fallback);
+        setIsCropping(false);
+        addToast("تم اقتصاص الجزء بنجاح! ✨");
+      }
+    };
+    img.src = rawUploadedUrl;
   };
 
   // Save current settings
@@ -143,6 +248,7 @@ export function CustomBackgroundModal() {
     try {
       await removeCustomBackground(scope);
       setDataUrl("");
+      setRawUploadedUrl("");
       addToast("تمت إزالة الخلفية والعودة للافتراضي 🧹");
       setIsOpen(false);
     } catch {
@@ -183,279 +289,465 @@ export function CustomBackgroundModal() {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          onClick={() => setIsOpen(false)}
-          className="absolute inset-0 bg-black/80 backdrop-blur-md"
+          onClick={() => {
+            if (isCropping) setIsCropping(false);
+            else setIsOpen(false);
+          }}
+          className="absolute inset-0 bg-black/85 backdrop-blur-md"
         />
 
-        {/* Modal Content */}
+        {/* Modal Window */}
         <motion.div
           initial={{ opacity: 0, scale: 0.95, y: 15 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.95, y: 15 }}
           transition={{ type: "spring", stiffness: 420, damping: 28 }}
-          className="relative w-full max-w-lg rounded-3xl bg-slate-950/90 border border-white/15 shadow-2xl p-5 sm:p-6 text-white overflow-hidden max-h-[92vh] flex flex-col"
+          className="relative w-full max-w-lg rounded-3xl bg-slate-950/95 border border-white/15 shadow-2xl p-4 sm:p-6 text-white overflow-hidden max-h-[94vh] flex flex-col"
           style={{
             boxShadow: "0 24px 64px rgba(0,0,0,0.85), 0 0 40px rgba(99,102,241,0.22)",
           }}
         >
           {/* Header */}
-          <div className="flex items-center justify-between pb-4 border-b border-white/10 shrink-0">
+          <div className="flex items-center justify-between pb-3 border-b border-white/10 shrink-0">
             <div className="flex items-center gap-2.5">
               <div className="w-10 h-10 rounded-2xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center border border-indigo-500/30">
-                <ImageIcon className="w-5 h-5" />
+                {isCropping ? <Crop className="w-5 h-5" /> : <ImageIcon className="w-5 h-5" />}
               </div>
               <div>
-                <h3 className="text-lg font-black tracking-wide">تخصيص صورة الخلفية</h3>
-                <p className="text-xs text-gray-400">اختر صورتك المفضلة وتحكّم في التباين والعمق</p>
+                <h3 className="text-lg font-black tracking-wide">
+                  {isCropping ? "تحديد واقتصاص الصورة" : "تخصيص صورة الخلفية"}
+                </h3>
+                <p className="text-xs text-gray-400">
+                  {isCropping 
+                    ? "اسحب وحرّك الصورة باصبعك لاختيار الجزء الذي تريده" 
+                    : "اختر صورتك المفضلة وتحكّم في التباين والعمق"}
+                </p>
               </div>
             </div>
             <button
-              onClick={() => setIsOpen(false)}
+              onClick={() => {
+                if (isCropping) setIsCropping(false);
+                else setIsOpen(false);
+              }}
               className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white flex items-center justify-center transition-colors"
             >
               <X className="w-4 h-4" />
             </button>
           </div>
 
-          {/* Scope Selector Tabs */}
-          <div className="flex p-1 bg-white/5 rounded-2xl my-4 border border-white/10 shrink-0">
-            <button
-              onClick={() => setScope("library")}
-              className={`flex-1 py-2 px-3 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-2 ${
-                scope === "library"
-                  ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/30"
-                  : "text-gray-400 hover:text-white"
-              }`}
-            >
-              <Library className="w-4 h-4" />
-              <span>خلفية المكتبة (الأوفلاين)</span>
-            </button>
-            <button
-              onClick={() => setScope("global")}
-              className={`flex-1 py-2 px-3 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-2 ${
-                scope === "global"
-                  ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/30"
-                  : "text-gray-400 hover:text-white"
-              }`}
-            >
-              <Globe className="w-4 h-4" />
-              <span>خلفية كل الصفحات (عامة)</span>
-            </button>
-          </div>
-
-          {/* Scrollable Body */}
-          <div className="flex-1 overflow-y-auto space-y-5 pr-1">
-            {/* Image Preview & Upload Box */}
-            <div className="relative">
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                onChange={handleFileChange}
-                className="hidden"
-              />
-
-              {dataUrl ? (
-                <div className="relative aspect-[16/9] w-full rounded-2xl overflow-hidden border border-white/20 group">
-                  {/* Preview Image with current Blur */}
-                  <img
-                    src={dataUrl}
-                    alt="معاينة الخلفية"
-                    className="w-full h-full object-cover transition-all duration-300"
-                    style={{
-                      filter: blur > 0 ? `blur(${blur * 0.4}px)` : undefined,
-                      transform: hasDepth ? "scale(1.04)" : undefined,
-                    }}
-                  />
-                  {/* Preview Scrim with current Opacity */}
-                  <div
-                    className="absolute inset-0 transition-colors duration-200"
-                    style={{
-                      background: `rgba(0,0,0,${opacity})`,
-                    }}
-                  />
-
-                  {/* Sample Mock Elements to show readability */}
-                  <div className="absolute inset-0 p-4 flex flex-col justify-between pointer-events-none">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-white/20 backdrop-blur-md">
-                        معاينة تناسق العناصر
-                      </span>
-                      <span className="text-xs font-bold text-indigo-300 flex items-center gap-1">
-                        <Sparkles className="w-3 h-3" /> جودة فائقة
-                      </span>
-                    </div>
-                    <div className="p-3 rounded-xl bg-black/40 backdrop-blur-md border border-white/10 flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-lg bg-indigo-500/40 flex items-center justify-center text-xs font-black">
-                        🎧
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-xs font-black truncate">اسم الأغنية أو الألبوم</p>
-                        <p className="text-[10px] text-gray-300">وضوح عالي جداً مع خلفيتك</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Change Image Button Overlay */}
+          {/* ═════════════════════════════════════════════════════════════ */}
+          {/* CROP MODE INTERFACE (Interactive Touch/Mouse Pan & Zoom)   */}
+          {/* ═════════════════════════════════════════════════════════════ */}
+          {isCropping && rawUploadedUrl ? (
+            <div className="flex-1 flex flex-col overflow-hidden py-3 space-y-3">
+              {/* Aspect Ratio Presets */}
+              <div className="flex items-center justify-center gap-2 shrink-0">
+                <span className="text-[11px] text-gray-400 font-bold ml-1">الأبعاد:</span>
+                {(["9:16", "3:4", "16:9", "1:1"] as AspectRatioPreset[]).map((preset) => (
                   <button
-                    onClick={() => fileInputRef.current?.click()}
-                    className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 text-xs font-black text-white backdrop-blur-sm"
-                  >
-                    <Upload className="w-4 h-4" />
-                    <span>تغيير الصورة</span>
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  className="w-full aspect-[16/9] rounded-2xl border-2 border-dashed border-indigo-500/40 hover:border-indigo-400 bg-indigo-500/5 hover:bg-indigo-500/10 flex flex-col items-center justify-center gap-3 transition-all group cursor-pointer"
-                >
-                  <div className="w-12 h-12 rounded-2xl bg-indigo-500/20 group-hover:bg-indigo-500/30 text-indigo-400 flex items-center justify-center transition-colors">
-                    <Upload className="w-6 h-6" />
-                  </div>
-                  <div className="text-center">
-                    <p className="text-sm font-black text-white group-hover:text-indigo-300 transition-colors">
-                      اضغط لاختيار صورة من جهازك
-                    </p>
-                    <p className="text-xs text-gray-400 mt-0.5">
-                      يدعم الصور عالية الدقة (JPG, PNG, WebP)
-                    </p>
-                  </div>
-                </button>
-              )}
-            </div>
-
-            {/* Adjustments (Only shown if image is selected) */}
-            {dataUrl && (
-              <div className="space-y-4 pt-2">
-                {/* Opacity / Dimming Slider */}
-                <div className="p-3.5 rounded-2xl bg-white/5 border border-white/10 space-y-2">
-                  <div className="flex items-center justify-between text-xs font-bold">
-                    <span className="flex items-center gap-1.5 text-gray-300">
-                      <Sun className="w-4 h-4 text-amber-400" /> تعتيم الخلفية (وضوح النصوص)
-                    </span>
-                    <span className="text-indigo-400 font-mono">{Math.round(opacity * 100)}%</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="0.2"
-                    max="0.85"
-                    step="0.05"
-                    value={opacity}
-                    onChange={(e) => setOpacity(parseFloat(e.target.value))}
-                    className="w-full accent-indigo-500 cursor-pointer"
-                  />
-                  <div className="flex justify-between text-[10px] text-gray-500">
-                    <span>صورة أفتح</span>
-                    <span>متوازن (موصى به)</span>
-                    <span>تعتيم أعلى</span>
-                  </div>
-                </div>
-
-                {/* Blur Slider */}
-                <div className="p-3.5 rounded-2xl bg-white/5 border border-white/10 space-y-2">
-                  <div className="flex items-center justify-between text-xs font-bold">
-                    <span className="flex items-center gap-1.5 text-gray-300">
-                      <Sliders className="w-4 h-4 text-cyan-400" /> تمويه الخلفية (Soft Blur)
-                    </span>
-                    <span className="text-cyan-400 font-mono">{blur}px</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="0"
-                    max="20"
-                    step="1"
-                    value={blur}
-                    onChange={(e) => setBlur(parseInt(e.target.value, 10))}
-                    className="w-full accent-cyan-500 cursor-pointer"
-                  />
-                  <div className="flex justify-between text-[10px] text-gray-500">
-                    <span>حادة 100%</span>
-                    <span>تمويه ناعم</span>
-                    <span>تمويه فني</span>
-                  </div>
-                </div>
-
-                {/* Depth / Parallax Toggle */}
-                <div 
-                  onClick={() => setHasDepth(!hasDepth)}
-                  className="p-3.5 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-between cursor-pointer hover:bg-white/10 transition-colors"
-                >
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-xl bg-purple-500/20 text-purple-400 flex items-center justify-center">
-                      <Layers className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <h4 className="text-xs font-black text-white">تأثير العمق ثلاثي الأبعاد (Parallax)</h4>
-                      <p className="text-[10px] text-gray-400">حركة سينمائية خفيفة مع السكرول تعطي إحساساً رائعاً بالعمق</p>
-                    </div>
-                  </div>
-                  <div
-                    className={`w-11 h-6 rounded-full transition-colors relative flex items-center px-1 ${
-                      hasDepth ? "bg-indigo-600" : "bg-white/20"
+                    key={preset}
+                    type="button"
+                    onClick={() => {
+                      setCropAspectRatio(preset);
+                      setPan({ x: 0, y: 0 });
+                    }}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all ${
+                      cropAspectRatio === preset
+                        ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/30"
+                        : "bg-white/5 text-gray-400 hover:text-white border border-white/5"
                     }`}
                   >
-                    <div
-                      className={`w-4 h-4 rounded-full bg-white shadow-md transition-transform ${
-                        hasDepth ? "translate-x-0" : "-translate-x-5"
-                      }`}
-                    />
+                    {preset === "9:16" ? "📱 هاتف (9:16)" : preset === "3:4" ? "🖼️ عمودي (3:4)" : preset === "16:9" ? "🖥️ شاشة (16:9)" : "🔲 مربع (1:1)"}
+                  </button>
+                ))}
+              </div>
+
+              {/* Crop Frame Box */}
+              <div className="flex-1 flex items-center justify-center relative overflow-hidden bg-black/60 rounded-2xl border border-white/10 min-h-[260px] max-h-[360px]">
+                {/* Crop Viewport Window */}
+                <div
+                  ref={cropFrameRef}
+                  className="relative overflow-hidden border-2 border-indigo-400/80 shadow-2xl rounded-2xl cursor-grab active:cursor-grabbing touch-none select-none"
+                  style={{
+                    width: cropAspectRatio === "9:16" ? "170px" : cropAspectRatio === "3:4" ? "210px" : cropAspectRatio === "16:9" ? "300px" : "240px",
+                    height: cropAspectRatio === "9:16" ? "302px" : cropAspectRatio === "3:4" ? "280px" : cropAspectRatio === "16:9" ? "169px" : "240px",
+                    boxShadow: "0 0 0 9999px rgba(0, 0, 0, 0.75)",
+                  }}
+                  onMouseDown={(e) => handlePointerDown(e.clientX, e.clientY)}
+                  onMouseMove={(e) => handlePointerMove(e.clientX, e.clientY)}
+                  onMouseUp={handlePointerUp}
+                  onTouchStart={(e) => {
+                    const touch = e.touches[0];
+                    if (touch) handlePointerDown(touch.clientX, touch.clientY);
+                  }}
+                  onTouchMove={(e) => {
+                    const touch = e.touches[0];
+                    if (touch) handlePointerMove(touch.clientX, touch.clientY);
+                  }}
+                  onTouchEnd={handlePointerUp}
+                >
+                  {/* Draggable/Pannable Image */}
+                  <img
+                    ref={cropImgRef}
+                    src={rawUploadedUrl}
+                    alt="قص الصورة"
+                    draggable={false}
+                    className="absolute max-w-none pointer-events-none select-none transition-transform duration-75"
+                    style={{
+                      transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                      transformOrigin: "center center",
+                      width: "100%",
+                      height: "100%",
+                      objectFit: "contain",
+                    }}
+                  />
+
+                  {/* Rule of Thirds Guide Grid */}
+                  <div className="absolute inset-0 pointer-events-none grid grid-cols-3 grid-rows-3 opacity-30 border border-white/20">
+                    <div className="border-r border-b border-white/30" />
+                    <div className="border-r border-b border-white/30" />
+                    <div className="border-b border-white/30" />
+                    <div className="border-r border-b border-white/30" />
+                    <div className="border-r border-b border-white/30" />
+                    <div className="border-b border-white/30" />
+                    <div className="border-r border-white/30" />
+                    <div className="border-r border-white/30" />
+                    <div />
+                  </div>
+
+                  {/* Drag hint overlay */}
+                  <div className="absolute bottom-2 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-full bg-black/60 backdrop-blur-md text-[10px] font-bold text-gray-300 pointer-events-none flex items-center gap-1">
+                    <Move className="w-2.5 h-2.5" />
+                    <span>اسحب للتحريك</span>
                   </div>
                 </div>
+              </div>
 
-                {/* Copy to other scope button */}
+              {/* Zoom Slider & Reset */}
+              <div className="flex items-center gap-3 p-2.5 rounded-xl bg-white/5 border border-white/10 shrink-0">
+                <ZoomIn className="w-4 h-4 text-indigo-400 shrink-0" />
+                <span className="text-[11px] text-gray-300 font-bold shrink-0">تكبير:</span>
+                <input
+                  type="range"
+                  min="1"
+                  max="3"
+                  step="0.05"
+                  value={zoom}
+                  onChange={(e) => setZoom(parseFloat(e.target.value))}
+                  className="flex-1 accent-indigo-500 cursor-pointer"
+                />
+                <span className="text-xs font-mono text-indigo-300 w-8 text-center shrink-0">
+                  {zoom.toFixed(1)}x
+                </span>
                 <button
                   type="button"
-                  onClick={handleApplyToBoth}
-                  className="w-full py-2 px-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-bold text-gray-300 hover:text-white flex items-center justify-center gap-2 transition-all"
+                  onClick={() => {
+                    setZoom(1);
+                    setPan({ x: 0, y: 0 });
+                  }}
+                  className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white transition-colors shrink-0"
+                  title="إعادة للمركز"
                 >
-                  <Copy className="w-3.5 h-3.5 text-indigo-400" />
-                  <span>
-                    {scope === "library"
-                      ? "تطبيق نفس هذه الصورة على كل صفحات التطبيق أيضاً"
-                      : "تطبيق نفس هذه الصورة على صفحة المكتبة أيضاً"}
-                  </span>
+                  <RotateCcw className="w-3.5 h-3.5" />
                 </button>
               </div>
-            )}
-          </div>
 
-          {/* Footer Actions */}
-          <div className="pt-4 border-t border-white/10 flex items-center gap-2 shrink-0 mt-2">
-            {dataUrl && (
-              <button
-                type="button"
-                onClick={handleRemove}
-                disabled={loading}
-                className="p-2.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 transition-colors"
-                title="إزالة الخلفية والعودة للافتراضي"
-              >
-                <Trash2 className="w-5 h-5" />
-              </button>
-            )}
+              {/* Crop Actions Footer */}
+              <div className="flex items-center gap-2 pt-2 border-t border-white/10 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setIsCropping(false)}
+                  className="px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-xs font-bold text-gray-300"
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="button"
+                  onClick={applyCrop}
+                  className="flex-1 py-2.5 px-4 rounded-xl text-xs font-black bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white shadow-lg shadow-indigo-500/25 flex items-center justify-center gap-2 active:scale-95 transition-all"
+                >
+                  <Check className="w-4 h-4 stroke-[2.5]" />
+                  <span>تأكيد واقتصاص الجزء المختار</span>
+                </button>
+              </div>
+            </div>
+          ) : (
+            /* ═════════════════════════════════════════════════════════════ */
+            /* STANDARD PREVIEW & SETTINGS VIEW                            */
+            /* ═════════════════════════════════════════════════════════════ */
+            <>
+              {/* Scope Selector Tabs */}
+              <div className="flex p-1 bg-white/5 rounded-2xl my-3 border border-white/10 shrink-0">
+                <button
+                  onClick={() => setScope("library")}
+                  className={`flex-1 py-2 px-3 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-2 ${
+                    scope === "library"
+                      ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/30"
+                      : "text-gray-400 hover:text-white"
+                  }`}
+                >
+                  <Library className="w-4 h-4" />
+                  <span>خلفية المكتبة (الأوفلاين)</span>
+                </button>
+                <button
+                  onClick={() => setScope("global")}
+                  className={`flex-1 py-2 px-3 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-2 ${
+                    scope === "global"
+                      ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/30"
+                      : "text-gray-400 hover:text-white"
+                  }`}
+                >
+                  <Globe className="w-4 h-4" />
+                  <span>خلفية كل الصفحات (عامة)</span>
+                </button>
+              </div>
 
-            <button
-              type="button"
-              onClick={() => setIsOpen(false)}
-              className="px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-xs font-bold text-gray-300 transition-colors"
-            >
-              إلغاء
-            </button>
+              {/* Scrollable Body */}
+              <div className="flex-1 overflow-y-auto space-y-4 pr-1">
+                {/* Image Preview & Upload Box */}
+                <div className="relative">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleFileChange}
+                    className="hidden"
+                  />
 
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={loading || !dataUrl}
-              className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-black flex items-center justify-center gap-2 shadow-lg transition-all ${
-                !dataUrl
-                  ? "bg-gray-700 text-gray-400 cursor-not-allowed opacity-50"
-                  : "bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white shadow-indigo-500/25 active:scale-95"
-              }`}
-            >
-              <Check className="w-4 h-4 stroke-[2.5]" />
-              <span>{loading ? "جارٍ الحفظ..." : "حفظ وتطبيق"}</span>
-            </button>
-          </div>
+                  {dataUrl ? (
+                    <div className="relative aspect-[16/9] w-full rounded-2xl overflow-hidden border border-white/20 group">
+                      {/* Preview Image with current Blur */}
+                      <img
+                        src={dataUrl}
+                        alt="معاينة الخلفية"
+                        className="w-full h-full object-cover transition-all duration-300"
+                        style={{
+                          filter: blur > 0 ? `blur(${blur * 0.4}px)` : undefined,
+                          transform: hasDepth ? "scale(1.04)" : undefined,
+                        }}
+                      />
+                      {/* Preview Scrim with current Opacity */}
+                      <div
+                        className="absolute inset-0 transition-colors duration-200"
+                        style={{
+                          background: `rgba(0,0,0,${opacity})`,
+                        }}
+                      />
+
+                      {/* Sample Mock Elements to show readability */}
+                      <div className="absolute inset-0 p-3 sm:p-4 flex flex-col justify-between pointer-events-none">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-white/20 backdrop-blur-md">
+                            معاينة تناسق العناصر
+                          </span>
+                          <span className="text-xs font-bold text-indigo-300 flex items-center gap-1">
+                            <Sparkles className="w-3 h-3" /> جودة فائقة
+                          </span>
+                        </div>
+                        <div className="p-2.5 rounded-xl bg-black/40 backdrop-blur-md border border-white/10 flex items-center gap-2.5">
+                          <div className="w-7 h-7 rounded-lg bg-indigo-500/40 flex items-center justify-center text-xs font-black">
+                            🎧
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs font-black truncate text-white drop-shadow-md">اسم الأغنية أو الفنان</p>
+                            <p className="text-[10px] text-gray-300 drop-shadow-sm">وضوح 100% فوق صورتك</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Hover action overlay: Change or Re-Crop */}
+                      <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3 backdrop-blur-sm">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (rawUploadedUrl) {
+                              setIsCropping(true);
+                            } else {
+                              setRawUploadedUrl(dataUrl);
+                              setIsCropping(true);
+                            }
+                          }}
+                          className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-black text-white flex items-center gap-1.5 shadow-lg active:scale-95 transition-all"
+                        >
+                          <Crop className="w-3.5 h-3.5" />
+                          <span>قص وتعديل التحديد</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => fileInputRef.current?.click()}
+                          className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-xs font-black text-white flex items-center gap-1.5 active:scale-95 transition-all"
+                        >
+                          <Upload className="w-3.5 h-3.5" />
+                          <span>صورة جديدة</span>
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => fileInputRef.current?.click()}
+                      className="w-full aspect-[16/9] rounded-2xl border-2 border-dashed border-indigo-500/40 hover:border-indigo-400 bg-indigo-500/5 hover:bg-indigo-500/10 flex flex-col items-center justify-center gap-3 transition-all group cursor-pointer"
+                    >
+                      <div className="w-12 h-12 rounded-2xl bg-indigo-500/20 group-hover:bg-indigo-500/30 text-indigo-400 flex items-center justify-center transition-colors">
+                        <Upload className="w-6 h-6" />
+                      </div>
+                      <div className="text-center">
+                        <p className="text-sm font-black text-white group-hover:text-indigo-300 transition-colors">
+                          اضغط لاختيار صورة من جهازك
+                        </p>
+                        <p className="text-xs text-gray-400 mt-0.5">
+                          ستتمكن من تحديد وقص الجزء الذي تريده بدقة
+                        </p>
+                      </div>
+                    </button>
+                  )}
+                </div>
+
+                {/* Adjustments (Only shown if image is selected) */}
+                {dataUrl && (
+                  <div className="space-y-3.5 pt-1">
+                    {/* Quick Crop Button below preview if on mobile */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRawUploadedUrl(rawUploadedUrl || dataUrl);
+                        setIsCropping(true);
+                      }}
+                      className="w-full py-2 px-3 rounded-xl bg-indigo-500/15 hover:bg-indigo-500/25 border border-indigo-500/30 text-xs font-black text-indigo-300 flex items-center justify-center gap-2 transition-all active:scale-95"
+                    >
+                      <Crop className="w-4 h-4 text-indigo-400" />
+                      <span>قص وتحديد جزء مختلف من الصورة</span>
+                    </button>
+
+                    {/* Opacity / Dimming Slider */}
+                    <div className="p-3.5 rounded-2xl bg-white/5 border border-white/10 space-y-2">
+                      <div className="flex items-center justify-between text-xs font-bold">
+                        <span className="flex items-center gap-1.5 text-gray-300">
+                          <Sun className="w-4 h-4 text-amber-400" /> تعتيم الخلفية (وضوح النصوص)
+                        </span>
+                        <span className="text-indigo-400 font-mono">{Math.round(opacity * 100)}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0.2"
+                        max="0.85"
+                        step="0.05"
+                        value={opacity}
+                        onChange={(e) => setOpacity(parseFloat(e.target.value))}
+                        className="w-full accent-indigo-500 cursor-pointer"
+                      />
+                      <div className="flex justify-between text-[10px] text-gray-500">
+                        <span>صورة أفتح</span>
+                        <span>متوازن (موصى به)</span>
+                        <span>تعتيم أعلى</span>
+                      </div>
+                    </div>
+
+                    {/* Blur Slider */}
+                    <div className="p-3.5 rounded-2xl bg-white/5 border border-white/10 space-y-2">
+                      <div className="flex items-center justify-between text-xs font-bold">
+                        <span className="flex items-center gap-1.5 text-gray-300">
+                          <Sliders className="w-4 h-4 text-cyan-400" /> تمويه الخلفية (Soft Blur)
+                        </span>
+                        <span className="text-cyan-400 font-mono">{blur}px</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max="20"
+                        step="1"
+                        value={blur}
+                        onChange={(e) => setBlur(parseInt(e.target.value, 10))}
+                        className="w-full accent-cyan-500 cursor-pointer"
+                      />
+                      <div className="flex justify-between text-[10px] text-gray-500">
+                        <span>حادة 100%</span>
+                        <span>تمويه ناعم</span>
+                        <span>تمويه فني</span>
+                      </div>
+                    </div>
+
+                    {/* Depth / Parallax Toggle */}
+                    <div 
+                      onClick={() => setHasDepth(!hasDepth)}
+                      className="p-3.5 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-between cursor-pointer hover:bg-white/10 transition-colors"
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-8 h-8 rounded-xl bg-purple-500/20 text-purple-400 flex items-center justify-center">
+                          <Layers className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <h4 className="text-xs font-black text-white">تأثير العمق ثلاثي الأبعاد (Parallax)</h4>
+                          <p className="text-[10px] text-gray-400">حركة سينمائية خفيفة مع السكرول</p>
+                        </div>
+                      </div>
+                      <div
+                        className={`w-11 h-6 rounded-full transition-colors relative flex items-center px-1 ${
+                          hasDepth ? "bg-indigo-600" : "bg-white/20"
+                        }`}
+                      >
+                        <div
+                          className={`w-4 h-4 rounded-full bg-white shadow-md transition-transform ${
+                            hasDepth ? "translate-x-0" : "-translate-x-5"
+                          }`}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Copy to other scope button */}
+                    <button
+                      type="button"
+                      onClick={handleApplyToBoth}
+                      className="w-full py-2 px-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-bold text-gray-300 hover:text-white flex items-center justify-center gap-2 transition-all"
+                    >
+                      <Copy className="w-3.5 h-3.5 text-indigo-400" />
+                      <span>
+                        {scope === "library"
+                          ? "تطبيق نفس هذه الصورة على كل صفحات التطبيق أيضاً"
+                          : "تطبيق نفس هذه الصورة على صفحة المكتبة أيضاً"}
+                      </span>
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Footer Actions */}
+              <div className="pt-3 border-t border-white/10 flex items-center gap-2 shrink-0 mt-2">
+                {dataUrl && (
+                  <button
+                    type="button"
+                    onClick={handleRemove}
+                    disabled={loading}
+                    className="p-2.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 transition-colors"
+                    title="إزالة الخلفية والعودة للافتراضي"
+                  >
+                    <Trash2 className="w-5 h-5" />
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setIsOpen(false)}
+                  className="px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-xs font-bold text-gray-300 transition-colors"
+                >
+                  إلغاء
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleSave}
+                  disabled={loading || !dataUrl}
+                  className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-black flex items-center justify-center gap-2 shadow-lg transition-all ${
+                    !dataUrl
+                      ? "bg-gray-700 text-gray-400 cursor-not-allowed opacity-50"
+                      : "bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white shadow-indigo-500/25 active:scale-95"
+                  }`}
+                >
+                  <Check className="w-4 h-4 stroke-[2.5]" />
+                  <span>{loading ? "جارٍ الحفظ..." : "حفظ وتطبيق"}</span>
+                </button>
+              </div>
+            </>
+          )}
         </motion.div>
       </div>
     </AnimatePresence>

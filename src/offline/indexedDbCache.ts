@@ -1,3 +1,5 @@
+import { getCanonicalArtistName } from "@/utils/artistNormalizer";
+
 const DB_NAME = "music-web-offline";
 const DB_VERSION = 6;
 const META_STORE = "saved-songs";  // metadata only — instant save
@@ -117,7 +119,7 @@ export async function saveSongMeta(song: {
         ...existing,
         ...song,
         thumbnailUrl: (song.thumbnailUrl?.startsWith("data:") ? song.thumbnailUrl : existing.thumbnailUrl?.startsWith("data:") ? existing.thumbnailUrl : song.thumbnailUrl),
-        folderName: song.folderName || existing.folderName || song.artist || "أخرى",
+        folderName: getCanonicalArtistName(song.folderName || existing.folderName || song.artist || "أخرى"),
         savedAt: existing.savedAt || Date.now(),
         audioReady: existing.audioReady ?? false,
         isHidden: existing.isHidden ?? (song.isHidden || false),
@@ -399,3 +401,57 @@ export async function clearAllOfflineSongs(): Promise<void> {
     tx.onerror = () => reject(tx.error);
   });
 }
+
+/**
+ * Automatically consolidates duplicate artist folders (e.g. Wael Jassar, Wael Gassar, WAEL JASSAP)
+ * into a single unified folder directly inside IndexedDB on the user's phone/browser.
+ */
+export async function consolidateArtistFolders(): Promise<number> {
+  if (typeof window === "undefined") return 0;
+  try {
+    const db = await openOfflineDb();
+    const songs: any[] = await new Promise((resolve) => {
+      const tx = db.transaction(META_STORE, "readonly");
+      const req = tx.objectStore(META_STORE).getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => resolve([]);
+    });
+
+    if (!songs || songs.length === 0) return 0;
+
+    const toUpdate: any[] = [];
+    for (const song of songs) {
+      const currentFolder = song.folderName || song.artist || "أخرى";
+      const canonical = getCanonicalArtistName(currentFolder);
+      if (song.folderName !== canonical) {
+        toUpdate.push({
+          ...song,
+          folderName: canonical,
+        });
+      }
+    }
+
+    if (toUpdate.length > 0) {
+      const db2 = await openOfflineDb();
+      await new Promise<void>((resolve, reject) => {
+        const tx = db2.transaction(META_STORE, "readwrite");
+        const store = tx.objectStore(META_STORE);
+        for (const item of toUpdate) {
+          store.put(item);
+        }
+        tx.oncomplete = () => {
+          notifyLibraryUpdated({ type: "artists-consolidated", count: toUpdate.length });
+          resolve();
+        };
+        tx.onerror = () => reject(tx.error);
+      });
+      return toUpdate.length;
+    }
+
+    return 0;
+  } catch (err) {
+    console.error("Failed to consolidate artist folders:", err);
+    return 0;
+  }
+}
+

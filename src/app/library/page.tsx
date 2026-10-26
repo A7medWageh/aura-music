@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getAllOfflineSongs, deleteOfflineSong, deleteArtist, deleteAlbum, toggleSongHidden } from "@/offline/indexedDbCache";
+import { getAllOfflineSongs, deleteOfflineSong, deleteArtist, deleteAlbum, toggleSongHidden, consolidateArtistFolders } from "@/offline/indexedDbCache";
 import { subscribeDownloads } from "@/state/downloadStore";
 import { usePlayer } from "@/state/playerContext";
 import { motion, AnimatePresence } from "framer-motion";
 import { Play, Trash2, WifiOff, ArrowRight, DownloadCloud, Lock, Unlock, EyeOff, Eye, HardDrive, Music, CheckCircle2, AlertCircle, Image as ImageIcon } from "lucide-react";
 import { getProxyUrl } from "@/utils/media";
 import { openBackgroundCustomizer } from "@/services/theme/customBackgroundStorage";
+import { getCanonicalArtistName } from "@/utils/artistNormalizer";
 
 type Song = {
   songId: string; title: string; artist: string; thumbnailUrl?: string;
@@ -114,7 +115,8 @@ export default function LibraryPage() {
     const artistMap = new Map<string, { albums: Map<string, Song[]>, singles: Song[] }>();
 
     for (const song of visibleSongs.sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0))) {
-      const artistName = song.folderName || song.artist || "أخرى";
+      const rawArtist = song.folderName || song.artist || "أخرى";
+      const artistName = getCanonicalArtistName(rawArtist);
       if (!artistMap.has(artistName)) {
         artistMap.set(artistName, { albums: new Map(), singles: [] });
       }
@@ -156,6 +158,8 @@ export default function LibraryPage() {
     };
 
     loadLibrary(); 
+    // Migrate and consolidate all artist folders in the background on the phone/device
+    consolidateArtistFolders();
 
     window.addEventListener("aura-library-updated", scheduleReload);
     window.addEventListener("aura-thumbnails-migrated", scheduleReload);
@@ -256,7 +260,7 @@ export default function LibraryPage() {
   const currentAlbumData = currentArtistData?.albums.find(a => a.name === openAlbum);
 
   return (
-    <div className="space-y-8 pb-24">
+    <div className="relative z-[2] space-y-8 pb-24">
       <AnimatePresence>
         {toast && (
           <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 30 }}
@@ -486,8 +490,8 @@ export default function LibraryPage() {
                   </div>
                 </div>
               </div>
-              <h3 className="font-black text-lg text-center truncate text-white">{artist.name}</h3>
-              <p className="text-xs text-gray-400 font-bold text-center">
+              <h3 className="font-black text-lg text-center truncate text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.95)]">{artist.name}</h3>
+              <p className="text-xs text-gray-300 font-bold text-center drop-shadow-[0_1px_2px_rgba(0,0,0,0.95)]">
                 {artist.albums.length} ألبومات · {artist.singles.length} منفردة
               </p>
             </motion.div>
