@@ -12,10 +12,12 @@ import {
   Library, 
   VolumeX, 
   Volume2,
-  Sparkles
+  Sparkles,
+  Image as ImageIcon
 } from "lucide-react";
 import { usePlayer } from "@/state/playerContext";
 import { useToastStore } from "@/state/toastStore";
+import { openBackgroundCustomizer } from "@/services/theme/customBackgroundStorage";
 
 export function FloatingActionMenu() {
   const router = useRouter();
@@ -184,7 +186,21 @@ export function FloatingActionMenu() {
                 <span>مكتبتي (الأوفلاين)</span>
               </button>
 
-              {/* Option 5: Scroll to Top */}
+              {/* Option 5: App-wide Background Photo */}
+              <button
+                onClick={() => {
+                  setMenuOpen(false);
+                  openBackgroundCustomizer("global");
+                }}
+                className="flex items-center gap-2.5 w-full px-3 py-2 rounded-xl text-xs font-bold text-purple-300 hover:text-white hover:bg-purple-500/15 active:scale-95 transition-all text-right group"
+              >
+                <div className="w-7 h-7 rounded-lg bg-purple-500/20 text-purple-400 flex items-center justify-center group-hover:bg-purple-500 group-hover:text-white transition-colors">
+                  <ImageIcon className="w-4 h-4" />
+                </div>
+                <span>صورة خلفية للتطبيق</span>
+              </button>
+
+              {/* Option 6: Scroll to Top */}
               <button
                 onClick={handleScrollTop}
                 className="flex items-center gap-2.5 w-full px-3 py-2 rounded-xl text-xs font-bold text-gray-200 hover:text-white hover:bg-white/10 active:scale-95 transition-all text-right group"

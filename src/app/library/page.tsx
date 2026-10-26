@@ -5,8 +5,9 @@ import { getAllOfflineSongs, deleteOfflineSong, deleteArtist, deleteAlbum, toggl
 import { subscribeDownloads } from "@/state/downloadStore";
 import { usePlayer } from "@/state/playerContext";
 import { motion, AnimatePresence } from "framer-motion";
-import { Play, Trash2, WifiOff, ArrowRight, DownloadCloud, Lock, Unlock, EyeOff, Eye, HardDrive, Music, CheckCircle2, AlertCircle } from "lucide-react";
+import { Play, Trash2, WifiOff, ArrowRight, DownloadCloud, Lock, Unlock, EyeOff, Eye, HardDrive, Music, CheckCircle2, AlertCircle, Image as ImageIcon } from "lucide-react";
 import { getProxyUrl } from "@/utils/media";
+import { openBackgroundCustomizer } from "@/services/theme/customBackgroundStorage";
 
 type Song = {
   songId: string; title: string; artist: string; thumbnailUrl?: string;
@@ -306,7 +307,17 @@ export default function LibraryPage() {
           </div>
         )}
 
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2 sm:gap-3 flex-wrap justify-end">
+          {/* Custom Background Button */}
+          <button
+            onClick={() => openBackgroundCustomizer("library")}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all bg-gradient-to-r from-purple-500/20 to-indigo-500/20 hover:from-purple-500/35 hover:to-indigo-500/35 text-indigo-300 border border-indigo-500/30 hover:border-indigo-400 active:scale-95 shadow-sm"
+            title="تخصيص صورة خلفية للمكتبة مع تأثير العمق وتناسق الألوان"
+          >
+            <ImageIcon className="w-3.5 h-3.5 text-indigo-400" />
+            <span>صورة خلفية</span>
+          </button>
+
           <button onClick={() => vaultUnlocked ? setVaultUnlocked(false) : unlockVault()}
             className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold transition-all ${vaultUnlocked ? 'bg-indigo-500/20 text-indigo-300' : 'bg-white/5 text-gray-400 hover:text-white'}`}>
             {vaultUnlocked ? <Unlock className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
@@ -339,7 +350,7 @@ export default function LibraryPage() {
       ) : openAlbum && currentAlbumData ? (
         /* Album View (Level 3) */
         <div className="space-y-4">
-          <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center justify-between mb-6 p-4 rounded-2xl bg-black/30 backdrop-blur-xl border border-white/10 shadow-lg">
             <div className="flex items-center gap-4">
                {currentAlbumData.cover ? (
                   <img
@@ -388,7 +399,7 @@ export default function LibraryPage() {
       ) : openArtist && currentArtistData ? (
         /* Artist View (Level 2) */
         <div className="space-y-8">
-           <div className="flex items-center justify-between">
+           <div className="flex items-center justify-between p-4 rounded-2xl bg-black/30 backdrop-blur-xl border border-white/10 shadow-lg">
               <h2 className="text-3xl font-black">{currentArtistData.name}</h2>
               <div className="flex gap-2">
                 <button onClick={() => playList([...currentArtistData.albums.flatMap(a=>a.songs), ...currentArtistData.singles])} className="px-4 py-2 bg-indigo-500 rounded-xl font-bold flex items-center gap-2">
@@ -490,7 +501,7 @@ export default function LibraryPage() {
 function SongRow({ song, index, play, onDelete, onToggleHide, vaultUnlocked }: any) {
   const isReady = song.audioReady ?? false;
   return (
-    <div onClick={play} className="group flex items-center gap-4 p-3 rounded-2xl hover:bg-white/5 transition-colors cursor-pointer border border-transparent hover:border-white/5">
+    <div onClick={play} className="group flex items-center gap-4 p-3 rounded-2xl bg-black/25 hover:bg-black/45 backdrop-blur-md transition-all cursor-pointer border border-white/5 hover:border-indigo-500/30 shadow-sm">
       <div className="w-8 text-center text-gray-500 font-black text-sm">{index + 1}</div>
       <div className="relative w-12 h-12 rounded-xl overflow-hidden shrink-0">
         {song.thumbnailUrl ? (

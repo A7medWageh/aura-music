@@ -16,6 +16,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Search } from "lucide-react";
 import { FloatingActionMenu } from "@/components/FloatingActionMenu";
 import { AndroidEdgeBackGesture } from "@/components/AndroidEdgeBackGesture";
+import { AppBackgroundLayer } from "@/components/AppBackgroundLayer";
+import { CustomBackgroundModal } from "@/components/CustomBackgroundModal";
 
 function NotificationsRunner() {
   useArtistNotifications();
@@ -63,7 +65,9 @@ function MobileSearchBar() {
 export function AppShell({ children }: { children: ReactNode }) {
   return (
     <PlayerProvider>
-      <div className="min-h-screen bg-[rgb(var(--surface))] text-white overflow-x-hidden">
+      <div className="min-h-screen bg-[rgb(var(--surface))] text-white overflow-x-hidden relative">
+        {/* Dynamic Background Layer (Library or Global) */}
+        <AppBackgroundLayer />
 
         {/* ── Desktop Sidebar (hidden on mobile) ── */}
         <div className="hidden md:block">
@@ -143,6 +147,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <GlobalCommandPalette />
         <DownloadProgressPanel />
         <GlobalToaster />
+        <CustomBackgroundModal />
       </div>
     </PlayerProvider>
   );
