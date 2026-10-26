@@ -196,23 +196,24 @@ function JobRow({ job }: { job: DownloadJob }) {
     if (isPending) {
       setFakeProgress(2);
       const interval = setInterval(() => {
-        setFakeProgress(prev => Math.min(prev + 1.5, 15));
-      }, 300);
+        setFakeProgress(prev => Math.min(prev + 1.2, 12));
+      }, 250);
       return () => clearInterval(interval);
     } else {
       setFakeProgress(0);
     }
   }, [isPending]);
 
-  let pct = Math.round((progress / assumedTotal) * 100);
+  let pct = Math.min(100, Math.round((progress / assumedTotal) * 100));
   if (isPending) pct = Math.round(fakeProgress);
-  if (pct > 95 && job.status === "downloading") pct = 95; // hold at 95% until done
   if (job.status === "done") pct = 100;
 
   const speedText = speed > 0 ? `${(speed / (1024 * 1024)).toFixed(1)} MB/s` : "";
-  const etaText = speed > 0 ? `متبقي ${Math.ceil((assumedTotal - progress) / speed)} ثانية` : "";
+  const etaText = speed > 0 && assumedTotal > progress ? `متبقي ${Math.ceil((assumedTotal - progress) / speed)} ثانية` : "";
 
-  const progressSubText = `تم تحميل ${(progress / (1024 * 1024)).toFixed(2)} MB`;
+  const progressSubText = job.type === "album"
+    ? `تم تحميل ${(progress / (1024 * 1024)).toFixed(1)} MB من ${(assumedTotal / (1024 * 1024)).toFixed(1)} MB`
+    : `تم تحميل ${(progress / (1024 * 1024)).toFixed(2)} MB من ${(assumedTotal / (1024 * 1024)).toFixed(2)} MB`;
 
   return (
     <div className="px-6 py-6 hover:bg-white/[0.02] transition-colors relative group text-right" dir="rtl">

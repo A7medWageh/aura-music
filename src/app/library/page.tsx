@@ -505,9 +505,17 @@ export default function LibraryPage() {
 function SongRow({ song, index, play, onDelete, onToggleHide, vaultUnlocked }: any) {
   const isReady = song.audioReady ?? false;
   return (
-    <div onClick={play} className="group flex items-center gap-4 p-3 rounded-2xl bg-black/25 hover:bg-black/45 backdrop-blur-md transition-all cursor-pointer border border-white/5 hover:border-indigo-500/30 shadow-sm">
-      <div className="w-8 text-center text-gray-500 font-black text-sm">{index + 1}</div>
-      <div className="relative w-12 h-12 rounded-xl overflow-hidden shrink-0">
+    <div 
+      onClick={play} 
+      className="group flex items-center gap-2 sm:gap-4 p-2 sm:p-3 rounded-2xl bg-black/30 hover:bg-black/50 backdrop-blur-md transition-all cursor-pointer border border-white/5 hover:border-indigo-500/30 shadow-sm w-full max-w-full overflow-hidden"
+    >
+      {/* Number */}
+      <div className="w-5 sm:w-7 text-center text-gray-500 font-black text-xs sm:text-sm shrink-0">
+        {index + 1}
+      </div>
+
+      {/* Thumbnail */}
+      <div className="relative w-11 h-11 sm:w-12 sm:h-12 rounded-xl overflow-hidden shrink-0 shadow-md">
         {song.thumbnailUrl ? (
           <img
             src={getProxyUrl(song.thumbnailUrl)}
@@ -516,36 +524,54 @@ function SongRow({ song, index, play, onDelete, onToggleHide, vaultUnlocked }: a
             onError={(e) => { (e.target as HTMLImageElement).src = "/placeholder-song.jpg"; }}
           />
         ) : (
-          <div className="w-full h-full bg-white/10 flex justify-center items-center"><Music className="w-4 h-4 text-gray-400" /></div>
+          <div className="w-full h-full bg-white/10 flex justify-center items-center">
+            <Music className="w-4 h-4 text-gray-400" />
+          </div>
         )}
         <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-          <Play className="w-5 h-5 text-white fill-current" />
+          <Play className="w-4 h-4 sm:w-5 sm:h-5 text-white fill-current" />
         </div>
       </div>
-      <div className="flex-1 min-w-0">
-        <h4 className="font-black text-sm text-white truncate flex items-center gap-2">
+
+      {/* Title & Info */}
+      <div className="flex-1 min-w-0 pr-1">
+        <h4 className="font-black text-xs sm:text-sm text-white truncate flex items-center gap-1.5 drop-shadow-sm">
           {song.title}
-          {song.isHidden && <Lock className="w-3 h-3 text-indigo-400" />}
+          {song.isHidden && <Lock className="w-3 h-3 text-indigo-400 shrink-0" />}
         </h4>
-        <div className="flex items-center gap-2 mt-0.5">
-          <p className="text-xs font-bold text-gray-500 truncate">{song.artist}</p>
+        <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+          <p className="text-[11px] sm:text-xs font-bold text-gray-400 truncate max-w-[130px] sm:max-w-none">
+            {song.artist}
+          </p>
           {isReady ? (
-            <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full font-semibold">
-              <CheckCircle2 className="w-3 h-3" /> جاهزة أوفلاين
+            <span className="inline-flex items-center gap-1 text-[9px] sm:text-[10px] text-emerald-400 bg-emerald-500/15 px-1.5 py-0.5 rounded-full font-bold shrink-0">
+              <CheckCircle2 className="w-2.5 h-2.5 sm:w-3 sm:h-3" /> جاهزة أوفلاين
             </span>
           ) : (
-            <span className="inline-flex items-center gap-1 text-[10px] text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full font-semibold" title="لم يكتمل تحميل الملف الصوتي في الجهاز">
-              <AlertCircle className="w-3 h-3" /> لم يكتمل التنزيل
+            <span className="inline-flex items-center gap-1 text-[9px] sm:text-[10px] text-amber-400 bg-amber-500/15 px-1.5 py-0.5 rounded-full font-bold shrink-0" title="لم يكتمل تحميل الملف الصوتي في الجهاز">
+              <AlertCircle className="w-2.5 h-2.5 sm:w-3 sm:h-3" /> جاري التنزيل
             </span>
           )}
         </div>
       </div>
-      <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-        <button onClick={onToggleHide} className="p-2 hover:bg-indigo-500/20 text-indigo-400 rounded-xl" title={song.isHidden ? "إظهار الأغنية" : "إخفاء الأغنية في المجلد السري"}>
-          {song.isHidden ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+
+      {/* Action Buttons: Always visible on mobile, hover on desktop */}
+      <div className="flex items-center gap-1 shrink-0 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity z-10">
+        <button 
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onToggleHide(e); }} 
+          className="p-1.5 sm:p-2 rounded-xl bg-white/5 md:bg-transparent hover:bg-indigo-500/20 text-indigo-400 active:scale-90 transition-all" 
+          title={song.isHidden ? "إظهار الأغنية" : "إخفاء الأغنية في المجلد السري"}
+        >
+          {song.isHidden ? <Eye className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> : <EyeOff className="w-3.5 h-3.5 sm:w-4 sm:h-4" />}
         </button>
-        <button onClick={onDelete} className="p-2 hover:bg-red-500/20 text-red-400 rounded-xl" title="حذف الأغنية">
-          <Trash2 className="w-4 h-4" />
+        <button 
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onDelete(e); }} 
+          className="p-1.5 sm:p-2 rounded-xl bg-rose-500/15 md:bg-transparent hover:bg-rose-500/25 text-rose-400 active:scale-90 transition-all" 
+          title="حذف الأغنية"
+        >
+          <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
         </button>
       </div>
     </div>

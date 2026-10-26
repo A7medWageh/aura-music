@@ -197,7 +197,9 @@ async function downloadAudioBlob(
         "0"
       );
       if (contentLength === 0) contentLength = 3.5 * 1024 * 1024;
-      updateJob(jobId, { totalBytes: contentLength, progressBytes: 1 });
+      if (!onProgress) {
+        updateJob(jobId, { totalBytes: contentLength, progressBytes: 1 });
+      }
 
       let blob: Blob;
       let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
@@ -229,18 +231,23 @@ async function downloadAudioBlob(
           receivedBytes += delta;
 
           const now = Date.now();
-          // Update at least every 80ms or on completion for butter-smooth UI counters
-          if (now - lastReport > 80 || receivedBytes >= contentLength) {
+          // Update at least every 60ms or on completion for smooth live byte counter
+          if (now - lastReport > 60 || receivedBytes >= contentLength) {
             lastReport = now;
             const currentTotal = Math.max(contentLength, receivedBytes);
-            if (onProgress) onProgress(receivedBytes, currentTotal, delta);
-            updateJob(jobId, { progressBytes: receivedBytes, totalBytes: currentTotal });
+            if (onProgress) {
+              onProgress(receivedBytes, currentTotal, delta);
+            } else {
+              updateJob(jobId, { progressBytes: receivedBytes, totalBytes: currentTotal });
+            }
           }
         }
 
         if (receivedBytes < 1000) throw new Error("الملف الصوتي فارغ أو تم رفض الوصول");
 
-        updateJob(jobId, { progressBytes: receivedBytes, totalBytes: receivedBytes });
+        if (!onProgress) {
+          updateJob(jobId, { progressBytes: receivedBytes, totalBytes: receivedBytes });
+        }
 
         const mimeType = res.headers.get("content-type") || "audio/mpeg";
         blob = new Blob(chunks as any, { type: mimeType });
@@ -249,8 +256,11 @@ async function downloadAudioBlob(
         // Fallback for iOS / Safari / CapacitorHttp where body.getReader() is not available
         blob = await res.blob();
         if (blob.size < 1000) throw new Error("الملف الصوتي فارغ أو تم رفض الوصول");
-        updateJob(jobId, { progressBytes: blob.size, totalBytes: blob.size });
-        if (onProgress) onProgress(blob.size, blob.size, blob.size);
+        if (onProgress) {
+          onProgress(blob.size, blob.size, blob.size);
+        } else {
+          updateJob(jobId, { progressBytes: blob.size, totalBytes: blob.size });
+        }
       }
 
       await storeAudioBlob(songId, blob);
@@ -352,8 +362,15 @@ export async function downloadAlbum(
     ? await fetchImageAsDataUrl(metadata.coverUrl).catch(() => metadata.coverUrl)
     : undefined;
 
+  const estimatedSongBytes = 3.5 * 1024 * 1024;
+  const estimatedTotalAlbumBytes = total * estimatedSongBytes;
+
   startJob(albumId, albumName, "album", total);
-  updateJob(albumId, { totalBytes: total * 3.5 * 1024 * 1024, progressBytes: 0 });
+  updateJob(albumId, { 
+    totalBytes: estimatedTotalAlbumBytes, 
+    progressBytes: 0,
+    currentSong: `جاري بدء التحميل (1/${total})...`
+  });
 
   const ctrl = new AbortController();
   setJobController(albumId, ctrl);
@@ -365,8 +382,8 @@ export async function downloadAlbum(
   for (let i = 0; i < songs.length; i++) {
     if (ctrl.signal.aborted) break;
     const song = songs[i];
-    const title = song.title || "أغنية";
-    updateJob(albumId, { currentSong: title });
+    const title = song.title || `أغنية ${i + 1}`;
+    updateJob(albumId, { currentSong: `(${i + 1}/${total}) ${title}` });
 
     try {
       await saveSongMeta({
@@ -384,14 +401,17 @@ export async function downloadAlbum(
     // Skip if already downloaded
     const existingBlob = await getAudioBlob(song.songId);
     if (existingBlob) {
-      await new Promise(r => setTimeout(r, 400)); // UI delay to show progress
-      totalAccumulatedBytes += existingBlob.size || (3.5 * 1024 * 1024);
-      updateJob(albumId, { progressBytes: totalAccumulatedBytes });
+      totalAccumulatedBytes += existingBlob.size || estimatedSongBytes;
       doneCount++;
-      updateJob(albumId, { done: doneCount, failed: failedCount });
+      updateJob(albumId, { 
+        progressBytes: totalAccumulatedBytes,
+        done: doneCount, 
+        failed: failedCount 
+      });
       continue;
     }
 
+    let songReceivedBytes = 0;
     const ok = await downloadAudioBlob(
       albumId,
       song.songId,
@@ -400,17 +420,24 @@ export async function downloadAlbum(
       metadata.artistName || song.artist || "فنان غير معروف",
       (received, _total, delta) => {
         totalAccumulatedBytes += delta;
-        updateJob(albumId, { progressBytes: totalAccumulatedBytes });
+        songReceivedBytes = received;
+        const remainingSongs = Math.max(0, total - (i + 1));
+        const dynamicAlbumTotal = Math.max(estimatedTotalAlbumBytes, totalAccumulatedBytes + remainingSongs * estimatedSongBytes);
+        updateJob(albumId, { 
+          progressBytes: totalAccumulatedBytes,
+          totalBytes: dynamicAlbumTotal,
+          currentSong: `(${i + 1}/${total}) ${title} (${(songReceivedBytes / (1024 * 1024)).toFixed(1)} MB)`
+        });
       },
       ctrl.signal
     );
 
     if (ctrl.signal.aborted) break;
     if (ok) doneCount++; else failedCount++;
-    updateJob(albumId, { done: doneCount, failed: failedCount });
+    updateJob(albumId, { done: doneCount, failed: failedCount, progressBytes: totalAccumulatedBytes });
 
-    // Brief 150ms pause to let GC reclaim memory and prevent mobile WebKit crashes
-    await new Promise(r => setTimeout(r, 150));
+    // Brief 80ms pause to let GC reclaim memory
+    await new Promise(r => setTimeout(r, 80));
   }
 
   if (!ctrl.signal.aborted) {
