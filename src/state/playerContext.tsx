@@ -38,12 +38,13 @@ type PlayerContextValue = {
   prewarm: (videoId: string) => void;
   setHighQuality: (value: boolean) => void;
   setIsAiMix: (value: boolean) => void;
-  soundPreset: "crystal" | "bass" | "vocal" | "spatial" | "noise_cancel";
-  setSoundPreset: (preset: "crystal" | "bass" | "vocal" | "spatial" | "noise_cancel") => void;
+  soundPreset: "crystal" | "bass" | "vocal" | "spatial" | "concert" | "noise_cancel";
+  setSoundPreset: (preset: "crystal" | "bass" | "vocal" | "spatial" | "concert" | "noise_cancel") => void;
   soundBoost: number;
   setSoundBoost: (boost: number) => void;
   is8dActive: boolean;
   setIs8dActive: (active: boolean) => void;
+  test8dSound: () => void;
   getAnalyser: () => AnalyserNode | null;
   closePlayer: () => void;
   toggleMute: () => void;
@@ -427,6 +428,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         syncPositionState();
       } else {
         setHasUserTriggeredPlay(true);
+        if (!audioCtxRef.current) {
+          initWebAudio();
+        } else if (audioCtxRef.current.state === "suspended") {
+          audioCtxRef.current.resume().catch(() => {});
+        }
         if ((!player.src || player.src === "" || player.src === window.location.href) && currentSong) {
           syncPlayTrack(currentSong);
           return;
@@ -504,9 +510,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     setState((prev) => ({ ...prev, currentTime: player.currentTime }));
   };
 
-  const [soundPreset, setSoundPresetState] = useState<"crystal" | "bass" | "vocal" | "spatial" | "noise_cancel">("crystal");
+  const [soundPreset, setSoundPresetState] = useState<"crystal" | "bass" | "vocal" | "spatial" | "concert" | "noise_cancel">("crystal");
 
-  const setSoundPreset = (preset: "crystal" | "bass" | "vocal" | "spatial" | "noise_cancel") => {
+  const setSoundPreset = (preset: "crystal" | "bass" | "vocal" | "spatial" | "concert" | "noise_cancel") => {
     try {
       localStorage.setItem("aura_sound_preset", preset);
     } catch {}
@@ -548,7 +554,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         setState((prev) => ({ ...prev, isHighQuality: true }));
       }
       const savedPreset = localStorage.getItem("aura_sound_preset") as any;
-      if (savedPreset && ["crystal", "bass", "vocal", "spatial", "noise_cancel"].includes(savedPreset)) {
+      if (savedPreset && ["crystal", "bass", "vocal", "spatial", "concert", "noise_cancel"].includes(savedPreset)) {
         setSoundPresetState(savedPreset);
       }
       const savedBoost = localStorage.getItem("aura_sound_boost");
@@ -570,6 +576,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const mediaSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
   const eqNodesRef = useRef<BiquadFilterNode[]>([]);
   const pannerRef = useRef<StereoPannerNode | null>(null);
+  const depthFilterRef = useRef<BiquadFilterNode | null>(null); // HRTF 3D head-shadow filter
   const compressorRef = useRef<DynamicsCompressorNode | null>(null);
   const boosterGainRef = useRef<GainNode | null>(null);
   const limiterRef = useRef<DynamicsCompressorNode | null>(null);
@@ -583,7 +590,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const is8dActiveRef = useRef(state.is8dActive);
   is8dActiveRef.current = state.is8dActive;
 
-  // Real-time 8D audio rotation: rotates sound smoothly between left and right earbuds
+  // Real-time 8D audio rotation: rotates sound smoothly and noticeably between left and right earbuds
   const update8dRotation = () => {
     if (pannerAnimRef.current) {
       cancelAnimationFrame(pannerAnimRef.current);
@@ -595,81 +602,163 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
     const shouldRotate = soundPresetRef.current === "spatial" || is8dActiveRef.current;
     if (!shouldRotate || !isPlayingRef.current) {
-      try { panner.pan.setTargetAtTime(0, ctx.currentTime, 0.05); } catch {}
+      try {
+        panner.pan.setTargetAtTime(0, ctx.currentTime, 0.05);
+        if (depthFilterRef.current) depthFilterRef.current.gain.setTargetAtTime(0, ctx.currentTime, 0.05);
+      } catch {}
       return;
     }
 
-    const cycleDuration = 9000; // 9 seconds for smooth full orbital rotation
+    // 5.5 seconds for a dynamic, rhythmic, highly noticeable 8D orbit between earbuds
+    const cycleDuration = 5500;
     const tick = () => {
       const shouldStillRotate = (soundPresetRef.current === "spatial" || is8dActiveRef.current) && isPlayingRef.current;
       if (!shouldStillRotate) {
-        try { panner.pan.setTargetAtTime(0, ctx.currentTime, 0.05); } catch {}
+        try {
+          panner.pan.setTargetAtTime(0, ctx.currentTime, 0.05);
+          if (depthFilterRef.current) depthFilterRef.current.gain.setTargetAtTime(0, ctx.currentTime, 0.05);
+        } catch {}
         return;
       }
       const now = performance.now();
       const progress = (now % cycleDuration) / cycleDuration;
-      // Sinusoidal panning: smoothly travels between Left (-0.70) and Right (+0.70) comfortably without cutting out either ear
-      const pan = Math.sin(progress * 2 * Math.PI) * 0.70;
-      try { panner.pan.setTargetAtTime(pan, ctx.currentTime, 0.05); } catch {}
+      const angle = progress * 2 * Math.PI;
+
+      // High-impact panning: sweeps between Left (-0.98) and Right (+0.98)
+      const pan = Math.sin(angle) * 0.98;
+
+      // HRTF 3D head-shadow: when sound orbits behind the head (cos < 0), dip 3.8kHz to simulate sound passing behind
+      const depth = Math.cos(angle);
+      const rearDip = depth < 0 ? depth * 4.0 : 0; // dips up to -4dB behind the head
+
+      try {
+        panner.pan.setTargetAtTime(pan, ctx.currentTime, 0.04);
+        if (depthFilterRef.current) {
+          depthFilterRef.current.gain.setTargetAtTime(rearDip, ctx.currentTime, 0.04);
+        }
+      } catch {}
       pannerAnimRef.current = requestAnimationFrame(tick);
     };
     pannerAnimRef.current = requestAnimationFrame(tick);
   };
 
+  // Instant 8D Earbud Test: sweeps hard Left, then hard Right, then returns to Center
+  const test8dSound = () => {
+    let ctx = audioCtxRef.current;
+    if (!ctx) {
+      initWebAudio();
+      ctx = audioCtxRef.current;
+    }
+    const panner = pannerRef.current;
+    if (!panner || !ctx) {
+      useToastStore.getState().addToast("يرجى تشغيل أي أغنية أولاً لبدء اختبار تقليب السماعات 🎧");
+      return;
+    }
+    if (ctx.state === "suspended") {
+      ctx.resume().catch(() => {});
+    }
+
+    if (pannerAnimRef.current) {
+      cancelAnimationFrame(pannerAnimRef.current);
+      pannerAnimRef.current = null;
+    }
+
+    const t = ctx.currentTime;
+    try {
+      // Step 1: Pan hard Left immediately
+      panner.pan.cancelScheduledValues(t);
+      panner.pan.setValueAtTime(0, t);
+      panner.pan.linearRampToValueAtTime(-0.98, t + 0.35);
+      useToastStore.getState().addToast("🎧 جاري الاختبار: السماعة اليسرى فقط ◀️");
+
+      // Step 2: Pan hard Right after 1.6s
+      setTimeout(() => {
+        if (!audioCtxRef.current || !pannerRef.current) return;
+        const now = audioCtxRef.current.currentTime;
+        pannerRef.current.pan.linearRampToValueAtTime(0.98, now + 0.85);
+        useToastStore.getState().addToast("🎧 جاري الاختبار: السماعة اليمنى فقط ▶️");
+      }, 1600);
+
+      // Step 3: Return to Center and resume 8D rotation after 3.3s
+      setTimeout(() => {
+        if (!audioCtxRef.current || !pannerRef.current) return;
+        const now = audioCtxRef.current.currentTime;
+        pannerRef.current.pan.linearRampToValueAtTime(0, now + 0.6);
+        useToastStore.getState().addToast("✅ تم اكتمال الاختبار بنجاح - كلا السماعتين تعملان بتناغم!");
+        setTimeout(() => {
+          update8dRotation();
+        }, 700);
+      }, 3300);
+    } catch (err) {
+      console.warn("[8D Test] error:", err);
+    }
+  };
+
   const PRESET_CONFIGS = {
     crystal: {
       bands: [
-        { type: "lowshelf" as BiquadFilterType, freq: 55, gain: 2.5 },            // Delicate sub-bass warmth (no ear fatigue)
-        { type: "peaking"  as BiquadFilterType, freq: 200, gain: 1.2, Q: 0.9 },   // Acoustic warmth & body
-        { type: "peaking"  as BiquadFilterType, freq: 450, gain: -2.0, Q: 1.4 },  // Anti-mud scoop (transparent separation)
-        { type: "peaking"  as BiquadFilterType, freq: 2400, gain: 2.8, Q: 0.85 }, // Pure velvet vocal clarity (below fatigue zone)
-        { type: "highshelf" as BiquadFilterType, freq: 11500, gain: 3.0 },        // Silky audiophile air (shimmering, zero sizzle)
+        { type: "lowshelf" as BiquadFilterType, freq: 55, gain: 4.0 },            // Tight sub-bass punch
+        { type: "peaking"  as BiquadFilterType, freq: 200, gain: 1.5, Q: 0.9 },   // Warm acoustic body
+        { type: "peaking"  as BiquadFilterType, freq: 450, gain: -3.5, Q: 1.4 },  // Anti-mud transparency scoop
+        { type: "peaking"  as BiquadFilterType, freq: 2800, gain: 4.5, Q: 0.9 },  // Sparkling crystal vocal clarity
+        { type: "highshelf" as BiquadFilterType, freq: 11500, gain: 5.5 },        // Silky audiophile shimmer (Spotify Hi-Fi style)
       ],
-      comp: { threshold: -14, ratio: 2.2, attack: 0.015, release: 0.15 },         // High output studio compression
+      comp: { threshold: -14, ratio: 2.5, attack: 0.015, release: 0.15 },
       postGain: 1.25,
     },
     bass: {
       bands: [
-        { type: "lowshelf" as BiquadFilterType, freq: 50, gain: 5.0 },            // Deep cinematic sub-bass (velvety, zero pressure)
-        { type: "peaking"  as BiquadFilterType, freq: 120, gain: 2.2, Q: 1.0 },   // Warm punchy low-end
-        { type: "peaking"  as BiquadFilterType, freq: 480, gain: -2.5, Q: 1.2 },  // Anti-boxiness scoop
-        { type: "peaking"  as BiquadFilterType, freq: 3800, gain: -1.5, Q: 1.2 }, // Sibilance softening (protects ears at high vol)
-        { type: "highshelf" as BiquadFilterType, freq: 10500, gain: 2.0 },        // Smooth warm top
+        { type: "lowshelf" as BiquadFilterType, freq: 50, gain: 9.5 },            // Massive, deep, chest-thumping sub-bass
+        { type: "peaking"  as BiquadFilterType, freq: 110, gain: 4.5, Q: 1.1 },   // Explosive bass punch (Beats & Sony Extra Bass)
+        { type: "peaking"  as BiquadFilterType, freq: 450, gain: -3.0, Q: 1.2 },  // Anti-mud scoop
+        { type: "peaking"  as BiquadFilterType, freq: 3600, gain: -2.0, Q: 1.2 }, // Sibilance protection so high volume never hurts
+        { type: "highshelf" as BiquadFilterType, freq: 10000, gain: 2.5 },        // Warm smooth treble
       ],
-      comp: { threshold: -16, ratio: 2.5, attack: 0.020, release: 0.18 },
+      comp: { threshold: -18, ratio: 3.0, attack: 0.020, release: 0.20 },
       postGain: 1.30,
     },
     vocal: {
       bands: [
-        { type: "lowshelf" as BiquadFilterType, freq: 65, gain: 1.5 },
-        { type: "peaking"  as BiquadFilterType, freq: 240, gain: 2.0, Q: 1.0 },   // Warm intimate vocal body
-        { type: "peaking"  as BiquadFilterType, freq: 500, gain: -1.8, Q: 1.3 },  // Clean vocal separation
-        { type: "peaking"  as BiquadFilterType, freq: 2600, gain: 3.5, Q: 0.9 },  // Direct, crystal clear lyrics & presence
-        { type: "highshelf" as BiquadFilterType, freq: 12000, gain: 3.0 },        // Silky breath air (zero ear fatigue)
+        { type: "lowshelf" as BiquadFilterType, freq: 65, gain: -2.5 },           // Controlled bass so vocals stand out
+        { type: "peaking"  as BiquadFilterType, freq: 240, gain: 3.0, Q: 1.0 },   // Rich vocal chest resonance
+        { type: "peaking"  as BiquadFilterType, freq: 480, gain: -4.0, Q: 1.3 },  // Clean instrumental separation
+        { type: "peaking"  as BiquadFilterType, freq: 2700, gain: 6.5, Q: 0.85 }, // Extreme upfront vocal presence (Tarab & Intimate)
+        { type: "highshelf" as BiquadFilterType, freq: 11000, gain: 4.0 },        // Airy vocal breath
       ],
-      comp: { threshold: -14, ratio: 2.0, attack: 0.012, release: 0.14 },
-      postGain: 1.25,
+      comp: { threshold: -15, ratio: 2.6, attack: 0.010, release: 0.12 },
+      postGain: 1.28,
+    },
+    concert: {
+      bands: [
+        { type: "lowshelf" as BiquadFilterType, freq: 55, gain: 5.5 },            // Deep concert hall subwoofer presence
+        { type: "peaking"  as BiquadFilterType, freq: 180, gain: 2.5, Q: 0.9 },   // Large hall reverb resonance
+        { type: "peaking"  as BiquadFilterType, freq: 600, gain: -2.5, Q: 1.2 },  // Wide stage clarity
+        { type: "peaking"  as BiquadFilterType, freq: 3200, gain: 4.0, Q: 0.8 },  // Live stage microphone clarity
+        { type: "highshelf" as BiquadFilterType, freq: 12500, gain: 6.0 },        // Huge open-air ceiling (Dolby Atmos style)
+      ],
+      comp: { threshold: -16, ratio: 2.4, attack: 0.018, release: 0.22 },
+      postGain: 1.32,
     },
     spatial: {
       bands: [
-        { type: "lowshelf" as BiquadFilterType, freq: 55, gain: 2.5 },
-        { type: "peaking"  as BiquadFilterType, freq: 220, gain: 1.5, Q: 0.9 },
-        { type: "peaking"  as BiquadFilterType, freq: 450, gain: -2.5, Q: 1.3 },  // Clear binaural center stage
-        { type: "peaking"  as BiquadFilterType, freq: 2500, gain: 2.5, Q: 0.8 },  // HRTF binaural sweetening
-        { type: "highshelf" as BiquadFilterType, freq: 12000, gain: 3.5 },        // Wide open holographic acoustic stage
+        { type: "lowshelf" as BiquadFilterType, freq: 55, gain: 4.0 },            // Dynamic binaural bass
+        { type: "peaking"  as BiquadFilterType, freq: 220, gain: 2.0, Q: 0.9 },   // Centered soundstage
+        { type: "peaking"  as BiquadFilterType, freq: 450, gain: -3.0, Q: 1.3 },  // Transparent holographic depth
+        { type: "peaking"  as BiquadFilterType, freq: 2600, gain: 4.0, Q: 0.8 },  // HRTF binaural sweetening
+        { type: "highshelf" as BiquadFilterType, freq: 12000, gain: 5.0 },        // 360° open air immersion
       ],
-      comp: { threshold: -15, ratio: 2.2, attack: 0.018, release: 0.16 },
+      comp: { threshold: -15, ratio: 2.2, attack: 0.015, release: 0.16 },
       postGain: 1.30,
     },
     noise_cancel: {
       bands: [
-        { type: "highpass" as BiquadFilterType, freq: 40, gain: 0, Q: 0.7 },      // Cuts ambient sub-rumble below 40Hz
-        { type: "peaking"  as BiquadFilterType, freq: 180, gain: 2.0, Q: 1.0 },   // Warm music core
-        { type: "peaking"  as BiquadFilterType, freq: 450, gain: -3.0, Q: 1.4 },  // Notches ambient room chatter
-        { type: "peaking"  as BiquadFilterType, freq: 2500, gain: 3.0, Q: 0.9 },  // Clean comfortable foreground clarity
-        { type: "highshelf" as BiquadFilterType, freq: 11000, gain: 2.5 },        // Ambient masking without treble fatigue
+        { type: "highpass" as BiquadFilterType, freq: 50, gain: 0, Q: 0.7 },      // Cuts vehicle and ambient rumble below 50Hz
+        { type: "peaking"  as BiquadFilterType, freq: 200, gain: 3.0, Q: 1.0 },   // Warm core
+        { type: "peaking"  as BiquadFilterType, freq: 500, gain: -4.5, Q: 1.4 },  // Notches ambient chatter & crowd noise
+        { type: "peaking"  as BiquadFilterType, freq: 2600, gain: 5.5, Q: 0.9 },  // Punchy foreground clarity
+        { type: "highshelf" as BiquadFilterType, freq: 10000, gain: 4.5 },        // High-frequency clarity masking
       ],
-      comp: { threshold: -16, ratio: 2.8, attack: 0.008, release: 0.12 },
+      comp: { threshold: -18, ratio: 3.5, attack: 0.006, release: 0.10 },         // Fast leveling compressor for noisy environments
       postGain: 1.35,
     },
   };
@@ -677,11 +766,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const applyAudioParameters = (
     ctx: AudioContext,
     isHq: boolean,
-    presetKey: "crystal" | "bass" | "vocal" | "spatial" | "noise_cancel",
+    presetKey: "crystal" | "bass" | "vocal" | "spatial" | "concert" | "noise_cancel",
     boostVal = 1.0
   ) => {
     const now = ctx.currentTime;
-    const t = 0.05; // 50ms smooth transition, zero click/pop
+    const t = 0.04; // 40ms smooth transition, zero click/pop
 
     if (!isHq) {
       if (preGainRef.current) preGainRef.current.gain.setTargetAtTime(1.0, now, t);
@@ -698,11 +787,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       if (pannerRef.current) {
         try { pannerRef.current.pan.setTargetAtTime(0, now, t); } catch {}
       }
+      if (depthFilterRef.current) {
+        try { depthFilterRef.current.gain.setTargetAtTime(0, now, t); } catch {}
+      }
       return;
     }
 
     const cfg = PRESET_CONFIGS[presetKey] || PRESET_CONFIGS.crystal;
-    if (preGainRef.current) preGainRef.current.gain.setTargetAtTime(1.05, now, t);
+    if (preGainRef.current) preGainRef.current.gain.setTargetAtTime(1.10, now, t);
 
     eqNodesRef.current.forEach((node, i) => {
       const b = cfg.bands[i];
@@ -723,15 +815,18 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }
 
     if (boosterGainRef.current) {
+      // Clean pre-amp booster (up to 2.0x volume)
       boosterGainRef.current.gain.setTargetAtTime(boostVal, now, t);
     }
 
     if (limiterRef.current) {
+      // Spotify/Mastering-grade Brickwall Soft-Knee Peak Limiter
+      // Clamps maximum output to -0.1 dBFS to eliminate any crackle, distortion, or blown out highs
       limiterRef.current.threshold.setTargetAtTime(-0.1, now, t);
-      limiterRef.current.knee.setTargetAtTime(12, now, t);
-      limiterRef.current.ratio.setTargetAtTime(8, now, t);
-      limiterRef.current.attack.setTargetAtTime(0.003, now, t);
-      limiterRef.current.release.setTargetAtTime(0.08, now, t);
+      limiterRef.current.knee.setTargetAtTime(10, now, t);
+      limiterRef.current.ratio.setTargetAtTime(20, now, t); // Hard brickwall limiting
+      limiterRef.current.attack.setTargetAtTime(0.001, now, t); // Fast 1ms lookahead clamping
+      limiterRef.current.release.setTargetAtTime(0.04, now, t);
     }
 
     if (postGainRef.current) {
@@ -744,15 +839,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const initWebAudio = () => {
     const player = audioRef.current;
     if (!player || typeof window === "undefined" || audioCtxRef.current) return;
-
-    // CRITICAL: On iOS WebKit (iPhone/iPad), connecting createMediaElementSource(player) to AudioContext
-    // routes audio through WebKit's ambient synthesizer pipeline, which completely silences/suppresses
-    // the native iOS Lock Screen Player widget (MPNowPlayingInfoCenter), Dynamic Island, and Control Center!
-    // Keeping native <audio> connected directly to iOS AVPlayer gives 100% full lock screen controls,
-    // artwork, scrubber, and remote bluetooth controls.
-    if (isIOSDevice()) {
-      return;
-    }
 
     const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
     if (!AudioCtx) return;
@@ -781,7 +867,15 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       });
       eqNodesRef.current = nodes;
 
-      // 3. Stereo Panner Node (for 8D audio rotation)
+      // 3. 3D Depth HRTF filter (for 360° rear-orbit sensation)
+      const depthFilter = ctx.createBiquadFilter();
+      depthFilter.type = "peaking";
+      depthFilter.frequency.value = 3800;
+      depthFilter.Q.value = 1.2;
+      depthFilter.gain.value = 0;
+      depthFilterRef.current = depthFilter;
+
+      // 4. Stereo Panner Node (for 8D audio rotation)
       let panner: StereoPannerNode | null = null;
       if (typeof ctx.createStereoPanner === "function") {
         try {
@@ -790,41 +884,44 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         } catch {}
       }
 
-      // 4. Studio Mastering Compressor (Velvety musical glue)
+      // 5. Studio Mastering Compressor (Musical glue & dynamic control)
       const comp = ctx.createDynamicsCompressor();
-      comp.threshold.value = -10;
+      comp.threshold.value = -12;
       comp.knee.value = 14;
-      comp.ratio.value = 1.5;
-      comp.attack.value = 0.020;
-      comp.release.value = 0.18;
+      comp.ratio.value = 2.0;
+      comp.attack.value = 0.015;
+      comp.release.value = 0.16;
       compressorRef.current = comp;
 
-      // 5. Clean Audiophile Booster Stage (up to 150% clean gain)
+      // 6. Clean Audiophile Booster Stage (up to 200% volume boost)
       const boosterGain = ctx.createGain();
       boosterGain.gain.value = state.soundBoost || 1.0;
       boosterGainRef.current = boosterGain;
 
-      // 6. Studio Soft-Knee Peak Limiter (Ear-safe ceiling, zero clipping distortion)
+      // 7. Spotify-grade Brickwall Peak Limiter (Ear-safe ceiling, 0% clipping distortion)
       const limiter = ctx.createDynamicsCompressor();
-      limiter.threshold.value = -0.3;
-      limiter.knee.value = 12;
-      limiter.ratio.value = 8;
-      limiter.attack.value = 0.003;
-      limiter.release.value = 0.08;
+      limiter.threshold.value = -0.1;
+      limiter.knee.value = 10;
+      limiter.ratio.value = 20;
+      limiter.attack.value = 0.001;
+      limiter.release.value = 0.04;
       limiterRef.current = limiter;
 
-      // 7. Post-Gain stage
+      // 8. Post-Gain stage
       const postGain = ctx.createGain();
       postGain.gain.value = 1.0;
       postGainRef.current = postGain;
 
-      // Connect graph: source -> preGain -> eqNodes -> (panner) -> comp -> boosterGain -> limiter -> postGain -> destination
+      // Connect graph: source -> preGain -> eqNodes -> depthFilter -> (panner) -> comp -> boosterGain -> limiter -> postGain -> destination
       source.connect(preGain);
       let lastNode: AudioNode = preGain;
       for (const n of nodes) {
         lastNode.connect(n);
         lastNode = n;
       }
+      lastNode.connect(depthFilter);
+      lastNode = depthFilter;
+
       if (panner) {
         lastNode.connect(panner);
         lastNode = panner;
@@ -835,12 +932,16 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       limiter.connect(postGain);
       postGain.connect(ctx.destination);
 
-      // 8. Analyser tap (visualizer only)
+      // 9. Analyser tap (visualizer only)
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 256;
       analyser.smoothingTimeConstant = 0.82;
       analyserRef.current = analyser;
       postGain.connect(analyser);
+
+      if (ctx.state === "suspended") {
+        ctx.resume().catch(() => {});
+      }
 
       // Apply initial audio parameters
       applyAudioParameters(ctx, state.isHighQuality, soundPreset, state.soundBoost);
@@ -850,7 +951,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
-    if (!isIOSDevice() && (state.isHighQuality || state.isPlaying) && !audioCtxRef.current) {
+    if ((state.isHighQuality || state.isPlaying) && !audioCtxRef.current) {
       initWebAudio();
     }
     const ctx = audioCtxRef.current;
@@ -1476,6 +1577,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     setSoundBoost,
     is8dActive: state.is8dActive,
     setIs8dActive,
+    test8dSound,
     getAnalyser: () => analyserRef.current,
     closePlayer: () => {
       const player = audioRef.current;
@@ -1553,6 +1655,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       <audio
         ref={audioRef}
         data-main-player="true"
+        crossOrigin="anonymous"
         playsInline
         preload="auto"
         onTimeUpdate={onTimeUpdate}

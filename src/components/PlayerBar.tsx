@@ -363,7 +363,7 @@ function FullPlayer({
   isPremium: boolean; setIsPremiumModalOpen: (v: boolean) => void; setPremiumFeatureName: (v: string) => void;
   showToast: (msg: string, type?: "normal" | "hq") => void;
 }) {
-  const { state, currentSong, togglePlay, next, prev, seekTo, setVolume, cycleRepeat, setShuffle, setHighQuality, setIsAiMix, soundPreset, setSoundPreset, soundBoost, setSoundBoost, is8dActive, setIs8dActive, getAnalyser } = usePlayer();
+  const { state, currentSong, togglePlay, next, prev, seekTo, setVolume, cycleRepeat, setShuffle, setHighQuality, setIsAiMix, soundPreset, setSoundPreset, soundBoost, setSoundBoost, is8dActive, setIs8dActive, test8dSound, getAnalyser } = usePlayer();
   const art = currentSong?.thumbnailUrl || currentSong?.metadata?.thumbnailUrl;
   const proxyArt = getProxyUrl(art);
 
@@ -1001,7 +1001,7 @@ function FullPlayer({
               />
             </div>
 
-            {/* 🎧 Audiophile Comfort & Clarity Booster */}
+            {/* 🎧 Audiophile Super Loudness & Clarity Booster (مضخم الصوت لغاية 200%) */}
             <div className="space-y-3 bg-gradient-to-br from-cyan-500/10 via-sky-500/5 to-transparent p-4 rounded-2xl border border-cyan-500/20 backdrop-blur-md">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -1010,22 +1010,23 @@ function FullPlayer({
                   </div>
                   <div>
                     <h4 className="text-sm font-black text-white flex items-center gap-1.5">
-                      تعزيز النقاء والراحة للسماعات
-                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-400/20 text-cyan-300 border border-cyan-400/30">
+                      مضخم ومقوي الصوت الفائق (Super Boost)
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-400/20 text-cyan-300 border border-cyan-400/30 font-black">
                         {Math.round((soundBoost || 1.0) * 100)}%
                       </span>
                     </h4>
-                    <p className="text-[11px] text-white/50 font-medium">نقاء مخملي فائق مريح للأذن 100% بدون إجهاد أو تشويش</p>
+                    <p className="text-[11px] text-white/50 font-medium">رفع الصوت لغاية 200% مع مانع التشويش الذكي (Peak Limiter)</p>
                   </div>
                 </div>
               </div>
 
-              <div className="grid grid-cols-4 gap-2 pt-1">
+              <div className="grid grid-cols-5 gap-1.5 pt-1">
                 {[
-                  { val: 1.0, label: "100%", desc: "قياسي مريح" },
-                  { val: 1.15, label: "115%", desc: "نقاء بلوري" },
-                  { val: 1.3, label: "130%", desc: "تعزيز متوازن" },
-                  { val: 1.5, label: "150%", desc: "أقصى نقاء آمن" },
+                  { val: 1.0, label: "100%", desc: "قياسي" },
+                  { val: 1.25, label: "125%", desc: "عالي ونقي" },
+                  { val: 1.5, label: "150%", desc: "مضخم استوديو" },
+                  { val: 1.8, label: "180%", desc: "قوة خارقة" },
+                  { val: 2.0, label: "200%", desc: "أقصى علو 🚀" },
                 ].map((b) => {
                   const isCurrent = Math.abs((soundBoost || 1.0) - b.val) < 0.05;
                   return (
@@ -1033,7 +1034,7 @@ function FullPlayer({
                       key={b.val}
                       onClick={() => {
                         setSoundBoost?.(b.val);
-                        showToast(`تم ضبط النقاء على ${b.label} (${b.desc}) ✨`);
+                        showToast(`تم ضبط قوة الصوت على ${b.label} (${b.desc}) 🔊✨`);
                       }}
                       className={`py-2 px-1 rounded-xl text-center transition-all border ${
                         isCurrent
@@ -1042,7 +1043,7 @@ function FullPlayer({
                       }`}
                     >
                       <p className="text-xs">{b.label}</p>
-                      <p className={`text-[9px] mt-0.5 ${isCurrent ? "text-black/80 font-black" : "text-white/40"}`}>{b.desc}</p>
+                      <p className={`text-[8.5px] mt-0.5 leading-tight ${isCurrent ? "text-black/80 font-black" : "text-white/40"}`}>{b.desc}</p>
                     </button>
                   );
                 })}
@@ -1067,11 +1068,11 @@ function FullPlayer({
                       تقليب الصوت 8D بين فردتي السماعة
                       {(soundPreset === "spatial" || is8dActive) && (
                         <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-400/30 animate-pulse">
-                          دوران نشط ⟷
+                          دوران 360° نشط ⟷
                         </span>
                       )}
                     </h4>
-                    <p className="text-[11px] text-white/50 font-medium">الصوت يدور ويتقلب بين الأذن اليسرى واليمنى كل 9 ثوانٍ</p>
+                    <p className="text-[11px] text-white/50 font-medium">الصوت يتقلب ويدور بين الأذن اليسرى واليمنى كل 5.5 ثوانٍ بحركة دائرية</p>
                   </div>
                 </div>
 
@@ -1082,7 +1083,7 @@ function FullPlayer({
                     if (nextVal) {
                       setSoundPreset?.("spatial");
                     }
-                    showToast(nextVal ? "تم تشغيل دوران وتقليب الصوت 8D بين الأذنين 🎧🔄" : "تم إيقاف دوران الصوت");
+                    showToast(nextVal ? "تم تشغيل تقليب ودوران الصوت 8D بين الأذنين 🎧🔄" : "تم إيقاف دوران الصوت");
                   }}
                   className={`px-3 py-1.5 rounded-xl font-black text-xs transition-all border ${
                     (soundPreset === "spatial" || is8dActive)
@@ -1094,21 +1095,32 @@ function FullPlayer({
                 </button>
               </div>
 
+              {/* Instant Earbud Test Button */}
+              <button
+                onClick={() => {
+                  test8dSound?.();
+                }}
+                className="mt-3 w-full py-2 px-3 rounded-xl bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 border border-indigo-400/30 text-xs font-bold flex items-center justify-center gap-2 transition-all active:scale-95 shadow-sm"
+              >
+                <Headphones className="w-4 h-4 text-indigo-400 animate-bounce" />
+                <span>🎧 اضغط هنا لاختبار تقليب السماعتين فوراً (يسار ⟷ يمين)</span>
+              </button>
+
               {(soundPreset === "spatial" || is8dActive) && (
                 <motion.div
                   initial={{ opacity: 0, height: 0 }}
                   animate={{ opacity: 1, height: "auto" }}
                   className="mt-3 pt-3 border-t border-white/10 flex items-center justify-between text-[11px] text-indigo-200"
                 >
-                  <span className="flex items-center gap-1 font-bold">🎧 الأذن اليسرى</span>
-                  <div className="flex-1 mx-3 h-1.5 bg-white/10 rounded-full overflow-hidden relative">
+                  <span className="flex items-center gap-1 font-bold">🎧 الأذن اليسرى (L)</span>
+                  <div className="flex-1 mx-3 h-2 bg-white/10 rounded-full overflow-hidden relative shadow-inner">
                     <motion.div
-                      className="absolute inset-y-0 w-8 bg-gradient-to-r from-indigo-400 to-purple-400 rounded-full"
-                      animate={{ x: ["0%", "300%", "0%"] }}
-                      transition={{ duration: 4.5, repeat: Infinity, ease: "easeInOut" }}
+                      className="absolute inset-y-0 w-8 bg-gradient-to-r from-cyan-400 via-indigo-400 to-purple-400 rounded-full shadow-lg shadow-indigo-500/50"
+                      animate={{ x: ["0%", "280%", "0%"] }}
+                      transition={{ duration: 2.75, repeat: Infinity, ease: "easeInOut" }}
                     />
                   </div>
-                  <span className="flex items-center gap-1 font-bold">الأذن اليمنى 🎧</span>
+                  <span className="flex items-center gap-1 font-bold">(R) الأذن اليمنى 🎧</span>
                 </motion.div>
               )}
             </div>
@@ -1135,10 +1147,10 @@ function FullPlayer({
                   <Sparkles className="w-6 h-6 animate-pulse" />
                   <div className="text-right">
                     <div className="flex items-center gap-2">
-                      <span>نقاء الصوت الفائق (Studio Master)</span>
+                      <span>نقاء الصوت الفائق (Studio Master 32-bit)</span>
                     </div>
                     <p className={`text-xs font-medium ${state.isHighQuality ? "text-black/85" : "text-white/50"}`}>
-                      معالجة احترافية 32-bit مثل سبوتيفاي Hi-Fi مع عزل وضخامة ثلاثية الأبعاد
+                      معالجة احترافية مثل سبوتيفاي Hi-Fi وأنغامي Dolby مع عزل وضخامة ثلاثية الأبعاد
                     </p>
                   </div>
                 </div>
@@ -1158,18 +1170,19 @@ function FullPlayer({
                 <div className="flex items-center justify-between text-white/90 font-bold text-sm">
                   <div className="flex items-center gap-2">
                     <Sliders className="w-4 h-4 text-cyan-400" />
-                    <span>طابع ونمط نقاء الصوت المخصص:</span>
+                    <span>طابع ونمط نقاء الصوت المخصص (فرق واضح وفوري):</span>
                   </div>
-                  <span className="text-[10px] text-cyan-400 font-normal">فرق واضح 100% في السماعة</span>
+                  <span className="text-[10px] text-cyan-400 font-bold">6 بروفايلات احترافية</span>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
                   {[
-                    { id: "crystal", label: "نقاء بلوري مريح (Pure Velvet)", icon: "🎧", desc: "أعلى درجات النقاء المخملي الفائق، صوت ناعم جداً ومريح للأذن بدون أي إجهاد" },
-                    { id: "spatial", label: "صوت مكاني 8D هادئ (3D Stage)", icon: "🌌", desc: "دوران صوتي متزن وناعم بين الأذنين بدون دوار أو ضغط على طبلة الأذن" },
-                    { id: "noise_cancel", label: "عزل صوتي مريح (Acoustic Shield)", icon: "🛡️", desc: "فلترة الضوضاء المحيطة مع الحفاظ على نعومة ونقاء الترددات" },
-                    { id: "bass", label: "بيز دافئ عميق (Velvet Sub-Bass)", icon: "🔊", desc: "طبقات بيز ناعمة وفخمة بدون اهتزاز مزعج أو ضغط في الرأس" },
-                    { id: "vocal", label: "فوكال وطرب حميمي (Intimate Vocals)", icon: "🎙️", desc: "وضوح فائق ومباشر للكلمات والصوت البشري بدون أي حدة في الحروف" },
+                    { id: "crystal", label: "نقاء بلوري فائق (Pure Studio Hi-Fi)", icon: "💎", desc: "تفاصيل واضحة وشيمر نقي جداً مثل سبوتيفاي Hi-Fi بدون أي إجهاد" },
+                    { id: "bass", label: "بيس عميق وانفجاري (Deep Sub-Bass Punch)", icon: "🔊", desc: "نبضات بيز قوية وضخمة جداً في السماعة مثل سوني وبيست، تهز الأذن بنعومة" },
+                    { id: "vocal", label: "عزل وصوت غنائي نقي (Pure Vocal Clarity)", icon: "🎙️", desc: "صوت المطرب نقي ومباشر في وجهك مع عزل الآلات، مثالي للطرب والكلمات" },
+                    { id: "concert", label: "مسرح حي وDolby Atmos (Live Stage)", icon: "🏟️", desc: "صوت سينمائي محيطي وضخم كأنك حاضر حفلة لايف في المسرح مع صدى فخم" },
+                    { id: "spatial", label: "صوت محيطي 8D فضائي (360° Holographic)", icon: "🌌", desc: "دوران كامل وتقليب مستمر 8D حول الرأس بين الأذن اليسرى واليمنى كل 5.5 ثوانٍ" },
+                    { id: "noise_cancel", label: "عزل الضوضاء والشارع (Urban Shield)", icon: "🛡️", desc: "فلترة أصوات الشارع والمواصلات ورفع وضوح الكلمات في الأماكن المزدحمة" },
                   ].map((p) => {
                     const isSelected = (soundPreset || "crystal") === p.id;
                     return (
