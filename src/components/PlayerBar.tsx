@@ -4,7 +4,7 @@ import {
   Play, Pause, SkipForward, SkipBack, Shuffle,
   Repeat, Volume2, VolumeX, Heart, DownloadCloud,
   ChevronDown, ListMusic, Share2, Crown,
-  Settings, Music2, FileText, Sparkles, Sliders, Waves
+  Settings, Music2, FileText, Sparkles, Sliders, Waves, Zap, Shield, Headphones
 } from "lucide-react";
 import { usePlayer } from "@/state/playerContext";
 import { useCallback, useEffect, useRef, useState, useMemo } from "react";
@@ -362,7 +362,7 @@ function FullPlayer({
   isPremium: boolean; setIsPremiumModalOpen: (v: boolean) => void; setPremiumFeatureName: (v: string) => void;
   showToast: (msg: string, type?: "normal" | "hq") => void;
 }) {
-  const { state, currentSong, togglePlay, next, prev, seekTo, setVolume, cycleRepeat, setShuffle, setHighQuality, setIsAiMix, soundPreset, setSoundPreset, getAnalyser } = usePlayer();
+  const { state, currentSong, togglePlay, next, prev, seekTo, setVolume, cycleRepeat, setShuffle, setHighQuality, setIsAiMix, soundPreset, setSoundPreset, soundBoost, setSoundBoost, is8dActive, setIs8dActive, getAnalyser } = usePlayer();
   const art = currentSong?.thumbnailUrl || currentSong?.metadata?.thumbnailUrl;
   const proxyArt = getProxyUrl(art);
 
@@ -967,11 +967,13 @@ function FullPlayer({
 
         {/* ═══════════ AUDIO TAB ═══════════ */}
         {activeTab === "audio" && (
-          <div className="flex-1 overflow-y-auto no-scrollbar p-4 space-y-4" dir="rtl" data-scroll style={{ WebkitOverflowScrolling: "touch", touchAction: "pan-y" }}>
+          <div className="flex-1 overflow-y-auto no-scrollbar p-4 space-y-4 pb-24" dir="rtl" data-scroll style={{ WebkitOverflowScrolling: "touch", touchAction: "pan-y" }}>
+            
+            {/* Standard Volume Slider */}
             <div className="w-full space-y-3 bg-white/5 p-4 rounded-2xl border border-white/10 backdrop-blur-md">
               <div className="flex items-center justify-between text-white font-bold text-sm">
                 <VolumeX className="w-4 h-4 text-white/50" />
-                <span>مستوى الصوت</span>
+                <span>مستوى صوت الجهاز: {Math.round(state.volume * 100)}%</span>
                 <Volume2 className="w-4 h-4 text-white/50" />
               </div>
               <input
@@ -981,6 +983,118 @@ function FullPlayer({
                 className="w-full h-2 rounded-full cursor-pointer"
                 style={{ accentColor: accent }}
               />
+            </div>
+
+            {/* ⚡ Extreme Loudness Booster (مضخم الصوت الخارق حتى 200%) */}
+            <div className="space-y-3 bg-gradient-to-br from-amber-500/10 via-orange-500/5 to-transparent p-4 rounded-2xl border border-amber-500/20 backdrop-blur-md">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-amber-500/20 flex items-center justify-center text-amber-400">
+                    <Zap className="w-5 h-5 animate-pulse" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-black text-white flex items-center gap-1.5">
+                      مضخم الصوت الخارق
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/30">
+                        {Math.round((soundBoost || 1.0) * 100)}%
+                      </span>
+                    </h4>
+                    <p className="text-[11px] text-white/50 font-medium">صوت أعلى بكتير من المعتاد بدون تشويش (Limiter حماية 100%)</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-4 gap-2 pt-1">
+                {[
+                  { val: 1.0, label: "100%", desc: "عادي" },
+                  { val: 1.3, label: "130%", desc: "تضخيم +" },
+                  { val: 1.6, label: "160%", desc: "جبار 🔥" },
+                  { val: 2.0, label: "200%", desc: "أقصى قوة ⚡" },
+                ].map((b) => {
+                  const isCurrent = Math.abs((soundBoost || 1.0) - b.val) < 0.05;
+                  return (
+                    <button
+                      key={b.val}
+                      onClick={() => {
+                        setSoundBoost?.(b.val);
+                        showToast(`تم ضبط مضخم الصوت على ${b.label} (${b.desc}) ⚡`);
+                      }}
+                      className={`py-2 px-1 rounded-xl text-center transition-all border ${
+                        isCurrent
+                          ? "bg-gradient-to-r from-amber-400 to-orange-400 text-black font-black border-amber-300 shadow-lg shadow-amber-400/20 scale-105"
+                          : "bg-white/[0.04] text-white/70 hover:bg-white/[0.08] border-white/5 font-bold"
+                      }`}
+                    >
+                      <p className="text-xs">{b.label}</p>
+                      <p className={`text-[9px] mt-0.5 ${isCurrent ? "text-black/80 font-black" : "text-white/40"}`}>{b.desc}</p>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* 🎧 8D Spatial Audio Rotation (تقليب ودوران الصوت بين الأذنين) */}
+            <div className={`p-4 rounded-2xl border transition-all backdrop-blur-md ${
+              (soundPreset === "spatial" || is8dActive)
+                ? "bg-gradient-to-br from-indigo-500/15 via-purple-500/10 to-transparent border-indigo-400/30 shadow-lg shadow-indigo-500/10"
+                : "bg-white/5 border-white/10"
+            }`}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${
+                    (soundPreset === "spatial" || is8dActive) ? "bg-indigo-500/30 text-indigo-300" : "bg-white/10 text-white/50"
+                  }`}>
+                    <Headphones className="w-5 h-5 animate-pulse" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-black text-white flex items-center gap-2">
+                      تقليب الصوت 8D بين فردتي السماعة
+                      {(soundPreset === "spatial" || is8dActive) && (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-400/30 animate-pulse">
+                          دوران نشط ⟷
+                        </span>
+                      )}
+                    </h4>
+                    <p className="text-[11px] text-white/50 font-medium">الصوت يدور ويتقلب بين الأذن اليسرى واليمنى كل 9 ثوانٍ</p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => {
+                    const nextVal = !(soundPreset === "spatial" || is8dActive);
+                    setIs8dActive?.(nextVal);
+                    if (nextVal) {
+                      setSoundPreset?.("spatial");
+                    }
+                    showToast(nextVal ? "تم تشغيل دوران وتقليب الصوت 8D بين الأذنين 🎧🔄" : "تم إيقاف دوران الصوت");
+                  }}
+                  className={`px-3 py-1.5 rounded-xl font-black text-xs transition-all border ${
+                    (soundPreset === "spatial" || is8dActive)
+                      ? "bg-indigo-500 text-white border-indigo-400 shadow-md shadow-indigo-500/30"
+                      : "bg-white/10 text-white/60 border-white/10 hover:bg-white/20"
+                  }`}
+                >
+                  {(soundPreset === "spatial" || is8dActive) ? "نشط ✓" : "تفعيل"}
+                </button>
+              </div>
+
+              {(soundPreset === "spatial" || is8dActive) && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  className="mt-3 pt-3 border-t border-white/10 flex items-center justify-between text-[11px] text-indigo-200"
+                >
+                  <span className="flex items-center gap-1 font-bold">🎧 الأذن اليسرى</span>
+                  <div className="flex-1 mx-3 h-1.5 bg-white/10 rounded-full overflow-hidden relative">
+                    <motion.div
+                      className="absolute inset-y-0 w-8 bg-gradient-to-r from-indigo-400 to-purple-400 rounded-full"
+                      animate={{ x: ["0%", "300%", "0%"] }}
+                      transition={{ duration: 4.5, repeat: Infinity, ease: "easeInOut" }}
+                    />
+                  </div>
+                  <span className="flex items-center gap-1 font-bold">الأذن اليمنى 🎧</span>
+                </motion.div>
+              )}
             </div>
 
             {/* Master Studio Clarity Toggle */}
@@ -1025,18 +1139,21 @@ function FullPlayer({
                 animate={{ opacity: 1, y: 0 }}
                 className="space-y-3 bg-white/[0.04] p-4 rounded-2xl border border-white/10"
               >
-                <div className="flex items-center gap-2 text-white/90 font-bold text-sm">
-                  <Sliders className="w-4 h-4 text-cyan-400" />
-                  <span>طابع ونمط نقاء الصوت:</span>
+                <div className="flex items-center justify-between text-white/90 font-bold text-sm">
+                  <div className="flex items-center gap-2">
+                    <Sliders className="w-4 h-4 text-cyan-400" />
+                    <span>طابع ونمط نقاء الصوت المخصص:</span>
+                  </div>
+                  <span className="text-[10px] text-cyan-400 font-normal">فرق واضح 100% في السماعة</span>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2.5">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
                   {[
-                    { id: "crystal", label: "نقاء فائق (Studio)", icon: "🎧", desc: "وضوح فائق وتفاصيل ناعمة" },
-                    { id: "spatial", label: "صوت محيطي 3D", icon: "🌌", desc: "مسرح صوتي مجسم 360°" },
-                    { id: "noise_cancel", label: "عزل الضوضاء الفائق", icon: "🛡️", desc: "تنقية الاستوديو وعزل الهمس" },
-                    { id: "bass", label: "بيس ونقاء عميق", icon: "🔊", desc: "تضخيم عميق بدون كتم" },
-                    { id: "vocal", label: "صوت غنائي (Vocal)", icon: "🎙️", desc: "إبراز صوت المطرب بوضوح" },
+                    { id: "crystal", label: "نقاء استوديو فائق (Hi-Fi Master)", icon: "🎧", desc: "تفاصيل بلورية فائقة وتألق ناعم ونقاء 100%" },
+                    { id: "spatial", label: "صوت مكاني 8D يدور بين الأذنين", icon: "🌌", desc: "تقليب ودوران الصوت بين فردتي الهاند فري 360°" },
+                    { id: "noise_cancel", label: "عزل الضوضاء الخارق (Acoustic Shield)", icon: "🛡️", desc: "عزل كلي للمحيط الخارجي وانغماس صوتي خيالي" },
+                    { id: "bass", label: "بيس متفجر فائق (Sub-Bass 808)", icon: "🔊", desc: "تضخيم بيز عملاق يهز السماعة بنقاء استوديو" },
+                    { id: "vocal", label: "فوكال وطرب مباشر (Pure Vocals)", icon: "🎙️", desc: "صوت المطرب في المقدمة بوضوح لا يُصدّق" },
                   ].map((p) => {
                     const isSelected = (soundPreset || "crystal") === p.id;
                     return (
@@ -1044,20 +1161,23 @@ function FullPlayer({
                         key={p.id}
                         onClick={() => {
                           setSoundPreset?.(p.id as any);
+                          if (p.id === "spatial") {
+                            setIs8dActive?.(true);
+                          }
                           showToast(`تم تفعيل طابع: ${p.label} ✨`);
                         }}
-                        className={`p-3 rounded-xl text-right transition-all flex flex-col justify-between ${
+                        className={`p-3.5 rounded-xl text-right transition-all flex flex-col justify-between border ${
                           isSelected
-                            ? "bg-gradient-to-r from-cyan-400 to-sky-400 text-black shadow-lg shadow-cyan-400/25 font-bold"
-                            : "bg-white/[0.04] text-white/70 hover:bg-white/[0.08] border border-white/5"
+                            ? "bg-gradient-to-r from-cyan-400 to-sky-400 text-black shadow-lg shadow-cyan-400/25 font-bold border-cyan-300"
+                            : "bg-white/[0.04] text-white/70 hover:bg-white/[0.08] border-white/5"
                         }`}
                       >
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-base">{p.icon}</span>
-                          {isSelected && <span className="text-[10px] bg-black/20 px-1.5 py-0.5 rounded-full font-black text-black">نشط ⚡</span>}
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="text-xl">{p.icon}</span>
+                          {isSelected && <span className="text-[10px] bg-black/20 px-2 py-0.5 rounded-full font-black text-black">نشط ⚡</span>}
                         </div>
-                        <p className="text-xs font-bold">{p.label}</p>
-                        <p className={`text-[10px] mt-0.5 ${isSelected ? "text-black/85" : "text-white/40"}`}>{p.desc}</p>
+                        <p className="text-xs font-black">{p.label}</p>
+                        <p className={`text-[11px] mt-1 leading-snug ${isSelected ? "text-black/85 font-medium" : "text-white/40"}`}>{p.desc}</p>
                       </button>
                     );
                   })}

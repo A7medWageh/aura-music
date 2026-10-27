@@ -30,6 +30,8 @@ export type PlayerState = {
   error: string | null;
   isHighQuality: boolean;
   isAiMix: boolean;
+  soundBoost: number;
+  is8dActive: boolean;
 };
 
 export const initialPlayerState: PlayerState = {
@@ -45,6 +47,8 @@ export const initialPlayerState: PlayerState = {
   duration: 0,
   isBuffering: false,
   error: null,
-  isHighQuality: false,
-  isAiMix: false
+  isHighQuality: true,
+  isAiMix: false,
+  soundBoost: 1.0,
+  is8dActive: false,
 };
