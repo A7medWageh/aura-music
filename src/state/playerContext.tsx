@@ -37,27 +37,27 @@ type PlayerContextValue = {
 const PlayerContext = createContext<PlayerContextValue | null>(null);
 
 export function PlayerProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<PlayerState>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const saved = localStorage.getItem("aura-player-session");
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          if (parsed.queue && parsed.queue.length > 0 && parsed.currentSongId) {
-            return {
-              ...initialPlayerState,
-              queue: parsed.queue,
-              currentSongId: parsed.currentSongId,
-              currentTime: parsed.currentTime || 0,
-              volume: parsed.volume ?? initialPlayerState.volume,
-              isPlaying: false // keep paused on initial mount so browser autoplay policies are respected
-            };
-          }
+  const [state, setState] = useState<PlayerState>(initialPlayerState);
+
+  // Restore saved player session on client mount only (guarantees SSR hydration consistency)
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("aura-player-session");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.queue && parsed.queue.length > 0 && parsed.currentSongId) {
+          setState((prev) => ({
+            ...prev,
+            queue: parsed.queue,
+            currentSongId: parsed.currentSongId,
+            currentTime: parsed.currentTime || 0,
+            volume: parsed.volume ?? initialPlayerState.volume,
+            isPlaying: false, // keep paused on initial mount so browser autoplay policies are respected
+          }));
         }
-      } catch {}
-    }
-    return initialPlayerState;
-  });
+      }
+    } catch {}
+  }, []);
 
   // Auto-clean any corrupted/duplicate Khaleeji audio blobs from user's device on startup
   useEffect(() => {

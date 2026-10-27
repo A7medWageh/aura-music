@@ -10,14 +10,20 @@ import { getClientCached, setClientCached } from "@/utils/clientCache";
 import { useCacheWarm } from "@/hooks/useCacheWarm";
 
 export default function DiscoverPage() {
-  const cachedReleases = getClientCached<any[]>("discover_new_releases");
-  const [newReleases, setNewReleases] = useState<any[]>(() => cachedReleases || []);
-  const [loading, setLoading] = useState(() => !cachedReleases || cachedReleases.length === 0);
+  const [newReleases, setNewReleases] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
   const { playNow } = usePlayer();
   useCacheWarm(newReleases, 8, 600);
 
   useEffect(() => {
-    // Fetch YouTube New Releases data and cache in background
+    // 1. Immediately populate from client cache
+    const cachedReleases = getClientCached<any[]>("discover_new_releases");
+    if (cachedReleases && cachedReleases.length > 0) {
+      setNewReleases(cachedReleases);
+      setLoading(false);
+    }
+
+    // 2. Fetch fresh YouTube New Releases data and cache in background
     fetch("/api/discovery/new-releases")
       .then(res => res.json())
       .then(data => {

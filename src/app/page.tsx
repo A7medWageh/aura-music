@@ -15,18 +15,38 @@ type ArtistEntry = { name: string; artistId: string; thumbnailUrl: string };
 
 // ───── Artist Card ─────
 function ArtistCard({ artist }: { artist: ArtistEntry }) {
+  const [useProxy, setUseProxy] = useState(false);
+  const [hasError, setHasError] = useState(false);
+
+  const imgSrc = useProxy
+    ? `/api/proxy?url=${encodeURIComponent(artist.thumbnailUrl)}`
+    : getProxyUrl(artist.thumbnailUrl);
+
+  const showFallback = !artist.thumbnailUrl || hasError;
+
   return (
     <Link href={artist.artistId ? `/artist/${artist.artistId}` : "#"} className="flex flex-col items-center gap-2 group cursor-pointer">
       <div className="w-16 h-16 md:w-24 md:h-24 rounded-full overflow-hidden border-2 border-transparent group-hover:border-indigo-500 transition-all shadow-lg ring-2 ring-white/5 group-hover:ring-indigo-500/50 group-hover:shadow-[0_0_30px_rgba(99,102,241,0.5)] shrink-0 relative">
-        {artist.thumbnailUrl ? (
-          <img
-            src={getProxyUrl(artist.thumbnailUrl)}
-            alt={artist.name}
-            className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"
-            onError={(e) => { (e.target as HTMLImageElement).parentElement!.innerHTML = `<div class="w-full h-full bg-gradient-to-br from-indigo-500/20 to-purple-600/20 flex items-center justify-center text-3xl">🎤</div>`; }}
-          />
+        {showFallback ? (
+          <div className="w-full h-full bg-gradient-to-br from-indigo-500/20 to-purple-600/20 flex items-center justify-center text-3xl select-none">
+            🎤
+          </div>
         ) : (
-          <div className="w-full h-full bg-gradient-to-br from-indigo-500/30 to-purple-600/30 flex items-center justify-center text-3xl">🎤</div>
+          <img
+            src={imgSrc}
+            alt={artist.name}
+            loading="lazy"
+            decoding="async"
+            referrerPolicy="no-referrer"
+            className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"
+            onError={() => {
+              if (!useProxy && artist.thumbnailUrl) {
+                setUseProxy(true);
+              } else {
+                setHasError(true);
+              }
+            }}
+          />
         )}
       </div>
       <span className="text-xs font-bold text-center text-gray-400 group-hover:text-white group-hover:text-shadow-[0_0_10px_rgba(99,102,241,0.8)] transition-all leading-tight px-1 line-clamp-2">{artist.name}</span>
@@ -71,15 +91,12 @@ export default function HomePage() {
   const { playNow } = usePlayer();
   const [greeting, setGreeting] = useState("مساء الخير");
   
-  // Instantaneous state initialization from memory/session cache (0ms delay)
-  const cachedTrending = getClientCached<any[]>("home_trending");
-  const cachedArtists = getClientCached<{ egyptian: ArtistEntry[]; intl: ArtistEntry[] }>("home_artists");
-
-  const [trending, setTrending] = useState<any[]>(() => cachedTrending || []);
-  const [egyptianArtists, setEgyptianArtists] = useState<ArtistEntry[]>(() => cachedArtists?.egyptian || []);
-  const [intlArtists, setIntlArtists] = useState<ArtistEntry[]>(() => cachedArtists?.intl || []);
-  const [trendLoading, setTrendLoading] = useState(() => !cachedTrending || cachedTrending.length === 0);
-  const [artistsLoading, setArtistsLoading] = useState(() => !cachedArtists || cachedArtists.egyptian.length === 0);
+  // Clean initial state matching SSR HTML to prevent React hydration mismatch #418
+  const [trending, setTrending] = useState<any[]>([]);
+  const [egyptianArtists, setEgyptianArtists] = useState<ArtistEntry[]>([]);
+  const [intlArtists, setIntlArtists] = useState<ArtistEntry[]>([]);
+  const [trendLoading, setTrendLoading] = useState(true);
+  const [artistsLoading, setArtistsLoading] = useState(true);
   const [toast, setToast] = useState<string | null>(null);
   const [currentSlide, setCurrentSlide] = useState(0);
   const autoPlayRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -121,7 +138,21 @@ export default function HomePage() {
     else if (hour < 18) setGreeting("طاب يومك");
     else setGreeting("مساء الخير");
 
-    // Fetch and cache in background (Stale While Revalidate)
+    // 1. Immediately populate from client memory/session cache (0ms instant transition)
+    const cachedTrending = getClientCached<any[]>("home_trending");
+    const cachedArtists = getClientCached<{ egyptian: ArtistEntry[]; intl: ArtistEntry[] }>("home_artists");
+
+    if (cachedTrending && cachedTrending.length > 0) {
+      setTrending(cachedTrending);
+      setTrendLoading(false);
+    }
+    if (cachedArtists && cachedArtists.egyptian && cachedArtists.egyptian.length > 0) {
+      setEgyptianArtists(cachedArtists.egyptian);
+      setIntlArtists(cachedArtists.intl || []);
+      setArtistsLoading(false);
+    }
+
+    // 2. Fetch fresh data and cache in background (Stale While Revalidate)
     fetch("/api/discovery/trending")
       .then(r => r.json())
       .then(res => {
