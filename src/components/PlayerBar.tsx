@@ -5,7 +5,7 @@ import {
   Repeat, Volume2, VolumeX, Heart, DownloadCloud,
   ChevronDown, ListMusic, Share2, Crown,
   Settings, Music2, FileText, Sparkles, Sliders, Waves, Zap, Shield, Headphones,
-  RotateCcw, RotateCw, Smartphone, Unlock, Lock, Maximize2, Minimize2
+  RotateCcw, RotateCw, Maximize2, Minimize2
 } from "lucide-react";
 import { usePlayer } from "@/state/playerContext";
 import { useCallback, useEffect, useRef, useState, useMemo } from "react";
@@ -356,14 +356,12 @@ function SeekBar({
 // ─── Full Screen Player ───────────────────────────────────────────────
 function FullPlayer({
   isOpen, onClose, isLiked, onLike, onDownload, accent,
-  isPremium, setIsPremiumModalOpen, setPremiumFeatureName, showToast,
-  startInLockScreen, onResetLockScreenStart
+  isPremium, setIsPremiumModalOpen, setPremiumFeatureName, showToast
 }: {
   isOpen: boolean; onClose: () => void; isLiked: boolean;
   onLike: () => void; onDownload: () => void; accent: string;
   isPremium: boolean; setIsPremiumModalOpen: (v: boolean) => void; setPremiumFeatureName: (v: string) => void;
   showToast: (msg: string, type?: "normal" | "hq") => void;
-  startInLockScreen?: boolean; onResetLockScreenStart?: () => void;
 }) {
   const { state, currentSong, togglePlay, next, prev, seekTo, setVolume, cycleRepeat, setShuffle, setHighQuality, setIsAiMix, soundPreset, setSoundPreset, soundBoost, setSoundBoost, is8dActive, setIs8dActive, getAnalyser } = usePlayer();
   const art = currentSong?.thumbnailUrl || currentSong?.metadata?.thumbnailUrl;
@@ -387,45 +385,6 @@ function FullPlayer({
   };
   const energyRef = useAnalyserEnergy(getAnalyser, state.isPlaying);
   const orbBoost = bgMode === "calm" ? 0.45 : bgMode === "epic" ? 1.7 : 1;
-
-  // ── Ambient Lock Screen Mode State & Screen WakeLock ──
-  const [isLockScreenMode, setIsLockScreenMode] = useState(false);
-  const [lockClockTime, setLockClockTime] = useState("");
-  const [lockClockDate, setLockClockDate] = useState("");
-
-  useEffect(() => {
-    if (isOpen && startInLockScreen) {
-      setIsLockScreenMode(true);
-      onResetLockScreenStart?.();
-    }
-  }, [isOpen, startInLockScreen, onResetLockScreenStart]);
-
-  useEffect(() => {
-    if (!isLockScreenMode) return;
-    let wakeLock: any = null;
-    const req = async () => {
-      try {
-        if ("wakeLock" in navigator) {
-          wakeLock = await (navigator as any).wakeLock.request("screen");
-        }
-      } catch {}
-    };
-    req();
-    return () => {
-      if (wakeLock) wakeLock.release().catch(() => {});
-    };
-  }, [isLockScreenMode]);
-
-  useEffect(() => {
-    const updateTime = () => {
-      const now = new Date();
-      setLockClockTime(now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false }));
-      setLockClockDate(now.toLocaleDateString("ar-EG", { weekday: "long", day: "numeric", month: "long" }));
-    };
-    updateTime();
-    const interval = setInterval(updateTime, 1000);
-    return () => clearInterval(interval);
-  }, []);
 
   const skip15Back = useCallback(() => {
     seekTo(Math.max(0, state.currentTime - 15));
@@ -734,17 +693,6 @@ function FullPlayer({
             <ChevronDown className="w-6 h-6 text-white" />
           </button>
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => {
-                setIsLockScreenMode(true);
-                showToast("تم تفعيل وضع شاشة القفل الخرافية 📱✨");
-              }}
-              title="شاشة القفل التفاعلية"
-              className="px-2.5 py-1.5 rounded-full border border-amber-400/30 bg-amber-400/10 text-amber-300 hover:bg-amber-400/20 transition-all active:scale-90 flex items-center gap-1.5 shadow-[0_0_12px_rgba(251,191,36,0.2)]"
-            >
-              <Smartphone className="w-4 h-4 text-amber-300 animate-pulse" />
-              <span className="text-[11px] font-bold">شاشة القفل</span>
-            </button>
             <button
               onClick={cycleBgMode}
               title="شكل الخلفية"
@@ -1322,227 +1270,6 @@ function FullPlayer({
 
       </div>
 
-      {/* ═══════════ AMBIENT LOCK SCREEN OVERLAY ═══════════ */}
-      <AnimatePresence>
-        {isLockScreenMode && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.97 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.97 }}
-            transition={{ duration: 0.25, ease: "easeOut" }}
-            className="fixed inset-0 z-50 flex flex-col justify-between overflow-hidden select-none"
-            style={{
-              background: "#030406",
-              paddingTop: "max(16px, env(safe-area-inset-top, 16px))",
-              paddingBottom: "max(20px, env(safe-area-inset-bottom, 20px))",
-              paddingLeft: "max(18px, env(safe-area-inset-left, 18px))",
-              paddingRight: "max(18px, env(safe-area-inset-right, 18px))",
-            }}
-          >
-            {/* Background blurred cover & dynamic ambient glow */}
-            <div className="absolute inset-0 pointer-events-none overflow-hidden">
-              <motion.img
-                src={proxyArt}
-                alt=""
-                className="w-full h-full object-cover"
-                style={{ filter: "blur(90px) brightness(0.22) saturate(1.4)" }}
-                animate={state.isPlaying ? { scale: [1.2, 1.35, 1.2] } : { scale: 1.2 }}
-                transition={{ duration: 16, repeat: Infinity, ease: "easeInOut" }}
-              />
-              <div className="absolute inset-0 bg-gradient-to-b from-[#030406]/90 via-[#030406]/80 to-[#030406]" />
-            </div>
-
-            {/* Top Bar / Clock & Exit */}
-            <div className="relative z-10 flex flex-col items-center w-full max-w-sm mx-auto shrink-0">
-              <div className="w-full flex items-center justify-between mb-2">
-                <button
-                  onClick={() => setIsLockScreenMode(false)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/10 hover:bg-white/20 active:scale-95 text-white/90 text-xs font-bold border border-white/15 backdrop-blur-xl transition-all shadow-lg"
-                >
-                  <Unlock className="w-4 h-4 text-amber-400" />
-                  <span>خروج من شاشة القفل</span>
-                </button>
-                <span className="text-[10px] font-bold text-amber-300 bg-amber-400/15 border border-amber-400/30 px-2.5 py-1 rounded-full flex items-center gap-1 shadow-[0_0_10px_rgba(251,191,36,0.2)]">
-                  <Sparkles className="w-3 h-3 text-amber-300 animate-pulse" />
-                  شاشة القفل التفاعلية
-                </span>
-              </div>
-
-              {/* Big Digital Clock & Arabic Date */}
-              <div className="text-center mt-1 flex flex-col items-center">
-                <motion.h1
-                  key={lockClockTime}
-                  initial={{ opacity: 0.85 }}
-                  animate={{ opacity: 1 }}
-                  className="text-6xl sm:text-7xl font-black text-white tracking-tight tabular-nums drop-shadow-[0_0_30px_rgba(255,255,255,0.3)]"
-                  style={{ fontFamily: "system-ui, -apple-system, sans-serif" }}
-                >
-                  {lockClockTime}
-                </motion.h1>
-                <p className="text-xs sm:text-sm font-semibold text-white/70 mt-0.5 tracking-wide">
-                  {lockClockDate}
-                </p>
-              </div>
-            </div>
-
-            {/* Middle: Floating Glowing Artwork & Track Info */}
-            <div className="relative z-10 flex-1 flex flex-col items-center justify-center my-auto max-w-sm mx-auto w-full min-h-0">
-              <motion.div
-                animate={state.isPlaying ? { scale: [1, 1.025, 1] } : { scale: 1 }}
-                transition={{ duration: 3.5, repeat: Infinity, ease: "easeInOut" }}
-                className="relative w-[min(58vw,24vh,220px)] aspect-square flex items-center justify-center"
-              >
-                {state.isPlaying && (
-                  <motion.div
-                    className="absolute -inset-5 rounded-full pointer-events-none"
-                    style={{
-                      background: `radial-gradient(circle, ${accent}77 0%, transparent 70%)`,
-                      filter: "blur(28px)",
-                    }}
-                    animate={{ opacity: [0.4, 0.85, 0.4] }}
-                    transition={{ duration: 2.2, repeat: Infinity, ease: "easeInOut" }}
-                  />
-                )}
-                <div
-                  className="relative w-full h-full rounded-[2.2rem] overflow-hidden border border-white/20"
-                  style={{ boxShadow: `0 20px 60px rgba(0,0,0,0.95), 0 0 40px ${accent}40` }}
-                >
-                  <img
-                    src={proxyArt}
-                    alt={currentSong?.title}
-                    className="w-full h-full object-cover"
-                    onError={(e) => { (e.target as HTMLImageElement).src = "/placeholder-song.jpg"; }}
-                  />
-                </div>
-              </motion.div>
-
-              {/* Title, Artist & Quality Badge */}
-              <div className="text-center mt-3 w-full px-4">
-                <h2 className="text-white font-black text-lg sm:text-xl truncate max-w-[270px] mx-auto">
-                  {currentSong?.title || "لا توجد أغنية"}
-                </h2>
-                <p className="text-neutral-400 text-xs sm:text-sm font-semibold truncate mt-0.5">
-                  {currentSong?.artist || "فنان"}
-                </p>
-                <div className="flex items-center justify-center gap-2 mt-1.5">
-                  <span className="text-[10px] font-black text-cyan-300 bg-cyan-400/10 px-2.5 py-0.5 rounded-full border border-cyan-400/30">
-                    استوديو Master HQ 🎧
-                  </span>
-                  {(currentSong?.albumName || (currentSong as any)?.album) && (
-                    <span className="text-[10px] text-white/60 bg-white/5 px-2 py-0.5 rounded-full border border-white/10 truncate max-w-[140px]">
-                      {currentSong?.albumName || (currentSong as any)?.album}
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              {/* Live Synced Lyric Pill */}
-              {activeLyricSnippet && (
-                <motion.div
-                  key={activeLyricSnippet}
-                  initial={{ opacity: 0, y: 5 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -5 }}
-                  className="mt-2 text-center px-4 max-w-xs"
-                >
-                  <p className="text-xs sm:text-sm font-bold text-cyan-300 italic line-clamp-1 drop-shadow-[0_0_12px_rgba(0,229,255,0.5)]">
-                    "{activeLyricSnippet}"
-                  </p>
-                </motion.div>
-              )}
-            </div>
-
-            {/* Bottom: Lockscreen Controls Pod */}
-            <div className="relative z-10 w-full max-w-sm mx-auto flex flex-col gap-3 shrink-0">
-              {/* Seek Bar & Times */}
-              <div className="w-full">
-                <SeekBar
-                  progress={state.currentTime}
-                  duration={state.duration}
-                  onSeek={seekTo}
-                  height="h-1.5"
-                  rtl={false}
-                  accent={accent}
-                  isPremium={isPremium}
-                />
-                <div className="flex justify-between mt-1 text-[11px] font-bold text-neutral-400 tabular-nums" dir="ltr">
-                  <span>{fmtTime(state.currentTime)}</span>
-                  <span>-{fmtTime(Math.max(0, state.duration - state.currentTime))}</span>
-                </div>
-              </div>
-
-              {/* Buttons Row (Skip -15s, Prev, Big Play/Pause, Next, Skip +15s, Like) */}
-              <div className="flex items-center justify-between px-1 w-full">
-                <button
-                  onClick={() => setShuffle(!state.shuffle)}
-                  className={`p-2 rounded-full transition-colors active:scale-90 ${state.shuffle ? "text-cyan-400" : "text-white/40 hover:text-white"}`}
-                  title="خلط"
-                >
-                  <Shuffle className="w-4 h-4" />
-                </button>
-
-                <button
-                  onClick={skip15Back}
-                  className="p-2.5 rounded-full bg-white/5 border border-white/10 text-white/80 hover:text-white active:scale-90 transition-all"
-                  title="رجوع 15 ثانية"
-                >
-                  <RotateCcw className="w-4 h-4" />
-                </button>
-
-                <button
-                  onClick={prev}
-                  className="p-2 text-white hover:text-neutral-200 active:scale-90 transition-transform"
-                  title="الأغنية السابقة"
-                >
-                  <SkipBack className="w-7 h-7 fill-current" />
-                </button>
-
-                {/* Big Glowing Play/Pause */}
-                <button
-                  onClick={togglePlay}
-                  className="w-16 h-16 rounded-full flex items-center justify-center bg-white text-black active:scale-95 transition-all shadow-[0_0_35px_rgba(255,255,255,0.4)] shrink-0"
-                  style={{ boxShadow: `0 0 35px ${accent}66, 0 8px 24px rgba(0,0,0,0.8)` }}
-                  title={state.isPlaying ? "إيقاف مؤقت" : "تشغيل"}
-                >
-                  {state.isBuffering ? (
-                    <div className="w-6 h-6 border-2 border-neutral-300 border-t-black rounded-full animate-spin" />
-                  ) : state.isPlaying ? (
-                    <Pause className="w-7 h-7 fill-current text-black" />
-                  ) : (
-                    <Play className="w-7 h-7 fill-current text-black ml-0.5" />
-                  )}
-                </button>
-
-                <button
-                  onClick={next}
-                  className="p-2 text-white hover:text-neutral-200 active:scale-90 transition-transform"
-                  title="الأغنية التالية"
-                >
-                  <SkipForward className="w-7 h-7 fill-current" />
-                </button>
-
-                <button
-                  onClick={skip15Forward}
-                  className="p-2.5 rounded-full bg-white/5 border border-white/10 text-white/80 hover:text-white active:scale-90 transition-all"
-                  title="تقديم 15 ثانية"
-                >
-                  <RotateCw className="w-4 h-4" />
-                </button>
-
-                <button
-                  onClick={onLike}
-                  className="p-2 rounded-full transition-transform active:scale-90"
-                  title="إعجاب"
-                >
-                  <Heart
-                    className={`w-5 h-5 transition-all ${isLiked ? "fill-current text-pink-400 scale-110 drop-shadow-[0_0_8px_rgba(244,114,182,0.6)]" : "text-white/40 hover:text-white"}`}
-                  />
-                </button>
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </motion.div>
   );
 }
@@ -1552,7 +1279,6 @@ export function PlayerBar() {
   const { state, currentSong, next, prev, togglePlay, setVolume, seekTo, hasUserTriggeredPlay } = usePlayer();
   const [isLiked, setIsLiked] = useState(false);
   const [fullOpen, setFullOpen] = useState(false);
-  const [openInLockScreen, setOpenInLockScreen] = useState(false);
   const [isPremiumModalOpen, setIsPremiumModalOpen] = useState(false);
   const [premiumFeatureName, setPremiumFeatureName] = useState("");
   const { addToast } = useToastStore();
@@ -1621,8 +1347,6 @@ export function PlayerBar() {
           setIsPremiumModalOpen={setIsPremiumModalOpen}
           setPremiumFeatureName={setPremiumFeatureName}
           showToast={addToast}
-          startInLockScreen={openInLockScreen}
-          onResetLockScreenStart={() => setOpenInLockScreen(false)}
         />
 
       {/* Mini Bar — mobile: above tab bar, desktop: bottom-0 */}
@@ -1732,16 +1456,6 @@ export function PlayerBar() {
 
           {/* Right side */}
           <div className="flex items-center gap-1.5 shrink-0">
-            <button
-              onClick={() => {
-                setOpenInLockScreen(true);
-                setFullOpen(true);
-              }}
-              className="p-1.5 text-amber-400/80 hover:text-amber-300 active:scale-90 transition-transform"
-              title="شاشة القفل التفاعلية"
-            >
-              <Smartphone className="w-4 h-4 text-amber-400" />
-            </button>
             <button onClick={toggleLike} className="p-1.5 active:scale-90 transition-transform">
               <Heart className={`w-5 h-5 transition-colors ${isLiked ? "text-pink-500 fill-current drop-shadow-[0_0_8px_rgba(244,114,182,0.6)]" : "text-neutral-500 hover:text-white"}`} />
             </button>

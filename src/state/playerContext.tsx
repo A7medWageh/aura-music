@@ -113,13 +113,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     let artUrl = (song as any).originalThumbnailUrl || (song.metadata as any)?.originalThumbnailUrl || song.thumbnailUrl || song.metadata?.thumbnailUrl;
 
     // Check classic catalogs (Angham & Jannat) for verified high-res HTTPS artwork
+    let jannatClassic: any = null;
     const anghamClassic = ANGHAM_OLD_CLASSICS.find(
       (c) => c.songId === song.songId || c.youtubeVideoId === song.youtubeVideoId || c.title === song.title
     );
     if (anghamClassic?.thumbnailUrl) {
       artUrl = anghamClassic.thumbnailUrl;
     } else {
-      const jannatClassic = JANNAT_OLD_CLASSICS.find(
+      jannatClassic = JANNAT_OLD_CLASSICS.find(
         (c) => c.songId === song.songId || c.youtubeVideoId === song.youtubeVideoId || c.title === song.title
       );
       if (jannatClassic?.thumbnailUrl) {
@@ -127,16 +128,21 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    if (!artUrl || artUrl.startsWith("blob:") || artUrl.startsWith("data:")) {
-      artUrl = typeof window !== "undefined" ? `${window.location.origin}/placeholder-album.jpg` : "/placeholder-album.jpg";
-    } else if (artUrl.startsWith("/")) {
-      artUrl = typeof window !== "undefined" ? `${window.location.origin}${artUrl}` : artUrl;
-    } else if (artUrl.startsWith("http://")) {
-      artUrl = artUrl.replace("http://", "https://");
-    }
+    const albumName = anghamClassic?.album || jannatClassic?.album || song.albumName || song.folderName || (song.metadata?.album) || "Aura Music";
+    const songArtist = anghamClassic ? "أنغام" : jannatClassic ? "جنات" : (song.artist || "فنان");
 
-    const albumName = anghamClassic?.album || song.albumName || song.folderName || (song.metadata?.album) || "Aura Music";
-    const songArtist = anghamClassic ? "أنغام" : (song.artist || "فنان");
+    // Route artwork through our dedicated high-res proxy (/api/artwork)
+    // iOS NowPlaying requires absolute HTTPS URLs serving image/jpeg or image/png with CORS headers
+    const baseUrl = typeof window !== "undefined" ? window.location.origin : "https://aura-music.vercel.app";
+    const p = new URLSearchParams();
+    if (artUrl && !artUrl.startsWith("blob:") && !artUrl.startsWith("data:")) {
+      p.set("url", artUrl);
+    }
+    p.set("songId", song.songId || song.youtubeVideoId || "");
+    p.set("title", song.title || "");
+    if (songArtist) p.set("artist", songArtist);
+
+    const fullArtworkUrl = `${baseUrl}/api/artwork?${p.toString()}`;
 
     try {
       navigator.mediaSession.metadata = new MediaMetadata({
@@ -144,13 +150,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         artist: songArtist,
         album: albumName,
         artwork: [
-          { src: artUrl, sizes: "96x96", type: "image/jpeg" },
-          { src: artUrl, sizes: "128x128", type: "image/jpeg" },
-          { src: artUrl, sizes: "192x192", type: "image/jpeg" },
-          { src: artUrl, sizes: "256x256", type: "image/jpeg" },
-          { src: artUrl, sizes: "384x384", type: "image/jpeg" },
-          { src: artUrl, sizes: "512x512", type: "image/jpeg" },
-          { src: artUrl, sizes: "1024x1024", type: "image/jpeg" },
+          { src: fullArtworkUrl, sizes: "96x96", type: "image/jpeg" },
+          { src: fullArtworkUrl, sizes: "128x128", type: "image/jpeg" },
+          { src: fullArtworkUrl, sizes: "192x192", type: "image/jpeg" },
+          { src: fullArtworkUrl, sizes: "256x256", type: "image/jpeg" },
+          { src: fullArtworkUrl, sizes: "384x384", type: "image/jpeg" },
+          { src: fullArtworkUrl, sizes: "512x512", type: "image/jpeg" },
+          { src: fullArtworkUrl, sizes: "1024x1024", type: "image/jpeg" },
         ],
       });
     } catch (err) {
@@ -1001,7 +1007,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     });
 
     navigator.mediaSession.setActionHandler("seekbackward", (details) => {
-      const skipTime = details.seekOffset || 10;
+      const skipTime = details.seekOffset || 15;
       if (audioRef.current) {
         seekTo(Math.max(0, audioRef.current.currentTime - skipTime));
         syncPositionState();
@@ -1009,7 +1015,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     });
 
     navigator.mediaSession.setActionHandler("seekforward", (details) => {
-      const skipTime = details.seekOffset || 10;
+      const skipTime = details.seekOffset || 15;
       if (audioRef.current) {
         seekTo(Math.min((audioRef.current.currentTime || 0) + skipTime, audioRef.current.duration || 0));
         syncPositionState();
