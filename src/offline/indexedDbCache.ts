@@ -111,6 +111,7 @@ export async function saveSongMeta(song: {
   title: string;
   artist: string;
   thumbnailUrl?: string;
+  originalThumbnailUrl?: string;
   youtubeVideoId: string;
   albumId?: string;
   albumName?: string;
@@ -123,9 +124,15 @@ export async function saveSongMeta(song: {
     const req = tx.objectStore(META_STORE).get(song.songId);
     req.onsuccess = () => {
       const existing = req.result || {};
+      const originalHttpUrl =
+        song.originalThumbnailUrl ||
+        existing.originalThumbnailUrl ||
+        (song.thumbnailUrl && song.thumbnailUrl.startsWith("http") ? song.thumbnailUrl : undefined);
+
       tx.objectStore(META_STORE).put({
         ...existing,
         ...song,
+        originalThumbnailUrl: originalHttpUrl,
         thumbnailUrl: (song.thumbnailUrl?.startsWith("data:") ? song.thumbnailUrl : existing.thumbnailUrl?.startsWith("data:") ? existing.thumbnailUrl : song.thumbnailUrl),
         folderName: getCanonicalArtistName(song.folderName || existing.folderName || song.artist || "أخرى"),
         savedAt: existing.savedAt || Date.now(),
