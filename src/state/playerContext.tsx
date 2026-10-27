@@ -5,9 +5,19 @@ import { initialPlayerState, PlayerState, QueueSong, RepeatMode } from "@/state/
 import { getAudioBlob, getOfflineSongMeta, deleteAudioBlobOnly, isKhaleejiOrCorruptedJannatBlob, autoPurgeCorruptedJannatBlobs } from "@/offline/indexedDbCache";
 import { JANNAT_OLD_CLASSICS } from "@/data/jannatClassics";
 import { downloadSong } from "@/services/offline/downloader";
-import { setMainAudioPlaying, createSilentWavBlob } from "@/services/offline/backgroundKeepAlive";
+import { setMainAudioPlaying } from "@/services/offline/backgroundKeepAlive";
 import { useToastStore } from "@/state/toastStore";
 import { toAbsoluteApiUrl } from "@/utils/apiBase";
+
+// ── Accurate iOS Detection (iPhone, iPad, iPod, WKWebView) ──
+const isIOSDevice = () => {
+  if (typeof window === "undefined" || typeof navigator === "undefined") return false;
+  return (
+    /iPad|iPhone|iPod/i.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1) ||
+    (/WebKit/i.test(navigator.userAgent) && /Mobile/i.test(navigator.userAgent))
+  );
+};
 
 type PlayerContextValue = {
   state: PlayerState;
@@ -89,85 +99,65 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     [state.currentSongId, state.queue]
   );
 
-  // ── Silent Audio Keep-Alive for iOS Lock Screen & Handsfree Resumption ──
-  const silentAudioRef = useRef<HTMLAudioElement | null>(null);
-
-  const ensureSilentKeepAlive = () => {
-    if (typeof window === "undefined") return;
-    try {
-      if (!silentAudioRef.current) {
-        const blob = createSilentWavBlob();
-        const url = URL.createObjectURL(blob);
-        const el = new Audio(url);
-        el.loop = true;
-        el.volume = 0.001; // tiny non-zero volume keeps WebKit process alive on iOS
-        el.setAttribute("playsinline", "true");
-        silentAudioRef.current = el;
-      }
-      if (silentAudioRef.current.paused) {
-        silentAudioRef.current.play().catch(() => {});
-      }
-    } catch {}
-  };
-
-  const stopSilentKeepAlive = () => {
-    if (silentAudioRef.current && !silentAudioRef.current.paused) {
-      try {
-        silentAudioRef.current.pause();
-      } catch {}
-    }
-  };
-
-  // ── Complete iPhone Lock Screen & MediaSession Metadata ──
+  // ── Complete iPhone Lock Screen & MediaSession Engine ──
   const updateMediaSessionMetadata = (song: QueueSong | null) => {
     if (typeof navigator === "undefined" || !("mediaSession" in navigator) || !song) return;
 
     let artUrl = song.thumbnailUrl || song.metadata?.thumbnailUrl;
-    if (artUrl) {
-      if (artUrl.startsWith("/")) {
-        artUrl = typeof window !== "undefined" ? `${window.location.origin}${artUrl}` : artUrl;
-      } else if (artUrl.startsWith("data:")) {
-        artUrl = typeof window !== "undefined" ? `${window.location.origin}/placeholder-album.jpg` : "/placeholder-album.jpg";
-      }
-    } else {
+    if (!artUrl || artUrl.startsWith("blob:") || artUrl.startsWith("data:")) {
       artUrl = typeof window !== "undefined" ? `${window.location.origin}/placeholder-album.jpg` : "/placeholder-album.jpg";
+    } else if (artUrl.startsWith("/")) {
+      artUrl = typeof window !== "undefined" ? `${window.location.origin}${artUrl}` : artUrl;
+    } else if (artUrl.startsWith("http://")) {
+      artUrl = artUrl.replace("http://", "https://");
     }
+
+    const albumName = song.albumName || song.folderName || (song.metadata?.album) || "Aura Music";
 
     try {
       navigator.mediaSession.metadata = new MediaMetadata({
         title: song.title || "أغنية",
         artist: song.artist || "فنان",
-        album: song.albumName || song.folderName || (song.metadata?.album) || "Aura Music",
+        album: albumName,
         artwork: [
-          { src: artUrl, sizes: "96x96",   type: "image/jpeg" },
-          { src: artUrl, sizes: "128x128", type: "image/jpeg" },
-          { src: artUrl, sizes: "192x192", type: "image/jpeg" },
-          { src: artUrl, sizes: "256x256", type: "image/jpeg" },
-          { src: artUrl, sizes: "384x384", type: "image/jpeg" },
-          { src: artUrl, sizes: "512x512", type: "image/jpeg" },
+          { src: artUrl, sizes: "96x96" },
+          { src: artUrl, sizes: "128x128" },
+          { src: artUrl, sizes: "192x192" },
+          { src: artUrl, sizes: "256x256" },
+          { src: artUrl, sizes: "384x384" },
+          { src: artUrl, sizes: "512x512" },
         ],
       });
-    } catch {}
+    } catch (err) {
+      console.warn("[MediaSession] Metadata update error:", err);
+    }
   };
 
   const syncPositionState = () => {
     const player = audioRef.current;
     if (
-      typeof navigator !== "undefined" &&
-      "mediaSession" in navigator &&
-      "setPositionState" in navigator.mediaSession &&
-      player &&
-      player.duration &&
-      !isNaN(player.duration) &&
-      isFinite(player.duration)
-    ) {
+      typeof navigator === "undefined" ||
+      !("mediaSession" in navigator) ||
+      !("setPositionState" in navigator.mediaSession) ||
+      !player
+    ) return;
+
+    let dur = player.duration;
+    if (!dur || isNaN(dur) || !isFinite(dur) || dur <= 0) {
+      dur = stateRef.current.duration;
+    }
+
+    if (dur && !isNaN(dur) && isFinite(dur) && dur > 0) {
       try {
+        const curTime = player.currentTime || 0;
         navigator.mediaSession.setPositionState({
-          duration: Math.max(0, player.duration),
-          playbackRate: player.playbackRate || 1,
-          position: Math.max(0, Math.min(player.currentTime || 0, player.duration)),
+          duration: Math.max(1, dur),
+          playbackRate: Math.max(0.5, Math.min(2, player.playbackRate || 1)),
+          position: Math.max(0, Math.min(curTime, dur)),
         });
-      } catch {}
+      } catch (e) {
+        // iOS throws if position > duration or invalid number
+      }
     }
   };
 
@@ -206,7 +196,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const player = audioRef.current;
     if (!player) return;
 
-    stopSilentKeepAlive();
     primeAudioElement();
     updateMediaSessionMetadata(song);
 
@@ -398,14 +387,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (player) {
       if (state.isPlaying) {
         player.pause();
-        ensureSilentKeepAlive();
         setState((prev) => ({ ...prev, isPlaying: false }));
         if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
           navigator.mediaSession.playbackState = "paused";
         }
         syncPositionState();
       } else {
-        stopSilentKeepAlive();
         if ((!player.src || player.src === "" || player.src === window.location.href) && currentSong) {
           syncPlayTrack(currentSong);
           return;
@@ -726,6 +713,15 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const player = audioRef.current;
     if (!player || typeof window === "undefined" || audioCtxRef.current) return;
 
+    // CRITICAL: On iOS WebKit (iPhone/iPad), connecting createMediaElementSource(player) to AudioContext
+    // routes audio through WebKit's ambient synthesizer pipeline, which completely silences/suppresses
+    // the native iOS Lock Screen Player widget (MPNowPlayingInfoCenter), Dynamic Island, and Control Center!
+    // Keeping native <audio> connected directly to iOS AVPlayer gives 100% full lock screen controls,
+    // artwork, scrubber, and remote bluetooth controls.
+    if (isIOSDevice()) {
+      return;
+    }
+
     const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
     if (!AudioCtx) return;
 
@@ -822,7 +818,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
-    if ((state.isHighQuality || state.isPlaying) && !audioCtxRef.current) {
+    if (!isIOSDevice() && (state.isHighQuality || state.isPlaying) && !audioCtxRef.current) {
       initWebAudio();
     }
     const ctx = audioCtxRef.current;
@@ -922,7 +918,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
 
     navigator.mediaSession.setActionHandler("play", () => {
-      stopSilentKeepAlive();
       const player = audioRef.current;
       if (!player) return;
       const currentSong = stateRef.current.queue.find((s) => s.songId === stateRef.current.currentSongId);
@@ -948,7 +943,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       if (player) {
         player.pause();
       }
-      ensureSilentKeepAlive();
       setState((prev) => ({ ...prev, isPlaying: false }));
       navigator.mediaSession.playbackState = "paused";
       syncPositionState();
@@ -962,15 +956,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       prevRef.current();
     });
 
-    navigator.mediaSession.setActionHandler("stop", () => {
-      audioRef.current?.pause();
-      ensureSilentKeepAlive();
-      setState((p) => ({ ...p, isPlaying: false }));
-      navigator.mediaSession.playbackState = "paused";
-    });
-
     navigator.mediaSession.setActionHandler("seekto", (d) => {
-      if (d.seekTime != null) {
+      if (d.seekTime != null && !isNaN(d.seekTime)) {
         seekTo(d.seekTime);
         syncPositionState();
       }
@@ -993,7 +980,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     });
 
     return () => {
-      (["play","pause","nexttrack","previoustrack","stop","seekto","seekbackward","seekforward"] as MediaSessionAction[]).forEach((a) => {
+      (["play", "pause", "nexttrack", "previoustrack", "seekto", "seekbackward", "seekforward"] as MediaSessionAction[]).forEach((a) => {
         try { navigator.mediaSession.setActionHandler(a, null); } catch {}
       });
     };
@@ -1332,18 +1319,22 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   };
 
   const onPlaying = () => {
-    stopSilentKeepAlive();
     if (audioCtxRef.current && audioCtxRef.current.state === "suspended") {
       audioCtxRef.current.resume().catch(() => {});
+    }
+    if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+      navigator.mediaSession.playbackState = "playing";
     }
     syncPositionState();
     setState((prev) => ({ ...prev, isBuffering: false, error: null }));
   };
 
   const onPlay = () => {
-    stopSilentKeepAlive();
     if (audioCtxRef.current && audioCtxRef.current.state === "suspended") {
       audioCtxRef.current.resume().catch(() => {});
+    }
+    if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+      navigator.mediaSession.playbackState = "playing";
     }
     syncPositionState();
     setState((prev) => ({ ...prev, isPlaying: true }));
@@ -1353,7 +1344,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     // Do NOT set isPlaying:false if we paused the element ourselves during loading.
     // This prevents the UI from flashing the pause icon between songs.
     if (isLoadingNewSongRef.current) return;
-    ensureSilentKeepAlive();
+    if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+      navigator.mediaSession.playbackState = "paused";
+    }
     syncPositionState();
     setState((prev) => ({ ...prev, isPlaying: false }));
   };
@@ -1476,10 +1469,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         ref={audioRef}
         data-main-player="true"
         playsInline
-        crossOrigin="anonymous"
         preload="auto"
         onTimeUpdate={onTimeUpdate}
         onLoadedMetadata={onLoadedMetadata}
+        onDurationChange={onLoadedMetadata}
         onWaiting={onWaiting}
         onPlaying={onPlaying}
         onCanPlay={onPlaying}

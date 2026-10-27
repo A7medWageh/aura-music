@@ -111,8 +111,8 @@ function resumeSilentAudio() {
             artist: "Aura Music",
             album: "تحميل للأوفلاين (شغال في الخلفية)",
             artwork: [
-              { src: "/logo-v2.png", sizes: "192x192", type: "image/png" },
-              { src: "/logo-v2.png", sizes: "512x512", type: "image/png" },
+              { src: typeof window !== "undefined" ? `${window.location.origin}/logo-v2.png` : "/logo-v2.png", sizes: "192x192" },
+              { src: typeof window !== "undefined" ? `${window.location.origin}/logo-v2.png` : "/logo-v2.png", sizes: "512x512" },
             ],
           });
           navigator.mediaSession.playbackState = "playing";
