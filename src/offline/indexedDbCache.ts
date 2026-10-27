@@ -582,6 +582,7 @@ export function isKhaleejiOrCorruptedJannatBlob(
   // 6677312 bytes = Hamada Majrashi ("خبر غيابي")
   // 8419726 bytes = Khaleeji row 466
   if (
+    blobSize < 4000000 ||
     blobSize === 5634752 ||
     blobSize === 6736640 ||
     blobSize === 6677312 ||
@@ -635,13 +636,14 @@ export async function autoPurgeCorruptedJannatBlobs(): Promise<number> {
 
     const toDeleteIds = new Set<string>();
     for (const item of jannatBlobs) {
-      const isKnownKhaleeji =
+      const isCorruptedOrKhaleeji =
+        item.size < 4000000 || // All 54 official Jannat MP3s are >= 4.38MB
         item.size === 5634752 ||
         item.size === 6736640 ||
         item.size === 6677312 ||
         item.size === 8419726;
 
-      if (isKnownKhaleeji) {
+      if (isCorruptedOrKhaleeji) {
         toDeleteIds.add(item.songId);
       }
     }

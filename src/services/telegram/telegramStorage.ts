@@ -61,9 +61,14 @@ function normalizeText(text: string): string {
 
 function isValidCacheRow(row: any, requestedArtist?: string): boolean {
   if (!row) return false;
-  // 1. Duration guard: reject short previews (< 45s)
-  if (row.duration_sec && row.duration_sec > 0 && row.duration_sec < 45) {
-    return false;
+  // 1. Duration guard: reject short previews (< 45s) or broken 0s DASH audio
+  if (row.duration_sec !== undefined && row.duration_sec !== null) {
+    if (row.duration_sec > 0 && row.duration_sec < 45) {
+      return false;
+    }
+    if (row.duration_sec === 0 && (row.mime_type === "audio/mp4" || !row.file_size || row.file_size < 1000000)) {
+      return false;
+    }
   }
   // 2. File size / Khaleeji guard
   if (row.file_size && (row.file_size === 8419726 || row.file_size === 5634752 || row.file_size === 6736640 || row.file_size === 6677312)) {
@@ -109,29 +114,31 @@ export async function getCachedTelegramTrack(params: {
   const { videoId, songId, title, artist } = params;
 
   try {
-    // 1a. Search by videoId
+    // 1a. Search by videoId (prefer full-length, highest duration rows)
     if (videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
       const res = await query<any>(
         `SELECT id, video_id, song_id, title, artist, tg_file_id, tg_message_id, duration_sec, file_size, mime_type
          FROM telegram_audio_cache
          WHERE video_id = $1
-         LIMIT 1`,
+         ORDER BY COALESCE(duration_sec, 0) DESC, id DESC
+         LIMIT 5`,
         [videoId]
       );
-      if (res.rows.length > 0 && isValidCacheRow(res.rows[0], artist)) {
-        const row = res.rows[0];
-        return {
-          id: row.id,
-          videoId: row.video_id,
-          songId: row.song_id,
-          title: row.title,
-          artist: row.artist,
-          tgFileId: row.tg_file_id,
-          tgMessageId: row.tg_message_id ? Number(row.tg_message_id) : undefined,
-          durationSec: row.duration_sec,
-          fileSize: row.file_size ? Number(row.file_size) : undefined,
-          mimeType: row.mime_type,
-        };
+      for (const row of res.rows) {
+        if (isValidCacheRow(row, artist)) {
+          return {
+            id: row.id,
+            videoId: row.video_id,
+            songId: row.song_id,
+            title: row.title,
+            artist: row.artist,
+            tgFileId: row.tg_file_id,
+            tgMessageId: row.tg_message_id ? Number(row.tg_message_id) : undefined,
+            durationSec: row.duration_sec,
+            fileSize: row.file_size ? Number(row.file_size) : undefined,
+            mimeType: row.mime_type,
+          };
+        }
       }
     }
 
@@ -141,23 +148,25 @@ export async function getCachedTelegramTrack(params: {
         `SELECT id, video_id, song_id, title, artist, tg_file_id, tg_message_id, duration_sec, file_size, mime_type
          FROM telegram_audio_cache
          WHERE song_id = $1
-         LIMIT 1`,
+         ORDER BY COALESCE(duration_sec, 0) DESC, id DESC
+         LIMIT 5`,
         [songId]
       );
-      if (res.rows.length > 0 && isValidCacheRow(res.rows[0], artist)) {
-        const row = res.rows[0];
-        return {
-          id: row.id,
-          videoId: row.video_id,
-          songId: row.song_id,
-          title: row.title,
-          artist: row.artist,
-          tgFileId: row.tg_file_id,
-          tgMessageId: row.tg_message_id ? Number(row.tg_message_id) : undefined,
-          durationSec: row.duration_sec,
-          fileSize: row.file_size ? Number(row.file_size) : undefined,
-          mimeType: row.mime_type,
-        };
+      for (const row of res.rows) {
+        if (isValidCacheRow(row, artist)) {
+          return {
+            id: row.id,
+            videoId: row.video_id,
+            songId: row.song_id,
+            title: row.title,
+            artist: row.artist,
+            tgFileId: row.tg_file_id,
+            tgMessageId: row.tg_message_id ? Number(row.tg_message_id) : undefined,
+            durationSec: row.duration_sec,
+            fileSize: row.file_size ? Number(row.file_size) : undefined,
+            mimeType: row.mime_type,
+          };
+        }
       }
     }
 
@@ -168,6 +177,7 @@ export async function getCachedTelegramTrack(params: {
         `SELECT id, video_id, song_id, title, artist, tg_file_id, tg_message_id, duration_sec, file_size, mime_type
          FROM telegram_audio_cache
          WHERE title = $1 OR title ILIKE $1 OR title ILIKE $2
+         ORDER BY COALESCE(duration_sec, 0) DESC, id DESC
          LIMIT 10`,
         [cleanT, `%${cleanT}%`]
       );
