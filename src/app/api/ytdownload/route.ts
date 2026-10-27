@@ -4,6 +4,7 @@ import { streamAudioFromYouTube, isYtDlpAvailable } from "@apis/yt-dlp";
 import { findBestOfficialVideo } from "@/services/music/artistMatcher";
 import { uploadAudioBufferToTelegram } from "@/services/telegram/telegramStorage";
 import { JANNAT_OLD_CLASSICS } from "@/data/jannatClassics";
+import { ANGHAM_OLD_CLASSICS } from "@/data/anghamClassics";
 
 export const dynamic = "force-dynamic";
 
@@ -275,6 +276,16 @@ async function getFallbackVideoId(videoId?: string, title?: string, artist?: str
   const isJannat = !artist || artist.includes("جنات") || artist.toLowerCase().includes("jannat");
   if (isJannat && title) {
     const match = JANNAT_OLD_CLASSICS.find((c) => {
+      if (videoId && (c.songId === videoId || c.youtubeVideoId === videoId)) return true;
+      const ct = c.title.trim().toLowerCase().replace(/\s+/g, "");
+      const qt = (title || "").trim().toLowerCase().replace(/\s+/g, "");
+      return ct === qt || ct.includes(qt) || qt.includes(ct);
+    });
+    if (match) return match.youtubeVideoId;
+  }
+  const isAngham = artist?.includes("أنغام") || artist?.toLowerCase().includes("angham") || title?.includes("أنغام");
+  if (isAngham && title) {
+    const match = ANGHAM_OLD_CLASSICS.find((c) => {
       if (videoId && (c.songId === videoId || c.youtubeVideoId === videoId)) return true;
       const ct = c.title.trim().toLowerCase().replace(/\s+/g, "");
       const qt = (title || "").trim().toLowerCase().replace(/\s+/g, "");

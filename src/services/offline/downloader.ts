@@ -2,6 +2,7 @@ import { saveSongMeta, storeAudioBlob, storeLyrics, getAudioBlob, getAllOfflineS
 import { startJob, updateJob, finishJob, setJobController, isJobPaused } from "@/state/downloadStore";
 import { toAbsoluteApiUrl } from "@/utils/apiBase";
 import { JANNAT_OLD_CLASSICS } from "@/data/jannatClassics";
+import { ANGHAM_OLD_CLASSICS } from "@/data/anghamClassics";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type SongMeta = {
@@ -312,22 +313,44 @@ export async function downloadSong(
       metadata?.artist?.includes("جنات") ||
       metadata?.artist?.toLowerCase().includes("jannat");
 
-    const classic = JANNAT_OLD_CLASSICS.find((c) => {
-      if (songId && (c.songId === songId || c.youtubeVideoId === songId)) return true;
-      if (videoId && (c.songId === videoId || c.youtubeVideoId === videoId)) return true;
-      const ct = c.title.trim().toLowerCase().replace(/\s+/g, "");
-      const qt = rawTitle.trim().toLowerCase().replace(/\s+/g, "");
-      return ct === qt || ct.includes(qt) || qt.includes(ct);
-    });
+    const jannatClassic = isJannat
+      ? JANNAT_OLD_CLASSICS.find((c) => {
+          if (songId && (c.songId === songId || c.youtubeVideoId === songId)) return true;
+          if (videoId && (c.songId === videoId || c.youtubeVideoId === videoId)) return true;
+          const ct = c.title.trim().toLowerCase().replace(/\s+/g, "");
+          const qt = rawTitle.trim().toLowerCase().replace(/\s+/g, "");
+          return ct === qt || ct.includes(qt) || qt.includes(ct);
+        })
+      : null;
+
+    const isAngham =
+      displayArtist.includes("أنغام") ||
+      displayArtist.toLowerCase().includes("angham") ||
+      metadata?.artist?.includes("أنغام") ||
+      metadata?.artist?.toLowerCase().includes("angham");
+
+    const anghamClassic = isAngham
+      ? ANGHAM_OLD_CLASSICS.find((c) => {
+          if (songId && (c.songId === songId || c.youtubeVideoId === songId)) return true;
+          if (videoId && (c.songId === videoId || c.youtubeVideoId === videoId)) return true;
+          const ct = c.title.trim().toLowerCase().replace(/\s+/g, "");
+          const qt = rawTitle.trim().toLowerCase().replace(/\s+/g, "");
+          return ct === qt || ct.includes(qt) || qt.includes(ct);
+        })
+      : null;
+
+    const classic = jannatClassic || anghamClassic;
 
     const effectiveTitle = classic ? classic.title : rawTitle;
-    const effectiveArtist = classic ? "جنات" : displayArtist;
+    const effectiveArtist = jannatClassic ? "جنات" : anghamClassic ? "أنغام" : displayArtist;
     const effectiveVideoId = classic ? classic.youtubeVideoId : (videoId || songId);
     const effectiveAlbum = classic ? classic.album : metadata?.albumName;
 
     const allSongs = await getAllOfflineSongs();
-    const smartFolder = classic
+    const smartFolder = jannatClassic
       ? "جنات"
+      : anghamClassic
+      ? "أنغام"
       : getSmartFolderName(metadata?.folderName || effectiveArtist, allSongs, effectiveTitle);
 
     // Pre-cache thumbnail as offline dataUrl so image loads with 0 network

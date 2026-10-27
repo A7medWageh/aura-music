@@ -23,6 +23,7 @@ import { getCachedTelegramTrack, getTelegramDirectUrl, uploadAudioUrlToTelegram 
 import { resolveViaMoonBot } from "../telegram/moonBotResolver";
 import { findBestOfficialVideo, isStrictArtistMatch } from "./artistMatcher";
 import { JANNAT_OLD_CLASSICS } from "@/data/jannatClassics";
+import { ANGHAM_OLD_CLASSICS } from "@/data/anghamClassics";
 
 export interface UniversalAudioResult {
   streamUrl: string;
@@ -360,6 +361,24 @@ export async function resolveUniversalAudio(params: {
     artist = "جنات";
   }
 
+  // Safeguard: Match against Angham Old Classics to ensure authentic official YouTube video ID
+  const matchingAngham = ANGHAM_OLD_CLASSICS.find((c) => {
+    if (videoId && (c.songId === videoId || c.youtubeVideoId === videoId)) return true;
+    const isAnghamArtist = !artist || artist.includes("أنغام") || artist.toLowerCase().includes("angham");
+    if (isAnghamArtist && title) {
+      const ct = cleanTitle(c.title).toLowerCase().replace(/\s+/g, "");
+      const qt = cleanTitle(title).toLowerCase().replace(/\s+/g, "");
+      return ct === qt || ct.includes(qt) || qt.includes(ct);
+    }
+    return false;
+  });
+
+  if (matchingAngham) {
+    videoId = matchingAngham.youtubeVideoId;
+    title = matchingAngham.title;
+    artist = "أنغام";
+  }
+
   // A DB row keyed by videoId is only trustworthy when its artist matches the
   // clicked one — re-uploaded "same title, different audio" uploads (e.g. the
   // "Replica | Abyusif" bait video by another channel) otherwise play a
@@ -384,6 +403,23 @@ export async function resolveUniversalAudio(params: {
         (rowArtist && !rowArtist.includes("جنات") && !rowArtist.includes("jannat"))
       ) {
         console.warn(`[AudioResolver] Jannat wrong artist detected in DB row: "${row.artist}" for "${title}"`);
+        return false;
+      }
+      return true;
+    }
+    if (matchingAngham && row) {
+      // Validate expected duration for Angham track (must be within 35s)
+      if (matchingAngham.duration && row.durationSec) {
+        const parts = matchingAngham.duration.split(":").map(Number);
+        const expectedSec = parts[0] * 60 + parts[1];
+        if (Math.abs(row.durationSec - expectedSec) > 35) {
+          console.warn(`[AudioResolver] Angham duration mismatch for "${title}": expected ${expectedSec}s, got ${row.durationSec}s`);
+          return false;
+        }
+      }
+      const rowArtist = (row.artist || "").toLowerCase();
+      if (rowArtist && !rowArtist.includes("أنغام") && !rowArtist.includes("angham")) {
+        console.warn(`[AudioResolver] Angham wrong artist detected in DB row: "${row.artist}" for "${title}"`);
         return false;
       }
       return true;

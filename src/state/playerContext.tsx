@@ -4,6 +4,7 @@ import { createContext, ReactNode, useContext, useEffect, useMemo, useRef, useSt
 import { initialPlayerState, PlayerState, QueueSong, RepeatMode } from "@/state/playerState";
 import { getAudioBlob, getOfflineSongMeta, deleteAudioBlobOnly, isKhaleejiOrCorruptedJannatBlob, autoPurgeCorruptedJannatBlobs } from "@/offline/indexedDbCache";
 import { JANNAT_OLD_CLASSICS } from "@/data/jannatClassics";
+import { ANGHAM_OLD_CLASSICS } from "@/data/anghamClassics";
 import { downloadSong } from "@/services/offline/downloader";
 import { setMainAudioPlaying } from "@/services/offline/backgroundKeepAlive";
 import { useToastStore } from "@/state/toastStore";
@@ -103,7 +104,23 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const updateMediaSessionMetadata = (song: QueueSong | null) => {
     if (typeof navigator === "undefined" || !("mediaSession" in navigator) || !song) return;
 
-    let artUrl = song.thumbnailUrl || song.metadata?.thumbnailUrl;
+    let artUrl = (song as any).originalThumbnailUrl || (song.metadata as any)?.originalThumbnailUrl || song.thumbnailUrl || song.metadata?.thumbnailUrl;
+
+    // Check classic catalogs (Angham & Jannat) for verified high-res HTTPS artwork
+    const anghamClassic = ANGHAM_OLD_CLASSICS.find(
+      (c) => c.songId === song.songId || c.youtubeVideoId === song.youtubeVideoId || c.title === song.title
+    );
+    if (anghamClassic?.thumbnailUrl) {
+      artUrl = anghamClassic.thumbnailUrl;
+    } else {
+      const jannatClassic = JANNAT_OLD_CLASSICS.find(
+        (c) => c.songId === song.songId || c.youtubeVideoId === song.youtubeVideoId || c.title === song.title
+      );
+      if (jannatClassic?.thumbnailUrl) {
+        artUrl = jannatClassic.thumbnailUrl;
+      }
+    }
+
     if (!artUrl || artUrl.startsWith("blob:") || artUrl.startsWith("data:")) {
       artUrl = typeof window !== "undefined" ? `${window.location.origin}/placeholder-album.jpg` : "/placeholder-album.jpg";
     } else if (artUrl.startsWith("/")) {
@@ -112,20 +129,22 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       artUrl = artUrl.replace("http://", "https://");
     }
 
-    const albumName = song.albumName || song.folderName || (song.metadata?.album) || "Aura Music";
+    const albumName = anghamClassic?.album || song.albumName || song.folderName || (song.metadata?.album) || "Aura Music";
+    const songArtist = anghamClassic ? "أنغام" : (song.artist || "فنان");
 
     try {
       navigator.mediaSession.metadata = new MediaMetadata({
         title: song.title || "أغنية",
-        artist: song.artist || "فنان",
+        artist: songArtist,
         album: albumName,
         artwork: [
-          { src: artUrl, sizes: "96x96" },
-          { src: artUrl, sizes: "128x128" },
-          { src: artUrl, sizes: "192x192" },
-          { src: artUrl, sizes: "256x256" },
-          { src: artUrl, sizes: "384x384" },
-          { src: artUrl, sizes: "512x512" },
+          { src: artUrl, sizes: "96x96", type: "image/jpeg" },
+          { src: artUrl, sizes: "128x128", type: "image/jpeg" },
+          { src: artUrl, sizes: "192x192", type: "image/jpeg" },
+          { src: artUrl, sizes: "256x256", type: "image/jpeg" },
+          { src: artUrl, sizes: "384x384", type: "image/jpeg" },
+          { src: artUrl, sizes: "512x512", type: "image/jpeg" },
+          { src: artUrl, sizes: "1024x1024", type: "image/jpeg" },
         ],
       });
     } catch (err) {
@@ -980,8 +999,18 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       }
     });
 
+    navigator.mediaSession.setActionHandler("stop", () => {
+      const player = audioRef.current;
+      if (player) {
+        player.pause();
+        player.currentTime = 0;
+      }
+      setState((prev) => ({ ...prev, isPlaying: false, currentTime: 0 }));
+      navigator.mediaSession.playbackState = "none";
+    });
+
     return () => {
-      (["play", "pause", "nexttrack", "previoustrack", "seekto", "seekbackward", "seekforward"] as MediaSessionAction[]).forEach((a) => {
+      (["play", "pause", "stop", "nexttrack", "previoustrack", "seekto", "seekbackward", "seekforward"] as MediaSessionAction[]).forEach((a) => {
         try { navigator.mediaSession.setActionHandler(a, null); } catch {}
       });
     };
@@ -1119,7 +1148,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         // 2. Instant Direct Streaming (Starts in seconds without multi-roundtrip delay)
         console.log(`[Player] ⚡ Instant direct streaming for "${song.title}" (${song.artist || ""})...`);
 
-        const classic = JANNAT_OLD_CLASSICS.find(
+        const anghamClassic = ANGHAM_OLD_CLASSICS.find(
           (c) =>
             c.songId === song.songId ||
             c.youtubeVideoId === song.youtubeVideoId ||
@@ -1127,9 +1156,18 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
             song.title.includes(c.title) ||
             c.title.includes(song.title)
         );
+        const jannatClassic = JANNAT_OLD_CLASSICS.find(
+          (c) =>
+            c.songId === song.songId ||
+            c.youtubeVideoId === song.youtubeVideoId ||
+            c.title === song.title ||
+            song.title.includes(c.title) ||
+            c.title.includes(song.title)
+        );
+        const classic = anghamClassic || jannatClassic;
         const vid = classic ? classic.youtubeVideoId : (song.youtubeVideoId || song.songId || "");
         const songTitle = classic ? classic.title : song.title;
-        const songArtist = classic ? "جنات" : (song.artist || "");
+        const songArtist = anghamClassic ? "أنغام" : jannatClassic ? "جنات" : (song.artist || "");
 
         const playUrl = toAbsoluteApiUrl(
           `/api/ytdownload?videoId=${encodeURIComponent(vid)}&title=${encodeURIComponent(songTitle)}&artist=${encodeURIComponent(songArtist)}&proxy=true`
@@ -1281,19 +1319,31 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setState((prev) => ({ ...prev, duration: dur }));
       syncPositionState();
 
-      // Duration safeguard for Jannat cached tracks
+      // Duration safeguard for Jannat & Angham cached tracks
       if (player.src && player.src.startsWith("blob:") && currentSong) {
         const isJannat =
           currentSong.artist?.includes("جنات") ||
           currentSong.artist?.toLowerCase().includes("jannat");
-        const classic = JANNAT_OLD_CLASSICS.find(
+        const jannatClassic = JANNAT_OLD_CLASSICS.find(
           (c) =>
             c.songId === currentSong.songId ||
             c.youtubeVideoId === currentSong.youtubeVideoId ||
             c.title === currentSong.title
         );
 
-        if ((isJannat || classic) && classic?.duration) {
+        const isAngham =
+          currentSong.artist?.includes("أنغام") ||
+          currentSong.artist?.toLowerCase().includes("angham");
+        const anghamClassic = ANGHAM_OLD_CLASSICS.find(
+          (c) =>
+            c.songId === currentSong.songId ||
+            c.youtubeVideoId === currentSong.youtubeVideoId ||
+            c.title === currentSong.title
+        );
+
+        const classic = jannatClassic || anghamClassic;
+
+        if ((isJannat || isAngham || classic) && classic?.duration) {
           const parts = classic.duration.split(":").map(Number);
           const expectedSec = parts[0] * 60 + parts[1];
           if (dur > 0 && Math.abs(dur - expectedSec) > 30) {
@@ -1303,8 +1353,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
               deleteAudioBlobOnly(currentSong.youtubeVideoId).catch(() => {});
             }
             // Stream the authentic audio directly
-            const targetVid = currentSong.youtubeVideoId || currentSong.songId || "";
-            const streamUrl = toAbsoluteApiUrl(`/api/ytdownload?videoId=${encodeURIComponent(targetVid)}&title=${encodeURIComponent(currentSong.title)}&artist=${encodeURIComponent(currentSong.artist || "")}&proxy=true`);
+            const targetVid = classic.youtubeVideoId || currentSong.youtubeVideoId || currentSong.songId || "";
+            const streamArtist = anghamClassic ? "أنغام" : jannatClassic ? "جنات" : (currentSong.artist || "");
+            const streamUrl = toAbsoluteApiUrl(`/api/ytdownload?videoId=${encodeURIComponent(targetVid)}&title=${encodeURIComponent(classic.title || currentSong.title)}&artist=${encodeURIComponent(streamArtist)}&proxy=true`);
             player.src = streamUrl;
             player.load();
             player.play().catch(() => {});

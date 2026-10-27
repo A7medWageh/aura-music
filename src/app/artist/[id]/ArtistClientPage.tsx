@@ -16,6 +16,7 @@ import { PremiumModal } from "@/components/PremiumModal";
 import { useCacheWarm } from "@/hooks/useCacheWarm";
 import { runReleaseCheck, releaseAgeLabel } from "@/services/notifications/artistNotifications";
 import { JannatOldSection } from "@/components/JannatOldSection";
+import { AnghamOldSection } from "@/components/AnghamOldSection";
 
 export default function ArtistClientPage({ id }: { id: string }) {
   const { playNow, enqueueSongs } = usePlayer();
@@ -112,6 +113,16 @@ export default function ArtistClientPage({ id }: { id: string }) {
     decodedId.toLowerCase().includes("jannat") ||
     artist?.artistName?.includes("جنات") ||
     artist?.artistName?.toLowerCase().includes("jannat")
+  );
+  const isAngham = Boolean(
+    id === "yt-أنغام" ||
+    id === "yt-انغام" ||
+    decodedId.includes("أنغام") ||
+    decodedId.includes("انغام") ||
+    decodedId.toLowerCase().includes("angham") ||
+    artist?.artistName?.includes("أنغام") ||
+    artist?.artistName?.includes("انغام") ||
+    artist?.artistName?.toLowerCase().includes("angham")
   );
   const allAlbums = [...(artist?.newReleases || []), ...(artist?.oldAlbums || [])];
   const chronologicalAlbums = (() => {
@@ -290,6 +301,9 @@ export default function ArtistClientPage({ id }: { id: string }) {
 
         {/* ═══ Jannat Classics (جنات قديم) ═══ */}
         {isJannat && <JannatOldSection onToast={showToast} />}
+
+        {/* ═══ Angham Classics (أنغام قديم) ═══ */}
+        {isAngham && <AnghamOldSection onToast={showToast} />}
 
         {/* ═══ JUST DROPPED — verified real publish dates ═══ */}
         {freshReleases.length > 0 && (
