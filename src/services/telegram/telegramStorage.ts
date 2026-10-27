@@ -59,6 +59,44 @@ function normalizeText(text: string): string {
     .trim();
 }
 
+function isValidCacheRow(row: any, requestedArtist?: string): boolean {
+  if (!row) return false;
+  // 1. Duration guard: reject short previews (< 45s)
+  if (row.duration_sec && row.duration_sec > 0 && row.duration_sec < 45) {
+    return false;
+  }
+  // 2. File size / Khaleeji guard
+  if (row.file_size && (row.file_size === 8419726 || row.file_size === 5634752 || row.file_size === 6736640 || row.file_size === 6677312)) {
+    return false;
+  }
+  const rowArtist = (row.artist || "").toLowerCase();
+  const rowTitle = (row.title || "").toLowerCase();
+  if (
+    rowArtist.includes("حماده") ||
+    rowArtist.includes("مجرشي") ||
+    rowArtist.includes("majra") ||
+    rowTitle.includes("مجرشي") ||
+    rowTitle.includes("حماده مجرشي") ||
+    rowTitle.includes("شيلة") ||
+    rowTitle.includes("شيلات") ||
+    rowTitle.includes("جلسة عود")
+  ) {
+    return false;
+  }
+  // 3. If requested artist is Jannat or Angham, reject if row says otherwise
+  if (requestedArtist) {
+    const isReqJannat = requestedArtist.includes("جنات") || requestedArtist.toLowerCase().includes("jannat");
+    if (isReqJannat && rowArtist && !rowArtist.includes("جنات") && !rowArtist.includes("jannat") && !rowArtist.includes("rotana") && !rowArtist.includes("aura")) {
+      return false;
+    }
+    const isReqAngham = requestedArtist.includes("أنغام") || requestedArtist.toLowerCase().includes("angham");
+    if (isReqAngham && rowArtist && !rowArtist.includes("أنغام") && !rowArtist.includes("angham") && !rowArtist.includes("rotana") && !rowArtist.includes("aura")) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /**
  * 1. Check Neon PostgreSQL database for cached Telegram track
  */
@@ -80,7 +118,7 @@ export async function getCachedTelegramTrack(params: {
          LIMIT 1`,
         [videoId]
       );
-      if (res.rows.length > 0) {
+      if (res.rows.length > 0 && isValidCacheRow(res.rows[0], artist)) {
         const row = res.rows[0];
         return {
           id: row.id,
@@ -106,7 +144,7 @@ export async function getCachedTelegramTrack(params: {
          LIMIT 1`,
         [songId]
       );
-      if (res.rows.length > 0) {
+      if (res.rows.length > 0 && isValidCacheRow(res.rows[0], artist)) {
         const row = res.rows[0];
         return {
           id: row.id,
@@ -135,6 +173,10 @@ export async function getCachedTelegramTrack(params: {
       );
 
       for (const row of res.rows) {
+        if (!isValidCacheRow(row, artist)) {
+          continue;
+        }
+
         // 1. Reject cached tracks that have unwanted tags (remix, cover, etc.) unless requested
         if (hasUnwantedTags(row.title, title)) {
           continue;

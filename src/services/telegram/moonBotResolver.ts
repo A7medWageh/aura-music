@@ -24,6 +24,8 @@
 
 import { saveTelegramCacheRecord, getTelegramDirectUrl } from "./telegramStorage";
 import { query } from "@apis/neon";
+import { JANNAT_OLD_CLASSICS } from "@/data/jannatClassics";
+import { ANGHAM_OLD_CLASSICS } from "@/data/anghamClassics";
 
 const BOT_TOKEN =
   process.env.TELEGRAM_BOT_TOKEN || "8831422517:AAEXQFzQxzcyIKWI1WtfVh2XGzguGXAnCak";
@@ -97,40 +99,80 @@ async function ensurePendingTable(): Promise<void> {
 
 /**
  * Poll Neon DB for an audio entry that arrived AFTER our command message.
- * The webhook handler inserts rows into moonbot_pending when @L_10_BOT
- * posts audio in the channel.
+ * Validates that the audio is not a snippet (<45s) and not a Khaleeji mismatch.
  */
 async function pollDbForAudio(
   afterMsgId: number,
-  maxWaitMs = 60000
+  expectedTitle?: string,
+  expectedArtist?: string,
+  maxWaitMs = 28000
 ): Promise<any | null> {
   const start = Date.now();
   const pollIntervalMs = 800;
 
   while (Date.now() - start < maxWaitMs) {
     try {
-      // Prefer an audio that is a direct reply to our search message,
-      // otherwise take the first audio posted after it.
+      // Fetch up to 5 pending items after our command message
       const res = await query<any>(
-        `SELECT tg_file_id, tg_message_id, title, artist, duration_sec, file_size, mime_type
+        `SELECT tg_file_id, tg_message_id, reply_to_message_id, title, artist, duration_sec, file_size, mime_type
          FROM moonbot_pending
          WHERE tg_message_id > $1
          ORDER BY (reply_to_message_id = $1) DESC NULLS LAST, tg_message_id ASC
-         LIMIT 1`,
+         LIMIT 5`,
         [afterMsgId]
       );
 
-      if (res.rows.length > 0) {
+      for (const row of res.rows) {
+        // 1. Check for bad duration (snippets < 45s)
+        if (row.duration_sec && row.duration_sec > 0 && row.duration_sec < 45) {
+          console.warn(`[WeciBot] Ignoring snippet (<45s): "${row.title}" (${row.duration_sec}s)`);
+          continue;
+        }
+
+        // 2. Filter out known Khaleeji / mismatched singers
+        const rowArtist = (row.artist || "").toLowerCase();
+        const rowTitle = (row.title || "").toLowerCase();
+        const isKhaleejiMismatch =
+          rowArtist.includes("حماده") ||
+          rowArtist.includes("مجرشي") ||
+          rowArtist.includes("majra") ||
+          rowTitle.includes("مجرشي") ||
+          rowTitle.includes("حماده مجرشي") ||
+          rowTitle.includes("شيلة") ||
+          rowTitle.includes("شيلات") ||
+          rowTitle.includes("جلسة عود") ||
+          row.file_size === 8419726 ||
+          row.file_size === 5634752;
+
+        if (isKhaleejiMismatch) {
+          console.warn(`[WeciBot] ❌ Rejected Khaleeji / bad audio: "${row.title}" by "${row.artist}"`);
+          query(`DELETE FROM moonbot_pending WHERE tg_file_id = $1`, [row.tg_file_id]).catch(() => {});
+          continue;
+        }
+
+        // 3. Artist check: if expectedArtist is Jannat or Angham, reject other artists
+        if (expectedArtist && (expectedArtist.includes("جنات") || expectedArtist.toLowerCase().includes("jannat"))) {
+          if (rowArtist && !rowArtist.includes("جنات") && !rowArtist.includes("jannat") && !rowArtist.includes("rotana") && !rowArtist.includes("aura") && !rowArtist.includes("music")) {
+            console.warn(`[WeciBot] ❌ Rejected non-Jannat artist: "${row.artist}" for expected Jannat track "${expectedTitle}"`);
+            continue;
+          }
+        }
+        if (expectedArtist && (expectedArtist.includes("أنغام") || expectedArtist.toLowerCase().includes("angham"))) {
+          if (rowArtist && !rowArtist.includes("أنغام") && !rowArtist.includes("angham") && !rowArtist.includes("rotana") && !rowArtist.includes("aura") && !rowArtist.includes("music")) {
+            console.warn(`[WeciBot] ❌ Rejected non-Angham artist: "${row.artist}" for expected Angham track "${expectedTitle}"`);
+            continue;
+          }
+        }
+
         const elapsed = ((Date.now() - start) / 1000).toFixed(1);
-        console.log(`[L10Bot] ✅ DB hit in ${elapsed}s: "${res.rows[0].title}"`);
-        return res.rows[0];
+        console.log(`[WeciBot] ✅ Audio validated hit in ${elapsed}s: "${row.title}" by "${row.artist}"`);
+        return row;
       }
     } catch (err: any) {
-      // If table doesn't exist yet, create it
       if (err.message?.includes("does not exist")) {
         await ensurePendingTable();
       } else {
-        console.warn("[L10Bot] DB poll error:", err.message);
+        console.warn("[WeciBot] DB poll error:", err.message);
       }
     }
 
@@ -255,6 +297,25 @@ export function cleanQueryForWeciBot(rawTitle: string, rawArtist?: string): stri
   let title = (rawTitle || "").trim();
   let artist = (rawArtist || "").trim();
 
+  // If title matches Jannat or Angham classics, enforce the canonical title and artist
+  const jannat = JANNAT_OLD_CLASSICS.find(c =>
+    c.title.trim().toLowerCase() === title.toLowerCase() ||
+    title.toLowerCase().includes(c.title.trim().toLowerCase())
+  );
+  if (jannat) {
+    title = jannat.title;
+    artist = "جنات";
+  } else {
+    const angham = ANGHAM_OLD_CLASSICS.find(c =>
+      c.title.trim().toLowerCase() === title.toLowerCase() ||
+      title.toLowerCase().includes(c.title.trim().toLowerCase())
+    );
+    if (angham) {
+      title = angham.title;
+      artist = "أنغام";
+    }
+  }
+
   // Strip video suffixes and tags
   title = title
     .replace(/\(Official.*?\)/gi, "")
@@ -333,7 +394,28 @@ export async function resolveViaMoonBot(params: {
   artist?: string;
   videoId?: string;
 }): Promise<MoonBotResult | null> {
-  const { title, artist = "", videoId } = params;
+  let { title, artist = "", videoId } = params;
+
+  // Resolve classic artist if missing
+  const jannat = JANNAT_OLD_CLASSICS.find(c =>
+    (videoId && (c.songId === videoId || c.youtubeVideoId === videoId)) ||
+    c.title.trim().toLowerCase() === title.trim().toLowerCase()
+  );
+  if (jannat) {
+    title = jannat.title;
+    artist = "جنات";
+    if (!videoId) videoId = jannat.youtubeVideoId;
+  }
+
+  const angham = ANGHAM_OLD_CLASSICS.find(c =>
+    (videoId && (c.songId === videoId || c.youtubeVideoId === videoId)) ||
+    c.title.trim().toLowerCase() === title.trim().toLowerCase()
+  );
+  if (angham) {
+    title = angham.title;
+    artist = "أنغام";
+    if (!videoId) videoId = angham.youtubeVideoId;
+  }
 
   if (!BOT_TOKEN || !CHANNEL_ID) {
     console.warn("[WeciBot] Missing BOT_TOKEN or CHANNEL_ID");
@@ -348,23 +430,22 @@ export async function resolveViaMoonBot(params: {
 
   const cleanSongQuery = cleanQueryForWeciBot(title, artist);
 
-  // ── Strategy: @wecibot Direct Single-Message "نزل" (Fastest & No Buttons) ──
-  // Bot command format: "نزل {title} {artist}" in ONE message!
-  console.log(`[WeciBot] Attempting direct single-message "نزل" flow for "${title}" (query: "${cleanSongQuery}")...`);
+  // Exact command requested by user: "نزل {title} {artist}"
   const weciCommand = `نزل ${cleanSongQuery}`;
+  console.log(`[WeciBot] 🤖 Executing command in channel: "${weciCommand}" for "${title}" by "${artist}"...`);
   const weciMsgId = await sendMsg(weciCommand);
   if (weciMsgId) {
     console.log(`[WeciBot] Sent "${weciCommand}" (msgId=${weciMsgId}) — waiting for audio webhook...`);
-    const pending = await pollDbForAudio(weciMsgId, 28000);
+    const pending = await pollDbForAudio(weciMsgId, title, artist, 28000);
 
     // Clean up command message asynchronously
     deleteMsg(weciMsgId).catch(() => {});
 
     if (pending) {
-      console.log(`[WeciBot] ✅ Audio received successfully from @wecibot for "${title}"!`);
+      console.log(`[WeciBot] ✅ Audio received successfully from bot for "${title}"!`);
       return await processPendingAudio(pending, videoId, title, artist);
     }
-    console.warn(`[WeciBot] No audio from @wecibot within 28s for "${title}"`);
+    console.warn(`[WeciBot] No valid audio from bot within 28s for "${weciCommand}"`);
   }
 
   return null;

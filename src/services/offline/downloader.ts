@@ -378,17 +378,15 @@ export async function downloadSong(
     const ok = await downloadAudioBlob(songId, songId, effectiveVideoId, effectiveTitle, effectiveArtist, undefined, ctrl.signal);
     if (ctrl.signal.aborted) return false;
     if (ok) {
-      // Sanity check: verify the downloaded blob is not the corrupt Khaleeji track
-      if (classic) {
-        const blob = await getAudioBlob(songId);
-        if (blob && (blob.size === 5634752 || blob.size === 8419726)) {
-          console.warn(`[Downloader] Purging Khaleeji duplicate for Jannat "${effectiveTitle}"`);
-          const { deleteAudioBlobOnly } = await import("@/offline/indexedDbCache");
-          await deleteAudioBlobOnly(songId);
-          updateJob(songId, { done: 0, failed: 1 });
-          finishJob(songId, false);
-          return false;
-        }
+      // Sanity check: verify the downloaded blob is not a snippet or corrupt Khaleeji track
+      const blob = await getAudioBlob(songId);
+      if (blob && (blob.size === 5634752 || blob.size === 8419726 || blob.size === 6736640 || blob.size === 6677312 || blob.size < 500000)) {
+        console.warn(`[Downloader] Purging invalid audio blob (size=${blob.size}) for "${effectiveTitle}"`);
+        const { deleteAudioBlobOnly } = await import("@/offline/indexedDbCache");
+        await deleteAudioBlobOnly(songId);
+        updateJob(songId, { done: 0, failed: 1 });
+        finishJob(songId, false);
+        return false;
       }
 
       updateJob(songId, { done: 1, failed: 0 });

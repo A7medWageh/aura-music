@@ -70,6 +70,27 @@ export async function POST(req: NextRequest) {
         `[TelegramWebhook] Audio received: "${title}" by "${artist}" (file_id=${fileId}, replyTo=${replyToMsgId})`
       );
 
+      // Validate: Reject snippets and Khaleeji mismatch
+      const rowArtist = (artist || "").toLowerCase();
+      const rowTitle = (title || "").toLowerCase();
+      const isBadDuration = durationSec > 0 && durationSec < 45;
+      const isKhaleejiMismatch =
+        rowArtist.includes("حماده") ||
+        rowArtist.includes("مجرشي") ||
+        rowArtist.includes("majra") ||
+        rowTitle.includes("مجرشي") ||
+        rowTitle.includes("حماده مجرشي") ||
+        rowTitle.includes("شيلة") ||
+        rowTitle.includes("شيلات") ||
+        rowTitle.includes("جلسة عود") ||
+        fileSize === 8419726 ||
+        fileSize === 5634752;
+
+      if (isBadDuration || isKhaleejiMismatch) {
+        console.warn(`[TelegramWebhook] ⚠️ Blocked bad audio from caching: "${title}" by "${artist}" (size=${fileSize}, dur=${durationSec})`);
+        return NextResponse.json({ ok: true, status: "ignored_bad_audio" });
+      }
+
       // 1. Save to moonbot_pending for resolveViaMoonBot polling
       try {
         await query(
