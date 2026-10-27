@@ -47,12 +47,14 @@ type PlayerContextValue = {
   getAnalyser: () => AnalyserNode | null;
   closePlayer: () => void;
   toggleMute: () => void;
+  hasUserTriggeredPlay: boolean;
 };
 
 const PlayerContext = createContext<PlayerContextValue | null>(null);
 
 export function PlayerProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<PlayerState>(initialPlayerState);
+  const [hasUserTriggeredPlay, setHasUserTriggeredPlay] = useState(false);
 
   // Restore saved player session on client mount only (guarantees SSR hydration consistency)
   useEffect(() => {
@@ -60,7 +62,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       const saved = localStorage.getItem("aura-player-session");
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (parsed.queue && parsed.queue.length > 0 && parsed.currentSongId) {
+        const hasMowgou3 = parsed.queue?.some((s: any) => s.title && s.title.includes("موجوع"));
+        if (hasMowgou3) {
+          localStorage.removeItem("aura-player-session");
+          localStorage.removeItem("aura-player-state");
+        } else if (parsed.queue && parsed.queue.length > 0 && parsed.currentSongId) {
           setState((prev) => ({
             ...prev,
             queue: parsed.queue,
@@ -215,6 +221,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const player = audioRef.current;
     if (!player) return;
 
+    setHasUserTriggeredPlay(true);
     primeAudioElement();
     updateMediaSessionMetadata(song);
 
@@ -309,6 +316,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const idx = Math.max(0, Math.min(startIndex, songs.length - 1));
     const targetSong = songs[idx];
     if (targetSong) {
+      setHasUserTriggeredPlay(true);
       setState((prev) => ({
         ...prev,
         queue: songs,
@@ -412,31 +420,29 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         }
         syncPositionState();
       } else {
+        setHasUserTriggeredPlay(true);
         if ((!player.src || player.src === "" || player.src === window.location.href) && currentSong) {
           syncPlayTrack(currentSong);
           return;
         }
+        setState((prev) => ({ ...prev, isPlaying: true }));
+        if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+          navigator.mediaSession.playbackState = "playing";
+        }
         const p = player.play();
         if (p !== undefined) {
           p.then(() => {
-            setState((prev) => ({ ...prev, isPlaying: true }));
-            if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
-              navigator.mediaSession.playbackState = "playing";
-            }
             syncPositionState();
           }).catch((err) => {
             console.warn("[Player] Direct play() rejected, falling back to syncPlayTrack:", err);
             if (currentSong) syncPlayTrack(currentSong);
           });
         } else {
-          setState((prev) => ({ ...prev, isPlaying: true }));
-          if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
-            navigator.mediaSession.playbackState = "playing";
-          }
           syncPositionState();
         }
       }
     } else {
+      setHasUserTriggeredPlay(true);
       setState((prev) => ({ ...prev, isPlaying: !prev.isPlaying }));
     }
   };
@@ -502,7 +508,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   };
 
   const setSoundBoost = (boost: number) => {
-    const val = Math.max(1.0, Math.min(1.5, boost));
+    const val = Math.max(1.0, Math.min(2.0, boost));
     try {
       localStorage.setItem("aura_sound_boost", val.toString());
     } catch {}
@@ -543,7 +549,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       if (savedBoost) {
         const parsed = parseFloat(savedBoost);
         if (!isNaN(parsed) && parsed >= 1.0) {
-          setState((prev) => ({ ...prev, soundBoost: Math.min(1.5, parsed) }));
+          setState((prev) => ({ ...prev, soundBoost: Math.min(2.0, parsed) }));
         }
       }
       const saved8d = localStorage.getItem("aura_8d_audio");
@@ -613,8 +619,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         { type: "peaking"  as BiquadFilterType, freq: 2400, gain: 2.8, Q: 0.85 }, // Pure velvet vocal clarity (below fatigue zone)
         { type: "highshelf" as BiquadFilterType, freq: 11500, gain: 3.0 },        // Silky audiophile air (shimmering, zero sizzle)
       ],
-      comp: { threshold: -10, ratio: 1.5, attack: 0.020, release: 0.18 },         // Studio glue (warm & dynamic)
-      postGain: 1.08,
+      comp: { threshold: -14, ratio: 2.2, attack: 0.015, release: 0.15 },         // High output studio compression
+      postGain: 1.25,
     },
     bass: {
       bands: [
@@ -624,8 +630,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         { type: "peaking"  as BiquadFilterType, freq: 3800, gain: -1.5, Q: 1.2 }, // Sibilance softening (protects ears at high vol)
         { type: "highshelf" as BiquadFilterType, freq: 10500, gain: 2.0 },        // Smooth warm top
       ],
-      comp: { threshold: -12, ratio: 1.8, attack: 0.025, release: 0.20 },
-      postGain: 1.06,
+      comp: { threshold: -16, ratio: 2.5, attack: 0.020, release: 0.18 },
+      postGain: 1.30,
     },
     vocal: {
       bands: [
@@ -635,8 +641,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         { type: "peaking"  as BiquadFilterType, freq: 2600, gain: 3.5, Q: 0.9 },  // Direct, crystal clear lyrics & presence
         { type: "highshelf" as BiquadFilterType, freq: 12000, gain: 3.0 },        // Silky breath air (zero ear fatigue)
       ],
-      comp: { threshold: -9, ratio: 1.6, attack: 0.015, release: 0.16 },
-      postGain: 1.08,
+      comp: { threshold: -14, ratio: 2.0, attack: 0.012, release: 0.14 },
+      postGain: 1.25,
     },
     spatial: {
       bands: [
@@ -646,8 +652,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         { type: "peaking"  as BiquadFilterType, freq: 2500, gain: 2.5, Q: 0.8 },  // HRTF binaural sweetening
         { type: "highshelf" as BiquadFilterType, freq: 12000, gain: 3.5 },        // Wide open holographic acoustic stage
       ],
-      comp: { threshold: -10, ratio: 1.6, attack: 0.020, release: 0.18 },
-      postGain: 1.08,
+      comp: { threshold: -15, ratio: 2.2, attack: 0.018, release: 0.16 },
+      postGain: 1.30,
     },
     noise_cancel: {
       bands: [
@@ -657,8 +663,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         { type: "peaking"  as BiquadFilterType, freq: 2500, gain: 3.0, Q: 0.9 },  // Clean comfortable foreground clarity
         { type: "highshelf" as BiquadFilterType, freq: 11000, gain: 2.5 },        // Ambient masking without treble fatigue
       ],
-      comp: { threshold: -11, ratio: 2.0, attack: 0.010, release: 0.14 },
-      postGain: 1.12,
+      comp: { threshold: -16, ratio: 2.8, attack: 0.008, release: 0.12 },
+      postGain: 1.35,
     },
   };
 
@@ -690,7 +696,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }
 
     const cfg = PRESET_CONFIGS[presetKey] || PRESET_CONFIGS.crystal;
-    if (preGainRef.current) preGainRef.current.gain.setTargetAtTime(0.88, now, t); // -1.1 dB studio headroom to prevent digital clipping
+    if (preGainRef.current) preGainRef.current.gain.setTargetAtTime(1.05, now, t);
 
     eqNodesRef.current.forEach((node, i) => {
       const b = cfg.bands[i];
@@ -715,7 +721,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }
 
     if (limiterRef.current) {
-      limiterRef.current.threshold.setTargetAtTime(-0.3, now, t);
+      limiterRef.current.threshold.setTargetAtTime(-0.1, now, t);
       limiterRef.current.knee.setTargetAtTime(12, now, t);
       limiterRef.current.ratio.setTargetAtTime(8, now, t);
       limiterRef.current.attack.setTargetAtTime(0.003, now, t);
@@ -945,17 +951,28 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         syncPlayTrack(currentSong);
         return;
       }
+      setHasUserTriggeredPlay(true);
+      if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+        navigator.mediaSession.playbackState = "playing";
+      }
+      setState((prev) => ({ ...prev, isPlaying: true }));
       if (audioCtxRef.current && audioCtxRef.current.state === "suspended") {
         audioCtxRef.current.resume().catch(() => {});
       }
-      player.play().then(() => {
-        setState((prev) => ({ ...prev, isPlaying: true }));
-        navigator.mediaSession.playbackState = "playing";
+      const p = player.play();
+      if (p !== undefined) {
+        p.then(() => {
+          syncPositionState();
+        }).catch((err) => {
+          console.warn("[MediaSession] play() rejected:", err);
+          setState((prev) => ({ ...prev, isPlaying: !player.paused }));
+          if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+            navigator.mediaSession.playbackState = player.paused ? "paused" : "playing";
+          }
+        });
+      } else {
         syncPositionState();
-      }).catch((err) => {
-        console.warn("[MediaSession] play() rejected:", err);
-        if (currentSong) syncPlayTrack(currentSong);
-      });
+      }
     });
 
     navigator.mediaSession.setActionHandler("pause", () => {
@@ -1230,8 +1247,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       const playPromise = player.play();
       if (playPromise !== undefined) {
         playPromise.catch((err) => {
-          if (err.name === "NotAllowedError") armGestureResume(player);
-          else if (err.name !== "AbortError") {
+          if (err.name === "NotAllowedError") {
+            if (typeof document !== "undefined" && !document.hidden) {
+              armGestureResume(player);
+            }
+          } else if (err.name !== "AbortError") {
             console.warn("[Player] Playback play() error:", err.message);
           }
         });
@@ -1457,6 +1477,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         player.removeAttribute("src");
         player.load();
       }
+      setHasUserTriggeredPlay(false);
+      try {
+        localStorage.removeItem("aura-player-session");
+        localStorage.removeItem("aura-player-state");
+      } catch {}
       setState(initialPlayerState);
       if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
         try {
@@ -1465,6 +1490,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         } catch {}
       }
     },
+    hasUserTriggeredPlay,
     prewarm: (videoId: string) => {
       // Prewarming removed for direct download chunking proxy
     }

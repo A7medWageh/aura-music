@@ -134,7 +134,7 @@ async function main() {
 
   for (let i = 0; i < tracks.length; i++) {
     const track = tracks[i];
-    const isCached = cachedVideoIds.has(track.youtubeVideoId) || cachedTitles.has(track.title.toLowerCase());
+    const isCached = cachedVideoIds.has(track.youtubeVideoId);
 
     if (isCached) {
       console.log(`[${i + 1}/${tracks.length}] ⏭️ Already cached: ${track.title} (${track.youtubeVideoId})`);

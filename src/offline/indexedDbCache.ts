@@ -353,7 +353,7 @@ export async function getAllOfflineSongs(): Promise<any[]> {
         clearTimeout(timeout);
         const enriched = songs.map((s) => ({
           ...s,
-          audioReady: audioKeys.has(s.songId) || (s.youtubeVideoId && audioKeys.has(s.youtubeVideoId)) || Boolean(s.audioReady && audioKeys.has(s.songId)),
+          audioReady: audioKeys.has(s.songId) || (s.youtubeVideoId && audioKeys.has(s.youtubeVideoId)) || s.audioReady === true,
         }));
         resolve(enriched);
       };
@@ -569,7 +569,7 @@ export function isKhaleejiOrCorruptedJannatBlob(
   );
   if (!isJannat) return false;
 
-  // Known Khaleeji singer audio blob sizes and ranges:
+  // Exact known Khaleeji singer audio blob sizes:
   // 5634752 bytes = Hamada Majrashi ("بنسى نفسي")
   // 6736640 bytes = Hamada Majrashi ("هتسيب")
   // 6677312 bytes = Hamada Majrashi ("خبر غيابي")
@@ -578,10 +578,7 @@ export function isKhaleejiOrCorruptedJannatBlob(
     blobSize === 5634752 ||
     blobSize === 6736640 ||
     blobSize === 6677312 ||
-    blobSize === 8419726 ||
-    (blobSize >= 5500000 && blobSize <= 5750000) ||
-    (blobSize >= 6600000 && blobSize <= 6780000) ||
-    (blobSize >= 8410000 && blobSize <= 8430000)
+    blobSize === 8419726
   ) {
     return true;
   }
@@ -629,25 +626,15 @@ export async function autoPurgeCorruptedJannatBlobs(): Promise<number> {
 
     if (jannatBlobs.length === 0) return 0;
 
-    const sizeCounts = new Map<number, number>();
-    for (const item of jannatBlobs) {
-      sizeCounts.set(item.size, (sizeCounts.get(item.size) || 0) + 1);
-    }
-
     const toDeleteIds = new Set<string>();
     for (const item of jannatBlobs) {
       const isKnownKhaleeji =
         item.size === 5634752 ||
         item.size === 6736640 ||
         item.size === 6677312 ||
-        item.size === 8419726 ||
-        (item.size >= 5500000 && item.size <= 5750000) ||
-        (item.size >= 6600000 && item.size <= 6780000) ||
-        (item.size >= 8410000 && item.size <= 8430000);
+        item.size === 8419726;
 
-      const isDuplicate = (sizeCounts.get(item.size) || 0) >= 2;
-
-      if (isKnownKhaleeji || isDuplicate) {
+      if (isKnownKhaleeji) {
         toDeleteIds.add(item.songId);
       }
     }

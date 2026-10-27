@@ -1549,7 +1549,7 @@ function FullPlayer({
 
 // ─── Mini Player Bar ──────────────────────────────────────────────────
 export function PlayerBar() {
-  const { state, currentSong, next, prev, togglePlay, setVolume, seekTo } = usePlayer();
+  const { state, currentSong, next, prev, togglePlay, setVolume, seekTo, hasUserTriggeredPlay } = usePlayer();
   const [isLiked, setIsLiked] = useState(false);
   const [fullOpen, setFullOpen] = useState(false);
   const [openInLockScreen, setOpenInLockScreen] = useState(false);
@@ -1605,7 +1605,7 @@ export function PlayerBar() {
   const { accent } = useDominantColor(proxyArt);
   const pct = state.duration > 0 ? (state.currentTime / state.duration) * 100 : 0;
 
-  if (!currentSong) return null;
+  if (!currentSong || (!state.isPlaying && state.currentTime === 0 && !hasUserTriggeredPlay)) return null;
 
   return (
     <>
