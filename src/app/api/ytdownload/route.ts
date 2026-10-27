@@ -3,6 +3,7 @@ import { resolveUniversalAudio, type UniversalAudioResult } from "@/services/mus
 import { streamAudioFromYouTube, isYtDlpAvailable } from "@apis/yt-dlp";
 import { findBestOfficialVideo } from "@/services/music/artistMatcher";
 import { uploadAudioBufferToTelegram } from "@/services/telegram/telegramStorage";
+import { JANNAT_OLD_CLASSICS } from "@/data/jannatClassics";
 
 export const dynamic = "force-dynamic";
 
@@ -271,6 +272,16 @@ function normalizeText(text: string): string {
 }
 
 async function getFallbackVideoId(videoId?: string, title?: string, artist?: string): Promise<string | null> {
+  const isJannat = !artist || artist.includes("جنات") || artist.toLowerCase().includes("jannat");
+  if (isJannat && title) {
+    const match = JANNAT_OLD_CLASSICS.find((c) => {
+      if (videoId && (c.songId === videoId || c.youtubeVideoId === videoId)) return true;
+      const ct = c.title.trim().toLowerCase().replace(/\s+/g, "");
+      const qt = (title || "").trim().toLowerCase().replace(/\s+/g, "");
+      return ct === qt || ct.includes(qt) || qt.includes(ct);
+    });
+    if (match) return match.youtubeVideoId;
+  }
   if (videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId)) return videoId;
   const q = `${artist || ""} ${title || ""}`.trim();
   if (!q) return null;

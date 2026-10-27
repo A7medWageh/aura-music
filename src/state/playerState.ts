@@ -6,6 +6,10 @@ export type QueueSong = {
   artist: string;
   youtubeVideoId: string;
   thumbnailUrl?: string;
+  albumName?: string;
+  folderName?: string;
+  streamUrl?: string;
+  audioReady?: boolean;
   metadata?: any;
   moodTag?: string | null;
   energyScore?: number | null;

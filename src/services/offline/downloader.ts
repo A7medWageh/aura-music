@@ -1,6 +1,7 @@
 import { saveSongMeta, storeAudioBlob, storeLyrics, getAudioBlob, getAllOfflineSongs, fetchImageAsDataUrl, detectAudioMimeType } from "@/offline/indexedDbCache";
 import { startJob, updateJob, finishJob, setJobController, isJobPaused } from "@/state/downloadStore";
 import { toAbsoluteApiUrl } from "@/utils/apiBase";
+import { JANNAT_OLD_CLASSICS } from "@/data/jannatClassics";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type SongMeta = {
@@ -301,45 +302,80 @@ export async function downloadSong(
   videoId: string,
   metadata?: SongMeta
 ): Promise<boolean> {
-  const { title, artist } = cleanArtistAndTitle(metadata?.title, metadata?.artist);
-  const displayArtist = artist || "فنان غير معروف";
+  const { title: rawTitle, artist: rawArtist } = cleanArtistAndTitle(metadata?.title, metadata?.artist);
+  const displayArtist = rawArtist || "فنان غير معروف";
 
   try {
+    const isJannat =
+      displayArtist.includes("جنات") ||
+      displayArtist.toLowerCase().includes("jannat") ||
+      metadata?.artist?.includes("جنات") ||
+      metadata?.artist?.toLowerCase().includes("jannat");
+
+    const classic = JANNAT_OLD_CLASSICS.find((c) => {
+      if (songId && (c.songId === songId || c.youtubeVideoId === songId)) return true;
+      if (videoId && (c.songId === videoId || c.youtubeVideoId === videoId)) return true;
+      const ct = c.title.trim().toLowerCase().replace(/\s+/g, "");
+      const qt = rawTitle.trim().toLowerCase().replace(/\s+/g, "");
+      return ct === qt || ct.includes(qt) || qt.includes(ct);
+    });
+
+    const effectiveTitle = classic ? classic.title : rawTitle;
+    const effectiveArtist = classic ? "جنات" : displayArtist;
+    const effectiveVideoId = classic ? classic.youtubeVideoId : (videoId || songId);
+    const effectiveAlbum = classic ? classic.album : metadata?.albumName;
+
     const allSongs = await getAllOfflineSongs();
-    const smartFolder = getSmartFolderName(metadata?.folderName || displayArtist, allSongs, title);
+    const smartFolder = classic
+      ? "جنات"
+      : getSmartFolderName(metadata?.folderName || effectiveArtist, allSongs, effectiveTitle);
 
     // Pre-cache thumbnail as offline dataUrl so image loads with 0 network
-    const cachedArt = metadata?.thumbnailUrl
-      ? await fetchImageAsDataUrl(metadata.thumbnailUrl).catch(() => metadata.thumbnailUrl)
+    const rawThumb = (classic && classic.thumbnailUrl) || metadata?.thumbnailUrl;
+    const cachedArt = rawThumb
+      ? await fetchImageAsDataUrl(rawThumb).catch(() => rawThumb)
       : undefined;
 
     await saveSongMeta({
       songId,
-      youtubeVideoId: videoId,
-      title,
-      artist: displayArtist,
-      thumbnailUrl: cachedArt || metadata?.thumbnailUrl,
-      albumId: metadata?.albumId,
-      albumName: metadata?.albumName,
+      youtubeVideoId: effectiveVideoId,
+      title: effectiveTitle,
+      artist: effectiveArtist,
+      thumbnailUrl: cachedArt || rawThumb,
+      albumId: classic ? classic.album : metadata?.albumId,
+      albumName: effectiveAlbum,
       folderName: smartFolder,
     });
 
-    startJob(songId, title, "song", 1);
-    updateJob(songId, { currentSong: title, totalBytes: 3.5 * 1024 * 1024, progressBytes: 1 });
+    startJob(songId, effectiveTitle, "song", 1);
+    updateJob(songId, { currentSong: effectiveTitle, totalBytes: 3.5 * 1024 * 1024, progressBytes: 1 });
 
     const ctrl = new AbortController();
     setJobController(songId, ctrl);
-    const ok = await downloadAudioBlob(songId, songId, videoId, title, artist, undefined, ctrl.signal);
+    const ok = await downloadAudioBlob(songId, songId, effectiveVideoId, effectiveTitle, effectiveArtist, undefined, ctrl.signal);
     if (ctrl.signal.aborted) return false;
     if (ok) {
+      // Sanity check: verify the downloaded blob is not the corrupt Khaleeji track
+      if (classic) {
+        const blob = await getAudioBlob(songId);
+        if (blob && (blob.size === 5634752 || blob.size === 8419726)) {
+          console.warn(`[Downloader] Purging Khaleeji duplicate for Jannat "${effectiveTitle}"`);
+          const { deleteAudioBlobOnly } = await import("@/offline/indexedDbCache");
+          await deleteAudioBlobOnly(songId);
+          updateJob(songId, { done: 0, failed: 1 });
+          finishJob(songId, false);
+          return false;
+        }
+      }
+
       updateJob(songId, { done: 1, failed: 0 });
       // Asynchronously pre-cache lyrics for offline use
-      fetch(`/api/lyrics?trackName=${encodeURIComponent(title)}&artistName=${encodeURIComponent(artist)}&videoId=${videoId}`)
+      fetch(`/api/lyrics?trackName=${encodeURIComponent(effectiveTitle)}&artistName=${encodeURIComponent(effectiveArtist)}&videoId=${effectiveVideoId}`)
         .then(r => r.json())
         .then(async (d) => {
           if (d.lyrics || d.syncedLyrics) {
             await storeLyrics(songId, { lyrics: d.lyrics, syncedLyrics: d.syncedLyrics });
-            console.log(`[Downloader] Offline lyrics saved for "${title}"`);
+            console.log(`[Downloader] Offline lyrics saved for "${effectiveTitle}"`);
           }
         })
         .catch(() => {});
@@ -349,7 +385,7 @@ export async function downloadSong(
     finishJob(songId, ok);
     return ok;
   } catch (err) {
-    console.error(`[Library] Failed to save "${title}":`, err);
+    console.error(`[Library] Failed to save "${rawTitle}":`, err);
     finishJob(songId, false);
     return false;
   }

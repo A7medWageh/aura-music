@@ -5,7 +5,7 @@ import { initialPlayerState, PlayerState, QueueSong, RepeatMode } from "@/state/
 import { getAudioBlob, getOfflineSongMeta, deleteAudioBlobOnly, isKhaleejiOrCorruptedJannatBlob, autoPurgeCorruptedJannatBlobs } from "@/offline/indexedDbCache";
 import { JANNAT_OLD_CLASSICS } from "@/data/jannatClassics";
 import { downloadSong } from "@/services/offline/downloader";
-import { setMainAudioPlaying } from "@/services/offline/backgroundKeepAlive";
+import { setMainAudioPlaying, createSilentWavBlob } from "@/services/offline/backgroundKeepAlive";
 import { useToastStore } from "@/state/toastStore";
 import { toAbsoluteApiUrl } from "@/utils/apiBase";
 
@@ -66,6 +66,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }, 4000);
     return () => clearTimeout(timer);
   }, []);
+
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const isPlayingRef = useRef(state.isPlaying);
   const isLoadingNewSongRef = useRef(false); // true while fetching stream URL, prevents onPause from clearing isPlaying
@@ -76,10 +77,95 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const lastPreloadRef = useRef<string | null>(null);
   const isInitialMountRef = useRef(true);
 
+  const nextRef = useRef<() => void>(() => {});
+  const prevRef = useRef<() => void>(() => {});
+
   const currentSong = useMemo(
     () => state.queue.find((song) => song.songId === state.currentSongId) ?? null,
     [state.currentSongId, state.queue]
   );
+
+  // ── Silent Audio Keep-Alive for iOS Lock Screen & Handsfree Resumption ──
+  const silentAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  const ensureSilentKeepAlive = () => {
+    if (typeof window === "undefined") return;
+    try {
+      if (!silentAudioRef.current) {
+        const blob = createSilentWavBlob();
+        const url = URL.createObjectURL(blob);
+        const el = new Audio(url);
+        el.loop = true;
+        el.volume = 0.001; // tiny non-zero volume keeps WebKit process alive on iOS
+        el.setAttribute("playsinline", "true");
+        silentAudioRef.current = el;
+      }
+      if (silentAudioRef.current.paused) {
+        silentAudioRef.current.play().catch(() => {});
+      }
+    } catch {}
+  };
+
+  const stopSilentKeepAlive = () => {
+    if (silentAudioRef.current && !silentAudioRef.current.paused) {
+      try {
+        silentAudioRef.current.pause();
+      } catch {}
+    }
+  };
+
+  // ── Complete iPhone Lock Screen & MediaSession Metadata ──
+  const updateMediaSessionMetadata = (song: QueueSong | null) => {
+    if (typeof navigator === "undefined" || !("mediaSession" in navigator) || !song) return;
+
+    let artUrl = song.thumbnailUrl || song.metadata?.thumbnailUrl;
+    if (artUrl) {
+      if (artUrl.startsWith("/")) {
+        artUrl = typeof window !== "undefined" ? `${window.location.origin}${artUrl}` : artUrl;
+      } else if (artUrl.startsWith("data:")) {
+        artUrl = typeof window !== "undefined" ? `${window.location.origin}/placeholder-album.jpg` : "/placeholder-album.jpg";
+      }
+    } else {
+      artUrl = typeof window !== "undefined" ? `${window.location.origin}/placeholder-album.jpg` : "/placeholder-album.jpg";
+    }
+
+    try {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: song.title || "أغنية",
+        artist: song.artist || "فنان",
+        album: song.albumName || song.folderName || (song.metadata?.album) || "Aura Music",
+        artwork: [
+          { src: artUrl, sizes: "96x96",   type: "image/jpeg" },
+          { src: artUrl, sizes: "128x128", type: "image/jpeg" },
+          { src: artUrl, sizes: "192x192", type: "image/jpeg" },
+          { src: artUrl, sizes: "256x256", type: "image/jpeg" },
+          { src: artUrl, sizes: "384x384", type: "image/jpeg" },
+          { src: artUrl, sizes: "512x512", type: "image/jpeg" },
+        ],
+      });
+    } catch {}
+  };
+
+  const syncPositionState = () => {
+    const player = audioRef.current;
+    if (
+      typeof navigator !== "undefined" &&
+      "mediaSession" in navigator &&
+      "setPositionState" in navigator.mediaSession &&
+      player &&
+      player.duration &&
+      !isNaN(player.duration) &&
+      isFinite(player.duration)
+    ) {
+      try {
+        navigator.mediaSession.setPositionState({
+          duration: Math.max(0, player.duration),
+          playbackRate: player.playbackRate || 1,
+          position: Math.max(0, Math.min(player.currentTime || 0, player.duration)),
+        });
+      } catch {}
+    }
+  };
 
   // Persist session to localStorage so active song, queue and progress survive reloads
   useEffect(() => {
@@ -99,17 +185,134 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }
   }, [state.queue, state.currentSongId, state.volume]);
 
+  // Synchronously prime the audio element inside user gestures for iOS WebKit
+  const primeAudioElement = () => {
+    const player = audioRef.current;
+    if (!player) return;
+    try {
+      const p = player.play();
+      if (p !== undefined) {
+        p.catch(() => {});
+      }
+    } catch {}
+  };
+
+  // Synchronous fast-track starter: plays immediately inside user/handsfree gestures
+  const syncPlayTrack = (song: QueueSong) => {
+    const player = audioRef.current;
+    if (!player) return;
+
+    stopSilentKeepAlive();
+    primeAudioElement();
+    updateMediaSessionMetadata(song);
+
+    if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+      navigator.mediaSession.playbackState = "playing";
+    }
+
+    if (typeof window !== "undefined") {
+      import("@/services/user/listeningHistory").then(({ trackPlay }) => trackPlay(song)).catch(() => {});
+    }
+
+    // 1. Fast handoff if preloaded URL is ready
+    if (nextPreloadedRef.current && nextPreloadedRef.current.songId === song.songId) {
+      const pUrl = nextPreloadedRef.current.url;
+      player.src = pUrl;
+      player.load();
+      player.play().catch((err) => console.warn("[LockScreen] Preload play error:", err));
+      nextPreloadedRef.current = null;
+
+      setState((prev) => {
+        const exists = prev.queue.some((item) => item.songId === song.songId);
+        const nextQueue = exists ? prev.queue : [song, ...prev.queue];
+        return {
+          ...prev,
+          queue: nextQueue,
+          currentSongId: song.songId,
+          isPlaying: true,
+          streamUrl: pUrl,
+          currentTime: 0,
+          duration: 0,
+          isBuffering: false,
+          error: null,
+        };
+      });
+      return;
+    }
+
+    // 2. Direct streaming start immediately (starts in seconds, never rejected by iOS lock screen)
+    const targetVid = song.youtubeVideoId || song.songId || "";
+    const directStreamUrl = toAbsoluteApiUrl(
+      `/api/ytdownload?videoId=${encodeURIComponent(targetVid)}&title=${encodeURIComponent(song.title)}&artist=${encodeURIComponent(song.artist || "")}&proxy=true`
+    );
+
+    player.src = directStreamUrl;
+    player.preload = "auto";
+    player.load();
+    const p = player.play();
+    if (p !== undefined) {
+      p.catch((err) => {
+        console.warn("[Player] Direct play deferred:", err);
+      });
+    }
+
+    setState((prev) => {
+      const exists = prev.queue.some((item) => item.songId === song.songId);
+      const nextQueue = exists ? prev.queue : [song, ...prev.queue];
+      return {
+        ...prev,
+        queue: nextQueue,
+        currentSongId: song.songId,
+        isPlaying: true,
+        streamUrl: directStreamUrl,
+        currentTime: 0,
+        duration: 0,
+        isBuffering: true,
+        error: null,
+      };
+    });
+
+    // 3. In background, check if offline blob is available; if so, swap to local blob URL
+    getAudioBlob(song.songId).then(async (blob) => {
+      let b = blob;
+      if (!b && song.youtubeVideoId && song.youtubeVideoId !== song.songId) {
+        b = await getAudioBlob(song.youtubeVideoId);
+      }
+      if (b && isKhaleejiOrCorruptedJannatBlob(song.artist, b.size, song.songId || song.title)) {
+        await deleteAudioBlobOnly(song.songId);
+        if (song.youtubeVideoId) await deleteAudioBlobOnly(song.youtubeVideoId);
+        b = null;
+      }
+      if (b && stateRef.current.currentSongId === song.songId) {
+        const blobUrl = URL.createObjectURL(b);
+        player.src = blobUrl;
+        player.load();
+        player.play().catch(() => {});
+        setState((prev) => ({ ...prev, streamUrl: blobUrl, isBuffering: false }));
+      }
+    }).catch(() => {});
+  };
+
   const setQueue = (songs: QueueSong[], startIndex = 0) => {
     const idx = Math.max(0, Math.min(startIndex, songs.length - 1));
-    setState((prev) => ({
-      ...prev,
-      queue: songs,
-      currentSongId: songs[idx]?.songId ?? null,
-      isPlaying: songs.length > 0,
-      currentTime: 0,
-      duration: 0,
-      error: null
-    }));
+    const targetSong = songs[idx];
+    if (targetSong) {
+      setState((prev) => ({
+        ...prev,
+        queue: songs,
+      }));
+      syncPlayTrack(targetSong);
+    } else {
+      setState((prev) => ({
+        ...prev,
+        queue: songs,
+        currentSongId: null,
+        isPlaying: false,
+        currentTime: 0,
+        duration: 0,
+        error: null,
+      }));
+    }
   };
 
   const enqueueSongs = async (songs: QueueSong[]) => {
@@ -134,20 +337,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     });
   };
 
-  // Synchronously prime the audio element inside user gestures for iOS WebKit
-  const primeAudioElement = () => {
-    const player = audioRef.current;
-    if (!player) return;
-    try {
-      const p = player.play();
-      if (p !== undefined) {
-        p.catch(() => {});
-      }
-    } catch {}
-  };
-
-  // Deferred play after an autoplay-policy failure; must be cancelled
-  // when switching songs, otherwise the stale listener resumes the OLD src.
+  // Deferred play after an autoplay-policy failure
   const armGestureResume = (player: HTMLAudioElement) => {
     const resumeOnGesture = () => {
       cleanupGestureResume();
@@ -164,33 +354,15 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   };
 
   const playNow = async (song: QueueSong) => {
-    primeAudioElement();
-    if (typeof window !== "undefined") {
-      import("@/services/user/listeningHistory").then(({ trackPlay }) => trackPlay(song)).catch(() => {});
-    }
-    
-    setState((prev) => {
-      const exists = prev.queue.some((item) => item.songId === song.songId);
-      const nextQueue = exists ? prev.queue : [song, ...prev.queue];
-      return {
-        ...prev,
-        queue: nextQueue,
-        currentSongId: song.songId,
-        isPlaying: true,
-        currentTime: 0,
-        duration: 0,
-        error: null
-      };
-    });
+    syncPlayTrack(song);
   };
 
   const playSongById = async (songId: string) => {
-    primeAudioElement();
-    setState((prev) => ({ ...prev, currentSongId: songId, isPlaying: true }));
+    const s = stateRef.current.queue.find((item) => item.songId === songId);
+    if (s) syncPlayTrack(s);
   };
 
   const next = () => {
-    primeAudioElement();
     const currentState = stateRef.current;
     if (!currentState.queue.length || !currentState.currentSongId) return;
     const index = currentState.queue.findIndex((song) => song.songId === currentState.currentSongId);
@@ -201,64 +373,57 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         : 0;
     const nextSong = currentState.queue[nextIndex];
     if (!nextSong) return;
-
-    const player = audioRef.current;
-    if (player && nextPreloadedRef.current && nextPreloadedRef.current.songId === nextSong.songId) {
-      player.src = nextPreloadedRef.current.url;
-      player.load();
-      player.play().catch(() => {});
-      nextPreloadedRef.current = null;
-    }
-
-    setState((prev) => ({ 
-      ...prev, 
-      currentSongId: nextSong.songId, 
-      isPlaying: true,
-      currentTime: 0,
-      duration: 0
-    }));
+    syncPlayTrack(nextSong);
   };
 
   const prev = () => {
-    primeAudioElement();
     const currentState = stateRef.current;
     if (!currentState.queue.length || !currentState.currentSongId) return;
     const index = currentState.queue.findIndex((song) => song.songId === currentState.currentSongId);
     const prevIndex = index <= 0 ? currentState.queue.length - 1 : index - 1;
     const prevSong = currentState.queue[prevIndex];
     if (!prevSong) return;
-
-    setState((prevState) => ({ 
-      ...prevState, 
-      currentSongId: prevSong.songId, 
-      isPlaying: true,
-      currentTime: 0,
-      duration: 0
-    }));
+    syncPlayTrack(prevSong);
   };
+
+  nextRef.current = next;
+  prevRef.current = prev;
 
   const togglePlay = () => {
     const player = audioRef.current;
     if (player) {
       if (state.isPlaying) {
         player.pause();
+        ensureSilentKeepAlive();
         setState((prev) => ({ ...prev, isPlaying: false }));
+        if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+          navigator.mediaSession.playbackState = "paused";
+        }
+        syncPositionState();
       } else {
-        // If the audio element has no src loaded yet (e.g. after a page refresh), load and play currentSong
+        stopSilentKeepAlive();
         if ((!player.src || player.src === "" || player.src === window.location.href) && currentSong) {
-          playNow(currentSong);
+          syncPlayTrack(currentSong);
           return;
         }
         const p = player.play();
         if (p !== undefined) {
           p.then(() => {
             setState((prev) => ({ ...prev, isPlaying: true }));
+            if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+              navigator.mediaSession.playbackState = "playing";
+            }
+            syncPositionState();
           }).catch((err) => {
-            console.warn("[Player] Direct play() rejected, falling back to playNow:", err);
-            if (currentSong) playNow(currentSong);
+            console.warn("[Player] Direct play() rejected, falling back to syncPlayTrack:", err);
+            if (currentSong) syncPlayTrack(currentSong);
           });
         } else {
           setState((prev) => ({ ...prev, isPlaying: true }));
+          if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+            navigator.mediaSession.playbackState = "playing";
+          }
+          syncPositionState();
         }
       }
     } else {
@@ -629,27 +794,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   // ─── Media Session API (Lock Screen & Bluetooth Headset Remote Control) ─────
   useEffect(() => {
-    if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
-    const song = currentSong;
-    if (!song) return;
-
-    const art = song.thumbnailUrl || song.metadata?.thumbnailUrl;
-    const artwork: MediaImage[] = art
-      ? [
-          { src: art, sizes: "96x96",   type: "image/jpeg" },
-          { src: art, sizes: "128x128", type: "image/jpeg" },
-          { src: art, sizes: "192x192", type: "image/jpeg" },
-          { src: art, sizes: "256x256", type: "image/jpeg" },
-          { src: art, sizes: "512x512", type: "image/jpeg" },
-        ]
-      : [];
-
-    navigator.mediaSession.metadata = new MediaMetadata({
-      title:  song.title  || "أغنية",
-      artist: song.artist || "فنان",
-      album:  (song.metadata?.album) || "Aura Music",
-      artwork,
-    });
+    if (currentSong) {
+      updateMediaSessionMetadata(currentSong);
+    }
   }, [currentSong]);
 
   useEffect(() => {
@@ -661,21 +808,25 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
 
     navigator.mediaSession.setActionHandler("play", () => {
+      stopSilentKeepAlive();
       const player = audioRef.current;
       if (!player) return;
+      const currentSong = stateRef.current.queue.find((s) => s.songId === stateRef.current.currentSongId);
+      if ((!player.src || player.src === "" || player.src === window.location.href) && currentSong) {
+        syncPlayTrack(currentSong);
+        return;
+      }
       if (audioCtxRef.current && audioCtxRef.current.state === "suspended") {
         audioCtxRef.current.resume().catch(() => {});
       }
-      const p = player.play();
-      if (p !== undefined) {
-        p.then(() => {
-          setState(prev => ({ ...prev, isPlaying: true }));
-        }).catch(err => {
-          console.warn("[MediaSession] play() rejected:", err);
-        });
-      } else {
-        setState(prev => ({ ...prev, isPlaying: true }));
-      }
+      player.play().then(() => {
+        setState((prev) => ({ ...prev, isPlaying: true }));
+        navigator.mediaSession.playbackState = "playing";
+        syncPositionState();
+      }).catch((err) => {
+        console.warn("[MediaSession] play() rejected:", err);
+        if (currentSong) syncPlayTrack(currentSong);
+      });
     });
 
     navigator.mediaSession.setActionHandler("pause", () => {
@@ -683,29 +834,52 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       if (player) {
         player.pause();
       }
-      setState(prev => ({ ...prev, isPlaying: false }));
+      ensureSilentKeepAlive();
+      setState((prev) => ({ ...prev, isPlaying: false }));
+      navigator.mediaSession.playbackState = "paused";
+      syncPositionState();
     });
 
-    navigator.mediaSession.setActionHandler("nexttrack", () => next());
-    navigator.mediaSession.setActionHandler("previoustrack", () => prev());
+    navigator.mediaSession.setActionHandler("nexttrack", () => {
+      nextRef.current();
+    });
+
+    navigator.mediaSession.setActionHandler("previoustrack", () => {
+      prevRef.current();
+    });
+
     navigator.mediaSession.setActionHandler("stop", () => {
       audioRef.current?.pause();
-      setState(p => ({ ...p, isPlaying: false }));
+      ensureSilentKeepAlive();
+      setState((p) => ({ ...p, isPlaying: false }));
+      navigator.mediaSession.playbackState = "paused";
     });
+
     navigator.mediaSession.setActionHandler("seekto", (d) => {
-      if (d.seekTime != null) seekTo(d.seekTime);
+      if (d.seekTime != null) {
+        seekTo(d.seekTime);
+        syncPositionState();
+      }
     });
+
     navigator.mediaSession.setActionHandler("seekbackward", (details) => {
       const skipTime = details.seekOffset || 10;
-      if (audioRef.current) seekTo(Math.max(0, audioRef.current.currentTime - skipTime));
+      if (audioRef.current) {
+        seekTo(Math.max(0, audioRef.current.currentTime - skipTime));
+        syncPositionState();
+      }
     });
+
     navigator.mediaSession.setActionHandler("seekforward", (details) => {
       const skipTime = details.seekOffset || 10;
-      if (audioRef.current) seekTo(audioRef.current.currentTime + skipTime);
+      if (audioRef.current) {
+        seekTo(Math.min((audioRef.current.currentTime || 0) + skipTime, audioRef.current.duration || 0));
+        syncPositionState();
+      }
     });
 
     return () => {
-      (["play","pause","nexttrack","previoustrack","stop","seekto","seekbackward","seekforward"] as MediaSessionAction[]).forEach(a => {
+      (["play","pause","nexttrack","previoustrack","stop","seekto","seekbackward","seekforward"] as MediaSessionAction[]).forEach((a) => {
         try { navigator.mediaSession.setActionHandler(a, null); } catch {}
       });
     };
@@ -763,6 +937,22 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         });
         return;
       }
+    }
+
+    // If the audio element was already started synchronously by syncPlayTrack/playNow/next/prev, do not pause or reload!
+    const targetVid = song.youtubeVideoId || song.songId || "";
+    const isCurrentSrcActive = player.src && (
+      (targetVid && player.src.includes(encodeURIComponent(targetVid))) ||
+      player.src.includes(encodeURIComponent(song.title)) ||
+      (state.streamUrl && player.src === state.streamUrl)
+    );
+
+    if (isCurrentSrcActive) {
+      updateMediaSessionMetadata(song);
+      if (stateRef.current.isPlaying && player.paused) {
+        player.play().catch(() => {});
+      }
+      return;
     }
 
     player.pause();
@@ -824,176 +1014,45 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           throw new Error("هذه الأغنية غير متوفرة في ذاكرة هاتفك الأوفلاين — يرجى الاتصال بالإنترنت أولاً لتنزيلها");
         }
 
-        // 2. Resolve stream URL via Universal Audio Resolver (JioSaavn / Albumaty / SoundCloud / YouTube)
-        console.log(`[Player] Resolving audio stream for "${song.title}" (${song.artist || ""})...`);
-        setState((prev) => ({ ...prev, isBuffering: true }));
+        // 2. Instant Direct Streaming (Starts in seconds without multi-roundtrip delay)
+        console.log(`[Player] ⚡ Instant direct streaming for "${song.title}" (${song.artist || ""})...`);
 
-        const params = new URLSearchParams();
-        const vid = song.youtubeVideoId || song.songId || "";
-        if (vid && /^[a-zA-Z0-9_-]{11}$/.test(vid)) {
-          params.set("videoId", vid);
-        }
-        if (song.title) params.set("title", song.title);
-        if (song.artist) params.set("artist", song.artist);
-        params.set("resolveOnly", "true");
+        const classic = JANNAT_OLD_CLASSICS.find(
+          (c) =>
+            c.songId === song.songId ||
+            c.youtubeVideoId === song.youtubeVideoId ||
+            c.title === song.title ||
+            song.title.includes(c.title) ||
+            c.title.includes(song.title)
+        );
+        const vid = classic ? classic.youtubeVideoId : (song.youtubeVideoId || song.songId || "");
+        const songTitle = classic ? classic.title : song.title;
+        const songArtist = classic ? "جنات" : (song.artist || "");
 
-        const resolveRes = await fetch(toAbsoluteApiUrl(`/api/ytdownload?${params.toString()}`));
-        if (!resolveRes.ok) {
-          const errData = await resolveRes.json().catch(() => ({}));
-          console.error(`[Player] ytdownload error for "${song.title}":`, errData);
-          throw new Error(errData.error || "فشل في استخراج الرابط الصوتي للأغنية");
-        }
-        const data = await resolveRes.json();
-        
-        if (!data.url) throw new Error("لم يتم العثور على رابط صوتي للأغنية");
-        if (cancelled) return;
+        const playUrl = toAbsoluteApiUrl(
+          `/api/ytdownload?videoId=${encodeURIComponent(vid)}&title=${encodeURIComponent(songTitle)}&artist=${encodeURIComponent(songArtist)}&proxy=true`
+        );
 
-        // Fresh-song progressive start: the browser streams straight from the
-        // extraction worker (no time cap) while we ingest the full file into the
-        // Telegram cache in the background. If the temporary stream ever drops
-        // (tunnel hiccup), we re-warm and hand over to the cached file from the
-        // exact position — the song must never stop.
-        if (data.warmUrl) {
-          const warmUrl = toAbsoluteApiUrl(data.warmUrl);
-          let swapped = false;
-          let warmRetried = false;
-          const stillOnTempStream = () => {
-            const p = audioRef.current;
-            return !!p && /forceYtDlp=true|streamNow=true/.test(p.currentSrc || p.src);
-          };
-          const trySwapToCached = async (): Promise<boolean> => {
-            if (swapped || cancelled || !stillOnTempStream()) return false;
-            try {
-              const rr = await fetch(toAbsoluteApiUrl(`/api/ingest-status?videoId=${encodeURIComponent(vid)}`));
-              if (!rr.ok) return false;
-              const d2 = await rr.json();
-              if (!d2.cached || !d2.url) return false;
-              if (swapped || cancelled || !stillOnTempStream()) return false;
-              swapped = true;
-              const p = audioRef.current!;
-              const pos = p.currentTime;
-              const wasPlaying = isPlayingRef.current;
-              const abs = toAbsoluteApiUrl(d2.url);
-              console.log(`[Player] Progressive→cached swap at ${pos.toFixed(1)}s for "${song.title}"`);
-              p.src = abs;
-              p.load();
-              const onCan = () => {
-                p.removeEventListener("canplay", onCan);
-                try { p.currentTime = pos; } catch {}
-                if (wasPlaying) p.play().catch(() => {});
-              };
-              p.addEventListener("canplay", onCan);
-              setState((prev) => ({ ...prev, streamUrl: abs }));
-              return true;
-            } catch {
-              return false;
-            }
-          };
-          let handoverStarted = false;
-          const handover = () => {
-            if (swapped || cancelled || handoverStarted) return;
-            handoverStarted = true;
-            let n = 0;
-            const iv = setInterval(async () => {
-              const ok = await trySwapToCached();
-              if (!ok && n === 2 && !warmRetried) {
-                warmRetried = true;
-                fetch(warmUrl).catch(() => {});
-              }
-              if (ok || ++n >= 45) clearInterval(iv);
-            }, 4000);
-          };
-          // The live pipe is not seekable, so as soon as the full file lands in the
-          // cache we move playback onto it — no need to wait for the stream to drop.
-          fetch(warmUrl).catch(() => {});
-          handover();
-          player.addEventListener("ended", handover);
-          let tunnelRetried = false;
-          player.addEventListener("error", () => {
-            handover();
-            if (swapped || cancelled || tunnelRetried || !data.fallbackUrl) return;
-            const p = audioRef.current;
-            if (!p || !stillOnTempStream()) return;
-            tunnelRetried = true;
-            // The direct tunnel can fail on some networks while the same worker is
-            // reachable through Vercel — keep the song playing instead of going silent.
-            const abs = toAbsoluteApiUrl(data.fallbackUrl);
-            console.warn(`[Player] Direct tunnel stream failed for "${song.title}" — using the proxied stream`);
-            const pos = p.currentTime;
-            const wasPlaying = isPlayingRef.current;
-            p.src = abs;
-            p.load();
-            const onCan = () => {
-              p.removeEventListener("canplay", onCan);
-              try { p.currentTime = pos; } catch {}
-              if (wasPlaying) p.play().catch(() => {});
-            };
-            p.addEventListener("canplay", onCan);
-            setState((prev) => ({ ...prev, streamUrl: abs }));
-          });
-        }
-
-        // If directPlay is true and host allows CORS (like JioSaavn CDN), stream directly.
-        // If host blocks CORS (like Albumaty) or requires custom headers, proxy via /api/stream-proxy
-        const hasDirectCors = data.url.includes("saavncdn.com") || data.url.includes("sndcdn.com");
-        const isDirect = Boolean(data.directPlay && hasDirectCors && !data.url.includes("googlevideo.com") && !data.url.includes("albumaty.com"));
-        
-        let playUrl: string;
-        if (data.source === "stream") {
-          playUrl = /^https?:/.test(data.url) ? data.url : toAbsoluteApiUrl(data.url);
-        } else if (data.source === "youtube" || data.url.includes("youtube.com") || data.url.includes("youtu.be")) {
-          const targetVid = vid || song.youtubeVideoId || song.songId || "";
-          playUrl = toAbsoluteApiUrl(`/api/ytdownload?videoId=${encodeURIComponent(targetVid)}&title=${encodeURIComponent(song.title)}&artist=${encodeURIComponent(song.artist || "")}&proxy=true`);
-        } else if (isDirect) {
-          playUrl = data.url;
-        } else if (data.url.startsWith("/api/ytdownload") || data.url.startsWith("/api/telegram")) {
-          playUrl = toAbsoluteApiUrl(data.url);
-        } else {
-          playUrl = toAbsoluteApiUrl(`/api/stream-proxy?url=${encodeURIComponent(data.url)}&title=${encodeURIComponent(song.title)}&videoId=${encodeURIComponent(vid)}`);
-        }
-
-        console.log(`[Player] Streaming "${song.title}" via ${data.source || "direct"} (url=${playUrl})...`);
         if (player.src !== playUrl) {
           player.src = playUrl;
           player.preload = "auto";
           player.load();
         }
 
-        isLoadingNewSongRef.current = false; // Allow onPause to work normally again
+        isLoadingNewSongRef.current = false;
+        isPlayingRef.current = true;
 
         setState((prev) => ({
           ...prev,
-          isBuffering: true, // still buffering until canplay fires
-          isPlaying: true,   // FORCE playing=true so UI shows play icon immediately
+          isBuffering: false,
+          isPlaying: true,
           streamUrl: playUrl,
-          duration: data.durationSec || prev.duration,
         }));
-        isPlayingRef.current = true;
 
-        // Attempt play immediately — on iOS/Android start playback as soon as the first chunk arrives
-        const tryPlay = () => {
-          const playPromise = player.play();
-          if (playPromise !== undefined) {
-            playPromise.catch((err) => {
-              console.warn("[Player] Autoplay play() was deferred:", err);
-              if (err.name === "NotAllowedError") armGestureResume(player);
-            });
-          }
-        };
-
-        // Trigger on loadeddata (instant first frame/chunk) or canplay without waiting for full buffer
-        if (player.readyState >= 2) {
-          tryPlay();
-        } else {
-          const onDataReady = () => {
-            player.removeEventListener("loadeddata", onDataReady);
-            player.removeEventListener("canplay", onDataReady);
-            if (!cancelled && isPlayingRef.current) tryPlay();
-          };
-          player.addEventListener("loadeddata", onDataReady, { once: true });
-          player.addEventListener("canplay", onDataReady, { once: true });
-        }
-        tryPlay();
+        player.play().catch((err) => {
+          console.warn("[Player] Direct play deferred:", err);
+          if (err.name === "NotAllowedError") armGestureResume(player);
+        });
       } catch (error) {
         if (!cancelled) {
           console.error("[Player] Playback error:", error);
@@ -1118,6 +1177,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (player) {
       const dur = player.duration || 0;
       setState((prev) => ({ ...prev, duration: dur }));
+      syncPositionState();
 
       // Duration safeguard for Jannat cached tracks
       if (player.src && player.src.startsWith("blob:") && currentSong) {
@@ -1158,16 +1218,20 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   };
 
   const onPlaying = () => {
+    stopSilentKeepAlive();
     if (audioCtxRef.current && audioCtxRef.current.state === "suspended") {
       audioCtxRef.current.resume().catch(() => {});
     }
+    syncPositionState();
     setState((prev) => ({ ...prev, isBuffering: false, error: null }));
   };
 
   const onPlay = () => {
+    stopSilentKeepAlive();
     if (audioCtxRef.current && audioCtxRef.current.state === "suspended") {
       audioCtxRef.current.resume().catch(() => {});
     }
+    syncPositionState();
     setState((prev) => ({ ...prev, isPlaying: true }));
   };
 
@@ -1175,6 +1239,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     // Do NOT set isPlaying:false if we paused the element ourselves during loading.
     // This prevents the UI from flashing the pause icon between songs.
     if (isLoadingNewSongRef.current) return;
+    ensureSilentKeepAlive();
+    syncPositionState();
     setState((prev) => ({ ...prev, isPlaying: false }));
   };
 
@@ -1195,35 +1261,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    const currentIndex = currentState.queue.findIndex((song) => song.songId === currentState.currentSongId);
-    let nextIndex = 0;
-    if (currentState.shuffle) {
-      nextIndex = Math.floor(Math.random() * currentState.queue.length);
-    } else if (currentIndex >= 0) {
-      // Loop album / singles queue seamlessly so music never unexpectedly stops
-      nextIndex = (currentIndex + 1) % currentState.queue.length;
+    if (nextRef.current) {
+      nextRef.current();
     }
-
-    const nextSong = currentState.queue[nextIndex];
-    if (!nextSong) return;
-
-    // Fast synchronous media handoff to satisfy iOS & Android background lock screen policies
-    const player = audioRef.current;
-    if (player && nextPreloadedRef.current && nextPreloadedRef.current.songId === nextSong.songId) {
-      player.src = nextPreloadedRef.current.url;
-      player.load();
-      player.play().catch((e) => console.warn("[AutoAdvance] Fast handoff play error:", e));
-      nextPreloadedRef.current = null;
-    }
-
-    setState((prev) => ({
-      ...prev,
-      currentSongId: nextSong.songId,
-      isPlaying: true,
-      currentTime: 0,
-      duration: 0,
-      error: null
-    }));
   };
 
   const value: PlayerContextValue = {

@@ -22,6 +22,7 @@ import { resolveAlbumatyStream } from "../scrapers/albumaty";
 import { getCachedTelegramTrack, getTelegramDirectUrl, uploadAudioUrlToTelegram } from "../telegram/telegramStorage";
 import { resolveViaMoonBot } from "../telegram/moonBotResolver";
 import { findBestOfficialVideo, isStrictArtistMatch } from "./artistMatcher";
+import { JANNAT_OLD_CLASSICS } from "@/data/jannatClassics";
 
 export interface UniversalAudioResult {
   streamUrl: string;
@@ -341,11 +342,52 @@ export async function resolveUniversalAudio(params: {
     artist === "فنان غير معروف" ||
     artist.toLowerCase().includes("unknown");
 
+  // Safeguard: Match against Jannat Old Classics to ensure authentic official YouTube video ID
+  const matchingJannat = JANNAT_OLD_CLASSICS.find((c) => {
+    if (videoId && (c.songId === videoId || c.youtubeVideoId === videoId)) return true;
+    const isJannatArtist = !artist || artist.includes("جنات") || artist.toLowerCase().includes("jannat");
+    if (isJannatArtist && title) {
+      const ct = cleanTitle(c.title).toLowerCase().replace(/\s+/g, "");
+      const qt = cleanTitle(title).toLowerCase().replace(/\s+/g, "");
+      return ct === qt || ct.includes(qt) || qt.includes(ct);
+    }
+    return false;
+  });
+
+  if (matchingJannat) {
+    videoId = matchingJannat.youtubeVideoId;
+    title = matchingJannat.title;
+    artist = "جنات";
+  }
+
   // A DB row keyed by videoId is only trustworthy when its artist matches the
   // clicked one — re-uploaded "same title, different audio" uploads (e.g. the
   // "Replica | Abyusif" bait video by another channel) otherwise play a
   // completely different song without any warning.
-  const rowIsRightSong = (row: { videoId?: string; artist?: string }) => {
+  const rowIsRightSong = (row: { videoId?: string; artist?: string; durationSec?: number }) => {
+    if (matchingJannat && row) {
+      // Validate expected duration for Jannat track (must be within 30s)
+      if (matchingJannat.duration && row.durationSec) {
+        const parts = matchingJannat.duration.split(":").map(Number);
+        const expectedSec = parts[0] * 60 + parts[1];
+        if (Math.abs(row.durationSec - expectedSec) > 30) {
+          console.warn(`[AudioResolver] Jannat duration mismatch for "${title}": expected ${expectedSec}s, got ${row.durationSec}s`);
+          return false;
+        }
+      }
+      // Check artist is not Khaleeji (Hamada Majrashi, etc.)
+      const rowArtist = (row.artist || "").toLowerCase();
+      if (
+        rowArtist.includes("حماده") ||
+        rowArtist.includes("مجرشي") ||
+        rowArtist.includes("majra") ||
+        (rowArtist && !rowArtist.includes("جنات") && !rowArtist.includes("jannat"))
+      ) {
+        console.warn(`[AudioResolver] Jannat wrong artist detected in DB row: "${row.artist}" for "${title}"`);
+        return false;
+      }
+      return true;
+    }
     // 1a rows share the clicked videoId (identity by id); rows found via the
     // title+artist branch already matched on title — so the artist check is
     // the remaining trust gap for polluted uploads.

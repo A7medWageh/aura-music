@@ -34,7 +34,7 @@ function writeString(view: DataView, offset: number, string: string) {
  * Dynamically builds a valid, self-contained 1-second inaudible WAV audio file.
  * Compatible with iOS WebKit, Safari, Chrome, and Firefox.
  */
-function createSilentWavBlob(): Blob {
+export function createSilentWavBlob(): Blob {
   const sampleRate = 8000;
   const numSamples = sampleRate; // 1 second of audio
   const buffer = new ArrayBuffer(44 + numSamples);
