@@ -582,7 +582,7 @@ export function isKhaleejiOrCorruptedJannatBlob(
   // 6677312 bytes = Hamada Majrashi ("خبر غيابي")
   // 8419726 bytes = Khaleeji row 466
   if (
-    blobSize < 4000000 ||
+    blobSize < 600000 || // < 600KB is broken or 29s preview snippet (authentic tracks are >= 2.5MB)
     blobSize === 5634752 ||
     blobSize === 6736640 ||
     blobSize === 6677312 ||
@@ -637,7 +637,7 @@ export async function autoPurgeCorruptedJannatBlobs(): Promise<number> {
     const toDeleteIds = new Set<string>();
     for (const item of jannatBlobs) {
       const isCorruptedOrKhaleeji =
-        item.size < 4000000 || // All 54 official Jannat MP3s are >= 4.38MB
+        item.size < 600000 || // only purge broken or preview snippets
         item.size === 5634752 ||
         item.size === 6736640 ||
         item.size === 6677312 ||
@@ -692,7 +692,6 @@ export async function hasCorruptedJannatTracks(): Promise<boolean> {
 
     if (jannatMeta.length === 0) return false;
 
-    const sizes: number[] = [];
     for (const m of jannatMeta) {
       try {
         const blob = await getAudioBlob(m.songId);
@@ -700,16 +699,10 @@ export async function hasCorruptedJannatTracks(): Promise<boolean> {
           if (isKhaleejiOrCorruptedJannatBlob(m.artist, blob.size, m.songId || m.title)) {
             return true;
           }
-          sizes.push(blob.size);
         }
       } catch {}
     }
 
-    const sizeCounts = new Map<number, number>();
-    for (const sz of sizes) {
-      sizeCounts.set(sz, (sizeCounts.get(sz) || 0) + 1);
-      if (sizeCounts.get(sz)! >= 2) return true;
-    }
     return false;
   } catch {
     return false;
@@ -749,18 +742,16 @@ export async function repairCorruptedJannatTracks(
       }
     }
 
-    // Count sizes to detect duplicate collisions
-    const sizeCounts = new Map<number, number>();
-    for (const { size } of songBlobs) {
-      sizeCounts.set(size, (sizeCounts.get(size) || 0) + 1);
-    }
-
     // Identify corrupted songs
     const toPurge: any[] = [];
     for (const { song, size } of songBlobs) {
-      const isKnownKhaleeji = size === 5634752 || size === 8419726;
-      const isDuplicate = (sizeCounts.get(size) || 0) > 1;
-      if (isKnownKhaleeji || isDuplicate) {
+      const isKnownKhaleeji =
+        size === 5634752 ||
+        size === 6736640 ||
+        size === 6677312 ||
+        size === 8419726 ||
+        size < 600000;
+      if (isKnownKhaleeji) {
         toPurge.push(song);
       }
     }

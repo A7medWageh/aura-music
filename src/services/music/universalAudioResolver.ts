@@ -122,6 +122,10 @@ async function tryJioSaavn(
   try {
     const saavnTrack = await withTimeout(resolveSaavnSong(title, artist), timeoutMs);
     if (saavnTrack?.streamUrl) {
+      if (saavnTrack.durationSec && saavnTrack.durationSec < 60) {
+        console.warn(`[AudioResolver] Rejecting JioSaavn snippet preview (${saavnTrack.durationSec}s) for "${title}"`);
+        return null;
+      }
       return {
         streamUrl: saavnTrack.streamUrl,
         directPlay: true,
@@ -266,6 +270,12 @@ async function ingestToTelegram(
     return result;
   }
 
+  // Never upload short snippets to Telegram cache
+  if (result.durationSec && result.durationSec < 60) {
+    console.warn(`[AudioResolver] Skipping Telegram ingest for short snippet (${result.durationSec}s) for "${title}"`);
+    return result;
+  }
+
   if (
     !result.streamUrl.startsWith("http") ||
     result.streamUrl.includes("youtube.com") ||
@@ -385,12 +395,12 @@ export async function resolveUniversalAudio(params: {
   // completely different song without any warning.
   const rowIsRightSong = (row: { videoId?: string; artist?: string; durationSec?: number }) => {
     if (matchingJannat && row) {
-      // Validate expected duration for Jannat track (must be within 30s)
+      // Validate expected duration for Jannat track (reject obvious snippets)
       if (matchingJannat.duration && row.durationSec) {
         const parts = matchingJannat.duration.split(":").map(Number);
         const expectedSec = parts[0] * 60 + parts[1];
-        if (Math.abs(row.durationSec - expectedSec) > 30) {
-          console.warn(`[AudioResolver] Jannat duration mismatch for "${title}": expected ${expectedSec}s, got ${row.durationSec}s`);
+        if (row.durationSec < 60 && expectedSec > 90) {
+          console.warn(`[AudioResolver] Jannat snippet detected in DB row for "${title}": expected ${expectedSec}s, got ${row.durationSec}s`);
           return false;
         }
       }
@@ -408,12 +418,12 @@ export async function resolveUniversalAudio(params: {
       return true;
     }
     if (matchingAngham && row) {
-      // Validate expected duration for Angham track (must be within 35s)
+      // Validate expected duration for Angham track (reject obvious snippets)
       if (matchingAngham.duration && row.durationSec) {
         const parts = matchingAngham.duration.split(":").map(Number);
         const expectedSec = parts[0] * 60 + parts[1];
-        if (Math.abs(row.durationSec - expectedSec) > 35) {
-          console.warn(`[AudioResolver] Angham duration mismatch for "${title}": expected ${expectedSec}s, got ${row.durationSec}s`);
+        if (row.durationSec < 60 && expectedSec > 90) {
+          console.warn(`[AudioResolver] Angham snippet detected in DB row for "${title}": expected ${expectedSec}s, got ${row.durationSec}s`);
           return false;
         }
       }

@@ -17,7 +17,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "اللي بيني وبينك",
     enTitle: "Elli Beny w Benak",
     album: "اللي بيني وبينك (2006)",
-    duration: "4:15",
+    duration: "3:47",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/AAaJlwwraENInEe9zqWiXtIqgD_JrGSleMizjkMMakk3eG7OsR_RRdVUs9uk3nOSaGfeka0bcDsxEihF=s1080"
   },
@@ -27,7 +27,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "بحبك",
     enTitle: "Bahebbak",
     album: "اللي بيني وبينك (2006)",
-    duration: "4:02",
+    duration: "4:08",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/AAaJlwwraENInEe9zqWiXtIqgD_JrGSleMizjkMMakk3eG7OsR_RRdVUs9uk3nOSaGfeka0bcDsxEihF=s1080"
   },
@@ -37,7 +37,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "أكتر من سنة",
     enTitle: "Aktar Men Sana",
     album: "اللي بيني وبينك (2006)",
-    duration: "3:58",
+    duration: "3:54",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/AAaJlwwraENInEe9zqWiXtIqgD_JrGSleMizjkMMakk3eG7OsR_RRdVUs9uk3nOSaGfeka0bcDsxEihF=s1080"
   },
@@ -47,7 +47,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "بتمر بأزمة",
     enTitle: "Betmor Bi Azmah",
     album: "اللي بيني وبينك (2006)",
-    duration: "4:30",
+    duration: "3:31",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/AAaJlwwraENInEe9zqWiXtIqgD_JrGSleMizjkMMakk3eG7OsR_RRdVUs9uk3nOSaGfeka0bcDsxEihF=s1080"
   },
@@ -57,7 +57,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "ماجيتش ليه",
     enTitle: "Mageetsh Leh",
     album: "اللي بيني وبينك (2006)",
-    duration: "3:44",
+    duration: "4:16",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/AAaJlwwraENInEe9zqWiXtIqgD_JrGSleMizjkMMakk3eG7OsR_RRdVUs9uk3nOSaGfeka0bcDsxEihF=s1080"
   },
@@ -67,7 +67,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "وقدرت تبعد",
     enTitle: "W Edert Teb'ed",
     album: "اللي بيني وبينك (2006)",
-    duration: "4:12",
+    duration: "4:11",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/AAaJlwwraENInEe9zqWiXtIqgD_JrGSleMizjkMMakk3eG7OsR_RRdVUs9uk3nOSaGfeka0bcDsxEihF=s1080"
   },
@@ -77,7 +77,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "مني ليك",
     enTitle: "Menni Leek",
     album: "اللي بيني وبينك (2006)",
-    duration: "3:50",
+    duration: "4:01",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/AAaJlwwraENInEe9zqWiXtIqgD_JrGSleMizjkMMakk3eG7OsR_RRdVUs9uk3nOSaGfeka0bcDsxEihF=s1080"
   },
@@ -87,7 +87,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "لحظة",
     enTitle: "Lahza",
     album: "اللي بيني وبينك (2006)",
-    duration: "4:20",
+    duration: "4:07",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/AAaJlwwraENInEe9zqWiXtIqgD_JrGSleMizjkMMakk3eG7OsR_RRdVUs9uk3nOSaGfeka0bcDsxEihF=s1080"
   },
@@ -97,7 +97,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "كلمة بحبك",
     enTitle: "Kelmet Bahebbek",
     album: "اللي بيني وبينك (2006)",
-    duration: "3:55",
+    duration: "3:46",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/AAaJlwwraENInEe9zqWiXtIqgD_JrGSleMizjkMMakk3eG7OsR_RRdVUs9uk3nOSaGfeka0bcDsxEihF=s1080"
   },
@@ -107,7 +107,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "جديد",
     enTitle: "Gideed",
     album: "اللي بيني وبينك (2006)",
-    duration: "4:05",
+    duration: "4:45",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/AAaJlwwraENInEe9zqWiXtIqgD_JrGSleMizjkMMakk3eG7OsR_RRdVUs9uk3nOSaGfeka0bcDsxEihF=s1080"
   },
@@ -119,7 +119,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "أنا دنيته",
     enTitle: "Ana Donyeto",
     album: "حب امتلاك (2009)",
-    duration: "4:18",
+    duration: "4:29",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/3QN8R_k-1o-vBKXqLTLrYjyyaYgmG--p62p-CJNaw7Gulu1ak9NVGDMtnFHblI_6EGx7KKt3h3eoyUGUlw=s1080"
   },
@@ -129,7 +129,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "حب امتلاك",
     enTitle: "Hob Emtelak",
     album: "حب امتلاك (2009)",
-    duration: "4:10",
+    duration: "3:50",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/3QN8R_k-1o-vBKXqLTLrYjyyaYgmG--p62p-CJNaw7Gulu1ak9NVGDMtnFHblI_6EGx7KKt3h3eoyUGUlw=s1080"
   },
@@ -139,7 +139,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "على فكرة",
     enTitle: "Aala Fekra",
     album: "حب امتلاك (2009)",
-    duration: "3:45",
+    duration: "4:00",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/3QN8R_k-1o-vBKXqLTLrYjyyaYgmG--p62p-CJNaw7Gulu1ak9NVGDMtnFHblI_6EGx7KKt3h3eoyUGUlw=s1080"
   },
@@ -149,7 +149,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "اسمع كلامي",
     enTitle: "Esmaa Kalamy",
     album: "حب امتلاك (2009)",
-    duration: "4:00",
+    duration: "4:04",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/3QN8R_k-1o-vBKXqLTLrYjyyaYgmG--p62p-CJNaw7Gulu1ak9NVGDMtnFHblI_6EGx7KKt3h3eoyUGUlw=s1080"
   },
@@ -159,7 +159,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "خيط ضعيف",
     enTitle: "Kheet Daa'eef",
     album: "حب امتلاك (2009)",
-    duration: "4:42",
+    duration: "3:35",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/3QN8R_k-1o-vBKXqLTLrYjyyaYgmG--p62p-CJNaw7Gulu1ak9NVGDMtnFHblI_6EGx7KKt3h3eoyUGUlw=s1080"
   },
@@ -169,7 +169,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "جيالك",
     enTitle: "Gayalak",
     album: "حب امتلاك (2009)",
-    duration: "3:52",
+    duration: "4:18",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/3QN8R_k-1o-vBKXqLTLrYjyyaYgmG--p62p-CJNaw7Gulu1ak9NVGDMtnFHblI_6EGx7KKt3h3eoyUGUlw=s1080"
   },
@@ -179,7 +179,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "عشان خاطره",
     enTitle: "Aashan Khatro",
     album: "حب امتلاك (2009)",
-    duration: "4:08",
+    duration: "3:39",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/3QN8R_k-1o-vBKXqLTLrYjyyaYgmG--p62p-CJNaw7Gulu1ak9NVGDMtnFHblI_6EGx7KKt3h3eoyUGUlw=s1080"
   },
@@ -189,7 +189,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "ضمني بعيونك",
     enTitle: "Domeny Bwayonak",
     album: "حب امتلاك (2009)",
-    duration: "4:25",
+    duration: "4:56",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/3QN8R_k-1o-vBKXqLTLrYjyyaYgmG--p62p-CJNaw7Gulu1ak9NVGDMtnFHblI_6EGx7KKt3h3eoyUGUlw=s1080"
   },
@@ -199,7 +199,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "لو مرتاحة معاه",
     enTitle: "Lw Mertaha Maah",
     album: "حب امتلاك (2009)",
-    duration: "4:32",
+    duration: "4:21",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/3QN8R_k-1o-vBKXqLTLrYjyyaYgmG--p62p-CJNaw7Gulu1ak9NVGDMtnFHblI_6EGx7KKt3h3eoyUGUlw=s1080"
   },
@@ -209,7 +209,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "مين بيعيش",
     enTitle: "Meen Beyaeesh",
     album: "حب امتلاك (2009)",
-    duration: "4:15",
+    duration: "3:52",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/3QN8R_k-1o-vBKXqLTLrYjyyaYgmG--p62p-CJNaw7Gulu1ak9NVGDMtnFHblI_6EGx7KKt3h3eoyUGUlw=s1080"
   },
@@ -219,7 +219,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "الطفلة البريئة",
     enTitle: "Eltefla Elbaryaa",
     album: "حب امتلاك (2009)",
-    duration: "4:00",
+    duration: "4:37",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/3QN8R_k-1o-vBKXqLTLrYjyyaYgmG--p62p-CJNaw7Gulu1ak9NVGDMtnFHblI_6EGx7KKt3h3eoyUGUlw=s1080"
   },
@@ -231,7 +231,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "حب جامد",
     enTitle: "Hob Gamed",
     album: "حب جامد (2013)",
-    duration: "4:22",
+    duration: "3:15",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/IhL2WSHgSf4qpjJIRW0EAvR2GWmMElllFcEVCB472r_9VhBkSlpJlGMfBiTa880twH_oBIDWa3IvPYU=s1080"
   },
@@ -241,7 +241,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "البادي أظلم",
     enTitle: "El Badi Azlam",
     album: "حب جامد (2013)",
-    duration: "3:55",
+    duration: "4:55",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/IhL2WSHgSf4qpjJIRW0EAvR2GWmMElllFcEVCB472r_9VhBkSlpJlGMfBiTa880twH_oBIDWa3IvPYU=s1080"
   },
@@ -251,7 +251,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "عجباني شخصيته",
     enTitle: "Agbany Shakhsito",
     album: "حب جامد (2013)",
-    duration: "4:05",
+    duration: "3:44",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/ycsdiURXu4To1oOKpq_0MJNF0NzJmFuQF7ncW3-Cpt_06lIOIjRoIbw0Rh3mJFD7gUfGku_HhzHhx7lE=s1080"
   },
@@ -261,7 +261,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "كدة يا حبيبي",
     enTitle: "Keda Ya habibi",
     album: "حب جامد (2013)",
-    duration: "3:40",
+    duration: "3:28",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/IhL2WSHgSf4qpjJIRW0EAvR2GWmMElllFcEVCB472r_9VhBkSlpJlGMfBiTa880twH_oBIDWa3IvPYU=s1080"
   },
@@ -271,7 +271,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "حضرة المهم",
     enTitle: "Hadret elmohem",
     album: "حب جامد (2013)",
-    duration: "4:10",
+    duration: "4:05",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/IhL2WSHgSf4qpjJIRW0EAvR2GWmMElllFcEVCB472r_9VhBkSlpJlGMfBiTa880twH_oBIDWa3IvPYU=s1080"
   },
@@ -281,7 +281,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "أولاد وبيت",
     enTitle: "Awlad we beit",
     album: "حب جامد (2013)",
-    duration: "4:15",
+    duration: "3:47",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/IhL2WSHgSf4qpjJIRW0EAvR2GWmMElllFcEVCB472r_9VhBkSlpJlGMfBiTa880twH_oBIDWa3IvPYU=s1080"
   },
@@ -291,7 +291,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "عايشني أكتر",
     enTitle: "Ayishne Aktar",
     album: "حب جامد (2013)",
-    duration: "4:18",
+    duration: "4:48",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/IhL2WSHgSf4qpjJIRW0EAvR2GWmMElllFcEVCB472r_9VhBkSlpJlGMfBiTa880twH_oBIDWa3IvPYU=s1080"
   },
@@ -301,7 +301,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "شكراً على الرسالة",
     enTitle: "Shokran Ala Elresala",
     album: "حب جامد (2013)",
-    duration: "3:45",
+    duration: "4:35",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/IhL2WSHgSf4qpjJIRW0EAvR2GWmMElllFcEVCB472r_9VhBkSlpJlGMfBiTa880twH_oBIDWa3IvPYU=s1080"
   },
@@ -311,7 +311,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "مش واقفة على حد",
     enTitle: "Mesh Wofaa Ala Had",
     album: "حب جامد (2013)",
-    duration: "4:00",
+    duration: "3:10",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/IhL2WSHgSf4qpjJIRW0EAvR2GWmMElllFcEVCB472r_9VhBkSlpJlGMfBiTa880twH_oBIDWa3IvPYU=s1080"
   },
@@ -321,7 +321,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "فكرت طول اليوم",
     enTitle: "Fakrt Tol Elyoum",
     album: "حب جامد (2013)",
-    duration: "3:50",
+    duration: "4:52",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/IhL2WSHgSf4qpjJIRW0EAvR2GWmMElllFcEVCB472r_9VhBkSlpJlGMfBiTa880twH_oBIDWa3IvPYU=s1080"
   },
@@ -331,7 +331,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "مسا الجمال",
     enTitle: "Mesa Elgamal",
     album: "حب جامد (2013)",
-    duration: "4:02",
+    duration: "3:59",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/IhL2WSHgSf4qpjJIRW0EAvR2GWmMElllFcEVCB472r_9VhBkSlpJlGMfBiTa880twH_oBIDWa3IvPYU=s1080"
   },
@@ -341,7 +341,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "متخافش من بكرة",
     enTitle: "Matkhafsh men bokra",
     album: "حب جامد (2013)",
-    duration: "3:48",
+    duration: "4:03",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/IhL2WSHgSf4qpjJIRW0EAvR2GWmMElllFcEVCB472r_9VhBkSlpJlGMfBiTa880twH_oBIDWa3IvPYU=s1080"
   },
@@ -351,7 +351,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "وحشني",
     enTitle: "Waheshni",
     album: "حب جامد (2013)",
-    duration: "4:12",
+    duration: "3:57",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/IhL2WSHgSf4qpjJIRW0EAvR2GWmMElllFcEVCB472r_9VhBkSlpJlGMfBiTa880twH_oBIDWa3IvPYU=s1080"
   },
@@ -373,7 +373,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "أكيد زعلت",
     enTitle: "Akid Zealet",
     album: "بنفس الكلام (2016)",
-    duration: "4:20",
+    duration: "3:37",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/yCVpJO1cuEvZxLww5LkZfcSS4s3wfBRzJdGwVfjAelzNSnS3FusdXmePUEwIJFZqsCG3rKYiqbzPTuY=s1080"
   },
@@ -383,7 +383,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "عايزة أقرب",
     enTitle: "Aiza Araab",
     album: "بنفس الكلام (2016)",
-    duration: "4:10",
+    duration: "4:48",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/yCVpJO1cuEvZxLww5LkZfcSS4s3wfBRzJdGwVfjAelzNSnS3FusdXmePUEwIJFZqsCG3rKYiqbzPTuY=s1080"
   },
@@ -393,7 +393,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "متتكلمش",
     enTitle: "Ma Tetklimsh",
     album: "بنفس الكلام (2016)",
-    duration: "3:58",
+    duration: "3:22",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/yCVpJO1cuEvZxLww5LkZfcSS4s3wfBRzJdGwVfjAelzNSnS3FusdXmePUEwIJFZqsCG3rKYiqbzPTuY=s1080"
   },
@@ -403,7 +403,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "مش رجولة",
     enTitle: "Mish Regola",
     album: "بنفس الكلام (2016)",
-    duration: "4:15",
+    duration: "4:07",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/yCVpJO1cuEvZxLww5LkZfcSS4s3wfBRzJdGwVfjAelzNSnS3FusdXmePUEwIJFZqsCG3rKYiqbzPTuY=s1080"
   },
@@ -413,7 +413,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "اسأل مجرب",
     enTitle: "Esal Megarab",
     album: "بنفس الكلام (2016)",
-    duration: "4:00",
+    duration: "4:15",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/yCVpJO1cuEvZxLww5LkZfcSS4s3wfBRzJdGwVfjAelzNSnS3FusdXmePUEwIJFZqsCG3rKYiqbzPTuY=s1080"
   },
@@ -423,7 +423,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "100 دليل",
     enTitle: "100 Dalel",
     album: "بنفس الكلام (2016)",
-    duration: "3:45",
+    duration: "4:45",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/yCVpJO1cuEvZxLww5LkZfcSS4s3wfBRzJdGwVfjAelzNSnS3FusdXmePUEwIJFZqsCG3rKYiqbzPTuY=s1080"
   },
@@ -433,7 +433,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "أخدت قرار",
     enTitle: "Akhat Karar",
     album: "بنفس الكلام (2016)",
-    duration: "4:12",
+    duration: "4:00",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/yCVpJO1cuEvZxLww5LkZfcSS4s3wfBRzJdGwVfjAelzNSnS3FusdXmePUEwIJFZqsCG3rKYiqbzPTuY=s1080"
   },
@@ -443,7 +443,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "آخر أحزاني",
     enTitle: "Akher Ahzani",
     album: "بنفس الكلام (2016)",
-    duration: "4:28",
+    duration: "4:41",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/yCVpJO1cuEvZxLww5LkZfcSS4s3wfBRzJdGwVfjAelzNSnS3FusdXmePUEwIJFZqsCG3rKYiqbzPTuY=s1080"
   },
@@ -453,7 +453,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "بطل تغني",
     enTitle: "Batal Teghani",
     album: "بنفس الكلام (2016)",
-    duration: "3:50",
+    duration: "4:33",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/yCVpJO1cuEvZxLww5LkZfcSS4s3wfBRzJdGwVfjAelzNSnS3FusdXmePUEwIJFZqsCG3rKYiqbzPTuY=s1080"
   },
@@ -465,7 +465,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "أنا في انتظارك",
     enTitle: "Ana Fe Entezarak",
     album: "أنا في انتظارك (2020)",
-    duration: "4:15",
+    duration: "4:00",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/ylCw1eA-rdrsIqqVh6TdqZbWP6eMmqc22l_8mc3ENEFrcxEB0-wO1E2IIbMWrjhHDRS45ji1bZvz8L9Z=s1080"
   },
@@ -475,7 +475,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "فهمت قصدك",
     enTitle: "Fhemt Aasdak",
     album: "أنا في انتظارك (2020)",
-    duration: "3:58",
+    duration: "3:41",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/ylCw1eA-rdrsIqqVh6TdqZbWP6eMmqc22l_8mc3ENEFrcxEB0-wO1E2IIbMWrjhHDRS45ji1bZvz8L9Z=s1080"
   },
@@ -485,7 +485,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "الظالم",
     enTitle: "El Zalim",
     album: "أنا في انتظارك (2020)",
-    duration: "4:10",
+    duration: "3:36",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/ylCw1eA-rdrsIqqVh6TdqZbWP6eMmqc22l_8mc3ENEFrcxEB0-wO1E2IIbMWrjhHDRS45ji1bZvz8L9Z=s1080"
   },
@@ -495,7 +495,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "رايقة",
     enTitle: "Rayka",
     album: "أنا في انتظارك (2020)",
-    duration: "3:40",
+    duration: "3:32",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/ylCw1eA-rdrsIqqVh6TdqZbWP6eMmqc22l_8mc3ENEFrcxEB0-wO1E2IIbMWrjhHDRS45ji1bZvz8L9Z=s1080"
   },
@@ -505,7 +505,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "أحلى من الأحلام",
     enTitle: "Ahla Men El Ahlam",
     album: "أنا في انتظارك (2020)",
-    duration: "3:52",
+    duration: "3:43",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/ylCw1eA-rdrsIqqVh6TdqZbWP6eMmqc22l_8mc3ENEFrcxEB0-wO1E2IIbMWrjhHDRS45ji1bZvz8L9Z=s1080"
   },
@@ -515,7 +515,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "إوعى",
     enTitle: "Ewaa",
     album: "أنا في انتظارك (2020)",
-    duration: "3:46",
+    duration: "4:39",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/ylCw1eA-rdrsIqqVh6TdqZbWP6eMmqc22l_8mc3ENEFrcxEB0-wO1E2IIbMWrjhHDRS45ji1bZvz8L9Z=s1080"
   },
@@ -525,7 +525,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "الشمخ الجواني",
     enTitle: "El Shamkh El Gawani",
     album: "أغاني سينجل وتترات",
-    duration: "3:45",
+    duration: "3:07",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/xW30xlTe6-cdSrJauuLEzik4pB3u3cpeWyONP1JgHdJoxm0Qv8BJeIvifhbOgMAVM96BqUzo17Umy7w=s1080"
   },
@@ -535,7 +535,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "يا بختي بيه",
     enTitle: "Ya Bakhty Beeh",
     album: "أغاني سينجل وتترات",
-    duration: "3:30",
+    duration: "3:22",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/k8rzzTNte9ueLa-uM2kGlfhrkvC02uAgk56REEGs2kqc8XN9VFSKCojzUJf2JDczQ6iVf68T98X7_ZQ=s1080"
   },
@@ -545,7 +545,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "امشي سيبني",
     enTitle: "Emshy Seebny",
     album: "أغاني سينجل وتترات",
-    duration: "4:00",
+    duration: "3:11",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/sdIO-4tylYKDdyLPQdXD1KA_0IU-lAIjP1gjx9Y1nLmJW3lREAel78ZsGAHDe8vgq2wtZadNEjFq4aY5=s1080"
   },
@@ -555,7 +555,7 @@ export const JANNAT_OLD_CLASSICS: JannatClassicTrack[] = [
     title: "اللي فاتو",
     enTitle: "Elly Fato",
     album: "أغاني سينجل وتترات",
-    duration: "3:50",
+    duration: "3:08",
     artist: "جنات",
     thumbnailUrl: "https://yt3.googleusercontent.com/gnUwnf8AWOZHl93mGUg9rj_WIQbeyvLqvtkwBF3LoX0c6rG7CKcg3J2NYpPI9XI0xyNqZiJ34-_TKezN=s1080"
   }

@@ -1372,8 +1372,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         if ((isJannat || isAngham || classic) && classic?.duration) {
           const parts = classic.duration.split(":").map(Number);
           const expectedSec = parts[0] * 60 + parts[1];
-          if (dur > 0 && Math.abs(dur - expectedSec) > 30) {
-            console.warn(`[Player] Duration mismatch detected for "${currentSong.title}": expected ~${expectedSec}s, got ${dur.toFixed(1)}s. Purging corrupted blob...`);
+          // Only purge if it's an undeniable preview snippet (less than 55 seconds when expected is > 90s)
+          if (dur > 0 && dur < 55 && expectedSec > 90) {
+            console.warn(`[Player] Snippet preview detected for "${currentSong.title}": expected ~${expectedSec}s, got ${dur.toFixed(1)}s. Purging snippet blob...`);
             deleteAudioBlobOnly(currentSong.songId).catch(() => {});
             if (currentSong.youtubeVideoId) {
               deleteAudioBlobOnly(currentSong.youtubeVideoId).catch(() => {});

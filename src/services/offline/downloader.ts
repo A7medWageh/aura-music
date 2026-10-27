@@ -380,7 +380,7 @@ export async function downloadSong(
     if (ok) {
       // Sanity check: verify the downloaded blob is not a snippet or corrupt Khaleeji track
       const blob = await getAudioBlob(songId);
-      if (blob && (blob.size === 5634752 || blob.size === 8419726 || blob.size === 6736640 || blob.size === 6677312 || blob.size < 500000)) {
+      if (blob && (blob.size === 5634752 || blob.size === 8419726 || blob.size === 6736640 || blob.size === 6677312 || blob.size < 600000)) {
         console.warn(`[Downloader] Purging invalid audio blob (size=${blob.size}) for "${effectiveTitle}"`);
         const { deleteAudioBlobOnly } = await import("@/offline/indexedDbCache");
         await deleteAudioBlobOnly(songId);
