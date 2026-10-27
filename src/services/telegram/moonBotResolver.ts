@@ -430,22 +430,44 @@ export async function resolveViaMoonBot(params: {
 
   const cleanSongQuery = cleanQueryForWeciBot(title, artist);
 
-  // Exact command requested by user: "نزل {title} {artist}"
+  // ══════════════════════════════════════════════════════════════════
+  // TIER 1: Primary Bot (@wecibot) — Command: "نزل {title} {artist}"
+  // ══════════════════════════════════════════════════════════════════
   const weciCommand = `نزل ${cleanSongQuery}`;
-  console.log(`[WeciBot] 🤖 Executing command in channel: "${weciCommand}" for "${title}" by "${artist}"...`);
+  console.log(`[BotResolver] 🤖 [Tier 1 @wecibot] Sending: "${weciCommand}" for "${title}" by "${artist}"...`);
   const weciMsgId = await sendMsg(weciCommand);
   if (weciMsgId) {
-    console.log(`[WeciBot] Sent "${weciCommand}" (msgId=${weciMsgId}) — waiting for audio webhook...`);
-    const pending = await pollDbForAudio(weciMsgId, title, artist, 28000);
+    console.log(`[BotResolver] Sent Tier 1 "${weciCommand}" (msgId=${weciMsgId}) — waiting up to 12s...`);
+    const pending = await pollDbForAudio(weciMsgId, title, artist, 12000);
 
-    // Clean up command message asynchronously
+    // Clean up primary command message
     deleteMsg(weciMsgId).catch(() => {});
 
     if (pending) {
-      console.log(`[WeciBot] ✅ Audio received successfully from bot for "${title}"!`);
+      console.log(`[BotResolver] ✅ Audio received successfully from Tier 1 (@wecibot) for "${title}"!`);
       return await processPendingAudio(pending, videoId, title, artist);
     }
-    console.warn(`[WeciBot] No valid audio from bot within 28s for "${weciCommand}"`);
+    console.warn(`[BotResolver] ⚠️ @wecibot did not deliver audio within 12s for "${title}". Falling back to old bot (@L_10_BOT)...`);
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // TIER 2: Secondary / Fallback Bot (@L_10_BOT) — Command: "تنزيل {title} {artist}"
+  // ══════════════════════════════════════════════════════════════════
+  const oldBotCommand = `تنزيل ${cleanSongQuery}`;
+  console.log(`[BotResolver] 🤖 [Tier 2 @L_10_BOT] Sending fallback: "${oldBotCommand}" for "${title}"...`);
+  const oldBotMsgId = await sendMsg(oldBotCommand);
+  if (oldBotMsgId) {
+    console.log(`[BotResolver] Sent Tier 2 "${oldBotCommand}" (msgId=${oldBotMsgId}) — waiting up to 14s...`);
+    const pending = await pollDbForAudio(oldBotMsgId, title, artist, 14000);
+
+    // Clean up secondary command message
+    deleteMsg(oldBotMsgId).catch(() => {});
+
+    if (pending) {
+      console.log(`[BotResolver] ✅ Audio received successfully from old bot (@L_10_BOT) for "${title}"!`);
+      return await processPendingAudio(pending, videoId, title, artist);
+    }
+    console.warn(`[BotResolver] ❌ Both bots failed to deliver audio for "${title}"`);
   }
 
   return null;

@@ -586,9 +586,9 @@ export async function resolveUniversalAudio(params: {
     const albumatyArtist = arabicResolvedArtist || effectiveArtist;
 
     // All three run in parallel — whoever finds the song first wins instantly.
-    // @wecibot runs with high priority directly into Telegram CDN.
+    // Dual bot resolver (@wecibot primary + @L_10_BOT fallback) runs with high priority into Telegram CDN.
     winner = await raceFirst([
-      ...(params.skipBot ? [] : [tryMoonBot(albumatyTitle, albumatyArtist, videoId, 28000)]),
+      ...(params.skipBot ? [] : [tryMoonBot(albumatyTitle, albumatyArtist, videoId, 30000)]),
       tryAlbumaty(albumatyTitle, albumatyArtist, videoId, 8000),
       tryJioSaavn(title, effectiveArtist, videoId, 6000),
     ]);
@@ -598,11 +598,11 @@ export async function resolveUniversalAudio(params: {
       winner = await tryAlbumaty(title, effectiveArtist, videoId, 5000);
     }
   } else if (hasSearchTitle) {
-    // Non-Arabic: JioSaavn + Albumaty race, moonbot as parallel backup
+    // Non-Arabic: JioSaavn + Albumaty race, dual bot as parallel backup
     winner = await raceFirst([
       tryJioSaavn(title, effectiveArtist, videoId, 6000),
       tryAlbumaty(title, effectiveArtist, videoId, 8000),
-      ...(params.skipBot ? [] : [tryMoonBot(title, effectiveArtist, videoId, 28000)]),
+      ...(params.skipBot ? [] : [tryMoonBot(title, effectiveArtist, videoId, 30000)]),
     ]);
   }
 

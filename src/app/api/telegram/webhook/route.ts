@@ -5,15 +5,43 @@ import { query } from "@apis/neon";
 export const dynamic = "force-dynamic";
 
 /**
- * @L_10_BOT names its audio files like:
- *   🎶 Title  Song - Artist (Official Video)\n⏱ Duration ➖ 258\n🎤 Channel  ...
- * Extract the clean title/duration instead of storing the raw blob.
+ * Accurately parse metadata from @L_10_BOT and @wecibot captions / audio objects
  */
-function parseBotFileName(raw: string): { title: string; durationSec: number | null } {
-  const title = raw.match(/Title\s*➖\s*([^\n]+)/i)?.[1]?.trim();
-  if (!title) return { title: raw, durationSec: null };
-  const dur = raw.match(/Duration\s*➖\s*(\d+)/i)?.[1];
-  return { title, durationSec: dur ? Number(dur) : null };
+function parseBotMetadata(audio: any, doc: any, caption: string | undefined): {
+  title: string;
+  artist: string;
+  durationSec: number;
+} {
+  const cap = caption || "";
+  let title = audio?.title || doc?.file_name?.replace(/\.[^/.]+$/, "") || "";
+  let artist = audio?.performer || "";
+  let durationSec = audio?.duration || 0;
+
+  // 1. @L_10_BOT format (found in caption or title: Title ➖ ... Duration ➖ ...)
+  const l10Source = cap.includes("Title ➖") ? cap : (title.includes("Title ➖") ? title : "");
+  if (l10Source) {
+    const l10Title = l10Source.match(/Title\s*➖\s*([^\n]+)/i)?.[1]?.trim();
+    if (l10Title) title = l10Title;
+    const l10Dur = l10Source.match(/Duration\s*➖\s*(\d+)/i)?.[1];
+    if (l10Dur && !durationSec) durationSec = Number(l10Dur);
+    const l10Artist = l10Source.match(/Channel\s*➖\s*([^\n]+)/i)?.[1]?.trim();
+    if (l10Artist && (!artist || artist === "Aura Music")) artist = l10Artist;
+  }
+
+  // 2. @wecibot format (- music by : @wecibot, - info : {Title}, - duration : mm:ss)
+  if (cap.includes("@wecibot") || cap.includes("- info :")) {
+    const weciInfo = cap.match(/-\s*info\s*:\s*([^\n]+)/i)?.[1]?.trim();
+    if (weciInfo) {
+      if (!title || title.length < 5 || !/[\u0600-\u06FF]/.test(title)) {
+        title = weciInfo;
+      }
+    }
+  }
+
+  if (!title) title = cap || "Aura Track";
+  if (!artist) artist = "Aura Music";
+
+  return { title, artist, durationSec };
 }
 
 /**
@@ -22,7 +50,7 @@ function parseBotFileName(raw: string): { title: string; durationSec: number | n
  * Receives ALL channel posts from Telegram (registered via setWebhook).
  *
  * Handles two cases:
- * 1. Audio/document from @L_10_BOT (or any bot) → saves to moonbot_pending + telegram_audio_cache
+ * 1. Audio/document from @wecibot or @L_10_BOT → saves to moonbot_pending + telegram_audio_cache
  * 2. Direct MP3 drops by admins → indexes in telegram_audio_cache
  */
 export async function POST(req: NextRequest) {
@@ -48,18 +76,10 @@ export async function POST(req: NextRequest) {
 
     if (media?.file_id) {
       const fileId: string = media.file_id;
-      const rawTitle: string =
-        audio?.title ||
-        doc?.file_name?.replace(/\.[^/.]+$/, "") ||
-        message.caption ||
-        "Aura Track";
-      const parsed = parseBotFileName(rawTitle);
+      const parsed = parseBotMetadata(audio, doc, message.caption);
       const title: string = parsed.title;
-      const artist: string =
-        audio?.performer ||
-        rawTitle.match(/Channel\s*➖\s*([^\n]+)/i)?.[1]?.trim() ||
-        "Aura Music";
-      const durationSec: number = audio?.duration || parsed.durationSec || 0;
+      const artist: string = parsed.artist;
+      const durationSec: number = parsed.durationSec;
       const fileSize: number = media.file_size || 0;
       const mimeType: string = media.mime_type || "audio/mpeg";
       const msgId: number = message.message_id;
