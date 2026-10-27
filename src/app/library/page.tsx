@@ -121,70 +121,83 @@ export default function LibraryPage() {
   };
 
   const loadLibrary = async () => {
-    if (cachedLibraryArtists.length === 0) setLoading(true);
-    const songs: Song[] = await getAllOfflineSongs();
+    try {
+      if (cachedLibraryArtists.length === 0) setLoading(true);
+      const songs: Song[] = await getAllOfflineSongs();
 
-    hasCorruptedJannatTracks().then((issue) => {
-      setHasJannatIssue(issue);
-    }).catch(() => {});
-    
-    // Filter hidden songs unless vault is unlocked
-    const visibleSongs = songs.filter(s => vaultUnlocked ? true : !s.isHidden);
-    
-    const estimatedSizeMB = visibleSongs.filter(s => s.audioReady).length * 3.5;
-    const newStats = { sizeMB: estimatedSizeMB, count: visibleSongs.length };
-    setStats(newStats);
-    cachedLibraryStats = newStats;
-
-    // Grouping: Artist -> Album -> Songs
-    const artistMap = new Map<string, { albums: Map<string, Song[]>, singles: Song[] }>();
-
-    for (const song of visibleSongs.sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0))) {
-      const rawArtist = song.folderName || song.artist || "أخرى";
-      const artistName = getCanonicalArtistName(rawArtist);
-      if (!artistMap.has(artistName)) {
-        artistMap.set(artistName, { albums: new Map(), singles: [] });
-      }
-      const artistNode = artistMap.get(artistName)!;
-
-      if (song.albumName) {
-        if (!artistNode.albums.has(song.albumName)) {
-          artistNode.albums.set(song.albumName, []);
-        }
-        artistNode.albums.get(song.albumName)!.push(song);
-      } else {
-        artistNode.singles.push(song);
-      }
-    }
-
-    const result: ArtistFolder[] = [...artistMap.entries()].map(([name, data]) => {
-      const albums: AlbumFolder[] = [...data.albums.entries()].map(([albumName, albumSongs]) => ({
-        name: albumName,
-        songs: albumSongs,
-        cover: albumSongs[0]?.thumbnailUrl || ""
-      }));
+      hasCorruptedJannatTracks().then((issue) => {
+        setHasJannatIssue(issue);
+      }).catch(() => {});
       
-      const cover = albums[0]?.cover || data.singles[0]?.thumbnailUrl || "";
-      return { name, albums, singles: data.singles, cover };
-    });
+      // Filter hidden songs unless vault is unlocked
+      const visibleSongs = songs.filter(s => vaultUnlocked ? true : !s.isHidden);
+      
+      const estimatedSizeMB = visibleSongs.filter(s => s.audioReady).length * 3.5;
+      const newStats = { sizeMB: estimatedSizeMB, count: visibleSongs.length };
+      setStats(newStats);
+      cachedLibraryStats = newStats;
 
-    setArtists(result);
-    cachedLibraryArtists = result;
-    setLoading(false);
+      // Grouping: Artist -> Album -> Songs
+      const artistMap = new Map<string, { albums: Map<string, Song[]>, singles: Song[] }>();
+
+      for (const song of visibleSongs.sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0))) {
+        const rawArtist = song.folderName || song.artist || "أخرى";
+        const artistName = getCanonicalArtistName(rawArtist);
+        if (!artistMap.has(artistName)) {
+          artistMap.set(artistName, { albums: new Map(), singles: [] });
+        }
+        const artistNode = artistMap.get(artistName)!;
+
+        if (song.albumName) {
+          if (!artistNode.albums.has(song.albumName)) {
+            artistNode.albums.set(song.albumName, []);
+          }
+          artistNode.albums.get(song.albumName)!.push(song);
+        } else {
+          artistNode.singles.push(song);
+        }
+      }
+
+      const result: ArtistFolder[] = [...artistMap.entries()].map(([name, data]) => {
+        const albums: AlbumFolder[] = [...data.albums.entries()].map(([albumName, albumSongs]) => ({
+          name: albumName,
+          songs: albumSongs,
+          cover: albumSongs[0]?.thumbnailUrl || ""
+        }));
+        
+        const cover = albums[0]?.cover || data.singles[0]?.thumbnailUrl || "";
+        return { name, albums, singles: data.singles, cover };
+      });
+
+      setArtists(result);
+      cachedLibraryArtists = result;
+    } catch (err) {
+      console.error("[Library] loadLibrary error:", err);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => { 
+    // Fallback safety timeout: ensure loading skeleton never stays stuck
+    const safetyTimer = setTimeout(() => {
+      setLoading(false);
+    }, 2500);
+
     let timer: any = null;
-    const scheduleReload = () => {
+    const scheduleReload = (e?: any) => {
+      // Ignore background consolidation events to avoid feedback loops
+      const eventType = e?.detail?.type;
+      if (eventType === "artists-consolidated" || eventType === "jannat-auto-purged") {
+        return;
+      }
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
         loadLibrary();
-      }, 350);
+      }, 400);
     };
 
     loadLibrary(); 
-    // Migrate and consolidate all artist folders in the background on the phone/device
-    consolidateArtistFolders();
 
     window.addEventListener("aura-library-updated", scheduleReload);
     window.addEventListener("aura-thumbnails-migrated", scheduleReload);
@@ -199,6 +212,7 @@ export default function LibraryPage() {
     });
 
     return () => {
+      clearTimeout(safetyTimer);
       if (timer) clearTimeout(timer);
       window.removeEventListener("aura-library-updated", scheduleReload);
       window.removeEventListener("aura-thumbnails-migrated", scheduleReload);

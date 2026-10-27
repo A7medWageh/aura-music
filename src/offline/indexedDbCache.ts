@@ -327,31 +327,46 @@ export async function getLyrics(songId: string): Promise<any | null> {
 }
 
 /** Get all saved songs from library (metadata synchronized with actual audio storage) */
+/** Get all saved songs from library (metadata synchronized with actual audio storage) */
 export async function getAllOfflineSongs(): Promise<any[]> {
-  const db = await openOfflineDb();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction([META_STORE, AUDIO_STORE], "readonly");
-    const metaReq = tx.objectStore(META_STORE).getAll();
-    const audioKeysReq = tx.objectStore(AUDIO_STORE).getAllKeys();
-    
-    let songs: any[] = [];
-    let audioKeys = new Set<string>();
+  try {
+    const db = await openOfflineDb();
+    return await new Promise((resolve) => {
+      // 3.5s timeout safeguard so UI NEVER hangs if IndexedDB is blocked
+      const timeout = setTimeout(() => {
+        resolve([]);
+      }, 3500);
 
-    metaReq.onsuccess = () => { songs = metaReq.result || []; };
-    audioKeysReq.onsuccess = () => {
-      audioKeys = new Set((audioKeysReq.result || []).map(k => String(k)));
-    };
+      const tx = db.transaction([META_STORE, AUDIO_STORE], "readonly");
+      const metaReq = tx.objectStore(META_STORE).getAll();
+      const audioKeysReq = tx.objectStore(AUDIO_STORE).getAllKeys();
+      
+      let songs: any[] = [];
+      let audioKeys = new Set<string>();
 
-    tx.oncomplete = () => {
-      const enriched = songs.map((s) => ({
-        ...s,
-        audioReady: audioKeys.has(s.songId) || (s.youtubeVideoId && audioKeys.has(s.youtubeVideoId)) || Boolean(s.audioReady && audioKeys.has(s.songId)),
-      }));
+      metaReq.onsuccess = () => { songs = metaReq.result || []; };
+      audioKeysReq.onsuccess = () => {
+        audioKeys = new Set((audioKeysReq.result || []).map(k => String(k)));
+      };
 
-      resolve(enriched);
-    };
-    tx.onerror = () => reject(tx.error);
-  });
+      tx.oncomplete = () => {
+        clearTimeout(timeout);
+        const enriched = songs.map((s) => ({
+          ...s,
+          audioReady: audioKeys.has(s.songId) || (s.youtubeVideoId && audioKeys.has(s.youtubeVideoId)) || Boolean(s.audioReady && audioKeys.has(s.songId)),
+        }));
+        resolve(enriched);
+      };
+      tx.onerror = () => {
+        clearTimeout(timeout);
+        console.warn("[IndexedDB] getAllOfflineSongs error:", tx.error);
+        resolve(songs);
+      };
+    });
+  } catch (err) {
+    console.error("[IndexedDB] getAllOfflineSongs catch error:", err);
+    return [];
+  }
 }
 
 /** Get single song metadata from IndexedDB */
@@ -576,62 +591,51 @@ export function isKhaleejiOrCorruptedJannatBlob(
 /**
  * Automatically purges corrupted/Khaleeji audio blobs from Jannat's songs
  * in the user's mobile IndexedDB storage.
- * Detects known Khaleeji sizes and duplicate collision sizes (where multiple Jannat tracks share identical byte lengths).
+ * Inspects only Jannat's specific tracks individually without loading all audio into RAM.
  */
 export async function autoPurgeCorruptedJannatBlobs(): Promise<number> {
   if (typeof window === "undefined" || !("indexedDB" in window)) return 0;
   try {
     const db = await openOfflineDb();
-    const { audioRecords, metaRecords } = await new Promise<{ audioRecords: any[]; metaRecords: any[] }>((resolve, reject) => {
-      const tx = db.transaction([AUDIO_STORE, META_STORE], "readonly");
-      const aReq = tx.objectStore(AUDIO_STORE).getAll();
-      const mReq = tx.objectStore(META_STORE).getAll();
-      let audio: any[] = [];
-      let meta: any[] = [];
-      aReq.onsuccess = () => { audio = aReq.result || []; };
-      mReq.onsuccess = () => { meta = mReq.result || []; };
-      tx.oncomplete = () => resolve({ audioRecords: audio, metaRecords: meta });
-      tx.onerror = () => reject(tx.error);
+    const metaRecords: any[] = await new Promise((resolve) => {
+      const tx = db.transaction(META_STORE, "readonly");
+      const req = tx.objectStore(META_STORE).getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => resolve([]);
     });
 
-    if (audioRecords.length === 0) return 0;
+    if (metaRecords.length === 0) return 0;
 
-    const metaMap = new Map<string, any>();
-    for (const m of metaRecords) {
-      if (m.songId) metaMap.set(m.songId, m);
-      if (m.youtubeVideoId) metaMap.set(m.youtubeVideoId, m);
-    }
+    // Filter only Jannat records
+    const jannatMeta = metaRecords.filter(
+      (m) =>
+        JANNAT_CLASSIC_IDS.has(m.songId) ||
+        (m.artist && (m.artist.includes("جنات") || m.artist.toLowerCase().includes("jannat"))) ||
+        m.folderName === "جنات" ||
+        (m.title && JANNAT_CLASSIC_TITLES.has(m.title.trim()))
+    );
 
-    // Filter audio records that belong to Jannat
-    const jannatAudio: { songId: string; size: number }[] = [];
-    for (const rec of audioRecords) {
-      const sid = rec.songId;
-      const meta = metaMap.get(sid);
-      const isJannat =
-        JANNAT_CLASSIC_IDS.has(sid) ||
-        (meta?.artist && (meta.artist.includes("جنات") || meta.artist.toLowerCase().includes("jannat"))) ||
-        meta?.folderName === "جنات" ||
-        (meta?.title && JANNAT_CLASSIC_TITLES.has(meta.title.trim()));
+    if (jannatMeta.length === 0) return 0;
 
-      if (isJannat) {
-        const sz = rec.size || rec.buffer?.byteLength || rec.blob?.size || 0;
-        if (sz > 0) {
-          jannatAudio.push({ songId: sid, size: sz });
+    const jannatBlobs: { songId: string; size: number }[] = [];
+    for (const m of jannatMeta) {
+      try {
+        const blob = await getAudioBlob(m.songId);
+        if (blob) {
+          jannatBlobs.push({ songId: m.songId, size: blob.size });
         }
-      }
+      } catch {}
     }
 
-    if (jannatAudio.length === 0) return 0;
+    if (jannatBlobs.length === 0) return 0;
 
-    // Count byte-size frequencies across Jannat's audio items
     const sizeCounts = new Map<number, number>();
-    for (const item of jannatAudio) {
+    for (const item of jannatBlobs) {
       sizeCounts.set(item.size, (sizeCounts.get(item.size) || 0) + 1);
     }
 
-    // Determine corrupted keys: either known Khaleeji sizes or duplicate collision across tracks
     const toDeleteIds = new Set<string>();
-    for (const item of jannatAudio) {
+    for (const item of jannatBlobs) {
       const isKnownKhaleeji =
         item.size === 5634752 ||
         item.size === 6736640 ||
@@ -650,31 +654,16 @@ export async function autoPurgeCorruptedJannatBlobs(): Promise<number> {
 
     if (toDeleteIds.size === 0) return 0;
 
-    console.warn(`[IndexedDB] Auto-purging ${toDeleteIds.size} corrupted/Khaleeji audio blobs for Jannat...`);
+    console.warn(`[IndexedDB] Lightweight auto-purging ${toDeleteIds.size} corrupted audio blobs for Jannat...`);
 
-    const db2 = await openOfflineDb();
-    await new Promise<void>((resolve, reject) => {
-      const tx = db2.transaction([AUDIO_STORE, META_STORE], "readwrite");
-      const aStore = tx.objectStore(AUDIO_STORE);
-      const mStore = tx.objectStore(META_STORE);
-
-      for (const sid of toDeleteIds) {
-        aStore.delete(sid);
-        const meta = metaMap.get(sid);
-        if (meta) {
-          meta.audioReady = false;
-          mStore.put(meta);
-        }
-      }
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
+    for (const sid of toDeleteIds) {
+      await deleteAudioBlobOnly(sid);
+    }
 
     if (typeof caches !== "undefined") {
       try { await caches.delete("aura-bg-downloads"); } catch {}
     }
 
-    notifyLibraryUpdated({ type: "jannat-auto-purged", count: toDeleteIds.size });
     return toDeleteIds.size;
   } catch (err) {
     console.warn("[IndexedDB] autoPurgeCorruptedJannatBlobs error:", err);
@@ -684,56 +673,40 @@ export async function autoPurgeCorruptedJannatBlobs(): Promise<number> {
 
 /**
  * Quick check to see if the user's offline library has any corrupted Jannat audio files.
+ * Uses lightweight point lookups without loading entire AUDIO_STORE into memory.
  */
 export async function hasCorruptedJannatTracks(): Promise<boolean> {
   if (typeof window === "undefined" || !("indexedDB" in window)) return false;
   try {
     const db = await openOfflineDb();
-    const { audioRecords, metaRecords } = await new Promise<{ audioRecords: any[]; metaRecords: any[] }>((resolve, reject) => {
-      const tx = db.transaction([AUDIO_STORE, META_STORE], "readonly");
-      const aReq = tx.objectStore(AUDIO_STORE).getAll();
-      const mReq = tx.objectStore(META_STORE).getAll();
-      let audio: any[] = [];
-      let meta: any[] = [];
-      aReq.onsuccess = () => { audio = aReq.result || []; };
-      mReq.onsuccess = () => { meta = mReq.result || []; };
-      tx.oncomplete = () => resolve({ audioRecords: audio, metaRecords: meta });
-      tx.onerror = () => reject(tx.error);
+    const metaRecords: any[] = await new Promise((resolve) => {
+      const tx = db.transaction(META_STORE, "readonly");
+      const req = tx.objectStore(META_STORE).getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => resolve([]);
     });
 
-    const metaMap = new Map<string, any>();
-    for (const m of metaRecords) {
-      if (m.songId) metaMap.set(m.songId, m);
-      if (m.youtubeVideoId) metaMap.set(m.youtubeVideoId, m);
-    }
+    const jannatMeta = metaRecords.filter(
+      (m) =>
+        JANNAT_CLASSIC_IDS.has(m.songId) ||
+        (m.artist && (m.artist.includes("جنات") || m.artist.toLowerCase().includes("jannat"))) ||
+        m.folderName === "جنات" ||
+        (m.title && JANNAT_CLASSIC_TITLES.has(m.title.trim()))
+    );
+
+    if (jannatMeta.length === 0) return false;
 
     const sizes: number[] = [];
-    for (const rec of audioRecords) {
-      const sid = rec.songId;
-      const meta = metaMap.get(sid);
-      const isJannat =
-        JANNAT_CLASSIC_IDS.has(sid) ||
-        (meta?.artist && (meta.artist.includes("جنات") || meta.artist.toLowerCase().includes("jannat"))) ||
-        meta?.folderName === "جنات" ||
-        (meta?.title && JANNAT_CLASSIC_TITLES.has(meta.title.trim()));
-
-      if (isJannat) {
-        const sz = rec.size || rec.buffer?.byteLength || rec.blob?.size || 0;
-        if (sz > 0) {
-          if (
-            sz === 5634752 ||
-            sz === 6736640 ||
-            sz === 6677312 ||
-            sz === 8419726 ||
-            (sz >= 5500000 && sz <= 5750000) ||
-            (sz >= 6600000 && sz <= 6780000) ||
-            (sz >= 8410000 && sz <= 8430000)
-          ) {
+    for (const m of jannatMeta) {
+      try {
+        const blob = await getAudioBlob(m.songId);
+        if (blob) {
+          if (isKhaleejiOrCorruptedJannatBlob(m.artist, blob.size, m.songId || m.title)) {
             return true;
           }
-          sizes.push(sz);
+          sizes.push(blob.size);
         }
-      }
+      } catch {}
     }
 
     const sizeCounts = new Map<number, number>();

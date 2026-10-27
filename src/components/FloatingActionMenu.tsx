@@ -58,13 +58,29 @@ export function FloatingActionMenu() {
     };
   }, [menuOpen]);
 
-  // Handle Refresh
-  const handleRefresh = (e: React.MouseEvent) => {
+  // Handle Refresh with Service Worker and Cache Storage update
+  const handleRefresh = async (e: React.MouseEvent) => {
     e.stopPropagation();
     setSpinning(true);
+    try {
+      if ("serviceWorker" in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        for (const r of regs) {
+          await r.update().catch(() => {});
+        }
+      }
+      if ("caches" in window) {
+        const keys = await caches.keys();
+        for (const k of keys) {
+          if (!k.includes("audio") && !k.includes("offline")) {
+            await caches.delete(k).catch(() => {});
+          }
+        }
+      }
+    } catch {}
     setTimeout(() => {
-      window.location.reload();
-    }, 450);
+      window.location.href = window.location.pathname;
+    }, 350);
   };
 
   // Handle Back

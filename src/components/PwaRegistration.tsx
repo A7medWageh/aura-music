@@ -28,8 +28,19 @@ export function PwaRegistration() {
       navigator.serviceWorker.register("/sw.js", { scope: "/" })
         .then((reg) => {
           console.log("[SW] Registered:", reg.scope);
-          // Immediately claim so the SW controls this page
+          // Check for fresh code on server immediately
+          reg.update().catch(() => {});
           if (reg.waiting) reg.waiting.postMessage({ type: "SKIP_WAITING" });
+          reg.addEventListener("updatefound", () => {
+            const newWorker = reg.installing;
+            if (newWorker) {
+              newWorker.addEventListener("statechange", () => {
+                if (newWorker.state === "installed" && navigator.serviceWorker.controller) {
+                  newWorker.postMessage({ type: "SKIP_WAITING" });
+                }
+              });
+            }
+          });
         })
         .catch((err) => console.warn("[SW] Registration failed:", err));
     }

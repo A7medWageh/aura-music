@@ -59,9 +59,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     } catch {}
   }, []);
 
-  // Auto-clean any corrupted/duplicate Khaleeji audio blobs from user's device on startup
+  // Auto-clean any corrupted/duplicate Khaleeji audio blobs from user's device in background after idle
   useEffect(() => {
-    autoPurgeCorruptedJannatBlobs().catch(() => {});
+    const timer = setTimeout(() => {
+      autoPurgeCorruptedJannatBlobs().catch(() => {});
+    }, 4000);
+    return () => clearTimeout(timer);
   }, []);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const isPlayingRef = useRef(state.isPlaying);
