@@ -985,31 +985,31 @@ function FullPlayer({
               />
             </div>
 
-            {/* ⚡ Extreme Loudness Booster (مضخم الصوت الخارق حتى 200%) */}
-            <div className="space-y-3 bg-gradient-to-br from-amber-500/10 via-orange-500/5 to-transparent p-4 rounded-2xl border border-amber-500/20 backdrop-blur-md">
+            {/* 🎧 Audiophile Comfort & Clarity Booster */}
+            <div className="space-y-3 bg-gradient-to-br from-cyan-500/10 via-sky-500/5 to-transparent p-4 rounded-2xl border border-cyan-500/20 backdrop-blur-md">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-xl bg-amber-500/20 flex items-center justify-center text-amber-400">
-                    <Zap className="w-5 h-5 animate-pulse" />
+                  <div className="w-8 h-8 rounded-xl bg-cyan-500/20 flex items-center justify-center text-cyan-400">
+                    <Sparkles className="w-5 h-5 animate-pulse" />
                   </div>
                   <div>
                     <h4 className="text-sm font-black text-white flex items-center gap-1.5">
-                      مضخم الصوت الخارق
-                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/30">
+                      تعزيز النقاء والراحة للسماعات
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-400/20 text-cyan-300 border border-cyan-400/30">
                         {Math.round((soundBoost || 1.0) * 100)}%
                       </span>
                     </h4>
-                    <p className="text-[11px] text-white/50 font-medium">صوت أعلى بكتير من المعتاد بدون تشويش (Limiter حماية 100%)</p>
+                    <p className="text-[11px] text-white/50 font-medium">نقاء مخملي فائق مريح للأذن 100% بدون إجهاد أو تشويش</p>
                   </div>
                 </div>
               </div>
 
               <div className="grid grid-cols-4 gap-2 pt-1">
                 {[
-                  { val: 1.0, label: "100%", desc: "عادي" },
-                  { val: 1.3, label: "130%", desc: "تضخيم +" },
-                  { val: 1.6, label: "160%", desc: "جبار 🔥" },
-                  { val: 2.0, label: "200%", desc: "أقصى قوة ⚡" },
+                  { val: 1.0, label: "100%", desc: "قياسي مريح" },
+                  { val: 1.15, label: "115%", desc: "نقاء بلوري" },
+                  { val: 1.3, label: "130%", desc: "تعزيز متوازن" },
+                  { val: 1.5, label: "150%", desc: "أقصى نقاء آمن" },
                 ].map((b) => {
                   const isCurrent = Math.abs((soundBoost || 1.0) - b.val) < 0.05;
                   return (
@@ -1017,11 +1017,11 @@ function FullPlayer({
                       key={b.val}
                       onClick={() => {
                         setSoundBoost?.(b.val);
-                        showToast(`تم ضبط مضخم الصوت على ${b.label} (${b.desc}) ⚡`);
+                        showToast(`تم ضبط النقاء على ${b.label} (${b.desc}) ✨`);
                       }}
                       className={`py-2 px-1 rounded-xl text-center transition-all border ${
                         isCurrent
-                          ? "bg-gradient-to-r from-amber-400 to-orange-400 text-black font-black border-amber-300 shadow-lg shadow-amber-400/20 scale-105"
+                          ? "bg-gradient-to-r from-cyan-400 to-sky-400 text-black font-black border-cyan-300 shadow-lg shadow-cyan-400/20 scale-105"
                           : "bg-white/[0.04] text-white/70 hover:bg-white/[0.08] border-white/5 font-bold"
                       }`}
                     >
@@ -1149,11 +1149,11 @@ function FullPlayer({
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
                   {[
-                    { id: "crystal", label: "نقاء استوديو فائق (Hi-Fi Master)", icon: "🎧", desc: "تفاصيل بلورية فائقة وتألق ناعم ونقاء 100%" },
-                    { id: "spatial", label: "صوت مكاني 8D يدور بين الأذنين", icon: "🌌", desc: "تقليب ودوران الصوت بين فردتي الهاند فري 360°" },
-                    { id: "noise_cancel", label: "عزل الضوضاء الخارق (Acoustic Shield)", icon: "🛡️", desc: "عزل كلي للمحيط الخارجي وانغماس صوتي خيالي" },
-                    { id: "bass", label: "بيس متفجر فائق (Sub-Bass 808)", icon: "🔊", desc: "تضخيم بيز عملاق يهز السماعة بنقاء استوديو" },
-                    { id: "vocal", label: "فوكال وطرب مباشر (Pure Vocals)", icon: "🎙️", desc: "صوت المطرب في المقدمة بوضوح لا يُصدّق" },
+                    { id: "crystal", label: "نقاء بلوري مريح (Pure Velvet)", icon: "🎧", desc: "أعلى درجات النقاء المخملي الفائق، صوت ناعم جداً ومريح للأذن بدون أي إجهاد" },
+                    { id: "spatial", label: "صوت مكاني 8D هادئ (3D Stage)", icon: "🌌", desc: "دوران صوتي متزن وناعم بين الأذنين بدون دوار أو ضغط على طبلة الأذن" },
+                    { id: "noise_cancel", label: "عزل صوتي مريح (Acoustic Shield)", icon: "🛡️", desc: "فلترة الضوضاء المحيطة مع الحفاظ على نعومة ونقاء الترددات" },
+                    { id: "bass", label: "بيز دافئ عميق (Velvet Sub-Bass)", icon: "🔊", desc: "طبقات بيز ناعمة وفخمة بدون اهتزاز مزعج أو ضغط في الرأس" },
+                    { id: "vocal", label: "فوكال وطرب حميمي (Intimate Vocals)", icon: "🎙️", desc: "وضوح فائق ومباشر للكلمات والصوت البشري بدون أي حدة في الحروف" },
                   ].map((p) => {
                     const isSelected = (soundPreset || "crystal") === p.id;
                     return (

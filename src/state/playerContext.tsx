@@ -483,7 +483,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   };
 
   const setSoundBoost = (boost: number) => {
-    const val = Math.max(1.0, Math.min(2.5, boost));
+    const val = Math.max(1.0, Math.min(1.5, boost));
     try {
       localStorage.setItem("aura_sound_boost", val.toString());
     } catch {}
@@ -523,8 +523,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       const savedBoost = localStorage.getItem("aura_sound_boost");
       if (savedBoost) {
         const parsed = parseFloat(savedBoost);
-        if (!isNaN(parsed) && parsed >= 1.0 && parsed <= 2.5) {
-          setState((prev) => ({ ...prev, soundBoost: parsed }));
+        if (!isNaN(parsed) && parsed >= 1.0) {
+          setState((prev) => ({ ...prev, soundBoost: Math.min(1.5, parsed) }));
         }
       }
       const saved8d = localStorage.getItem("aura_8d_audio");
@@ -577,9 +577,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       }
       const now = performance.now();
       const progress = (now % cycleDuration) / cycleDuration;
-      // Sinusoidal panning: smoothly travels from Left (-0.95) to Right (+0.95)
-      const pan = Math.sin(progress * 2 * Math.PI) * 0.95;
-      try { panner.pan.setTargetAtTime(pan, ctx.currentTime, 0.04); } catch {}
+      // Sinusoidal panning: smoothly travels between Left (-0.70) and Right (+0.70) comfortably without cutting out either ear
+      const pan = Math.sin(progress * 2 * Math.PI) * 0.70;
+      try { panner.pan.setTargetAtTime(pan, ctx.currentTime, 0.05); } catch {}
       pannerAnimRef.current = requestAnimationFrame(tick);
     };
     pannerAnimRef.current = requestAnimationFrame(tick);
@@ -588,58 +588,58 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const PRESET_CONFIGS = {
     crystal: {
       bands: [
-        { type: "lowshelf" as BiquadFilterType, freq: 50, gain: 4.5 },
-        { type: "peaking"  as BiquadFilterType, freq: 220, gain: 2.0, Q: 0.9 },
-        { type: "peaking"  as BiquadFilterType, freq: 450, gain: -4.5, Q: 1.5 }, // Deep anti-mud notch
-        { type: "peaking"  as BiquadFilterType, freq: 3600, gain: 8.0, Q: 1.0 }, // Razor-sharp crystal vocal presence
-        { type: "highshelf" as BiquadFilterType, freq: 12500, gain: 9.0 },       // Shimmering air
+        { type: "lowshelf" as BiquadFilterType, freq: 55, gain: 2.5 },            // Delicate sub-bass warmth (no ear fatigue)
+        { type: "peaking"  as BiquadFilterType, freq: 200, gain: 1.2, Q: 0.9 },   // Acoustic warmth & body
+        { type: "peaking"  as BiquadFilterType, freq: 450, gain: -2.0, Q: 1.4 },  // Anti-mud scoop (transparent separation)
+        { type: "peaking"  as BiquadFilterType, freq: 2400, gain: 2.8, Q: 0.85 }, // Pure velvet vocal clarity (below fatigue zone)
+        { type: "highshelf" as BiquadFilterType, freq: 11500, gain: 3.0 },        // Silky audiophile air (shimmering, zero sizzle)
       ],
-      comp: { threshold: -16, ratio: 2.4, attack: 0.003, release: 0.10 },
-      postGain: 1.35,
+      comp: { threshold: -10, ratio: 1.5, attack: 0.020, release: 0.18 },         // Studio glue (warm & dynamic)
+      postGain: 1.08,
     },
     bass: {
       bands: [
-        { type: "lowshelf" as BiquadFilterType, freq: 48, gain: 13.0 },           // Heavy sub-bass earthquake
-        { type: "peaking"  as BiquadFilterType, freq: 140, gain: 6.5, Q: 0.9 },  // Punchy chest-hit kick
-        { type: "peaking"  as BiquadFilterType, freq: 500, gain: -5.0, Q: 1.3 }, // Scooped mid so bass breathes
-        { type: "peaking"  as BiquadFilterType, freq: 3200, gain: 4.0, Q: 1.0 }, // Clear vocal definition
-        { type: "highshelf" as BiquadFilterType, freq: 11000, gain: 5.5 },
+        { type: "lowshelf" as BiquadFilterType, freq: 50, gain: 5.0 },            // Deep cinematic sub-bass (velvety, zero pressure)
+        { type: "peaking"  as BiquadFilterType, freq: 120, gain: 2.2, Q: 1.0 },   // Warm punchy low-end
+        { type: "peaking"  as BiquadFilterType, freq: 480, gain: -2.5, Q: 1.2 },  // Anti-boxiness scoop
+        { type: "peaking"  as BiquadFilterType, freq: 3800, gain: -1.5, Q: 1.2 }, // Sibilance softening (protects ears at high vol)
+        { type: "highshelf" as BiquadFilterType, freq: 10500, gain: 2.0 },        // Smooth warm top
       ],
-      comp: { threshold: -18, ratio: 3.5, attack: 0.003, release: 0.14 },
-      postGain: 1.45,
+      comp: { threshold: -12, ratio: 1.8, attack: 0.025, release: 0.20 },
+      postGain: 1.06,
     },
     vocal: {
       bands: [
         { type: "lowshelf" as BiquadFilterType, freq: 65, gain: 1.5 },
-        { type: "peaking"  as BiquadFilterType, freq: 250, gain: 2.5, Q: 1.0 },  // Vocal warmth
-        { type: "peaking"  as BiquadFilterType, freq: 480, gain: -4.5, Q: 1.5 },
-        { type: "peaking"  as BiquadFilterType, freq: 3300, gain: 10.5, Q: 1.1 }, // Intimate forward vocal presence
-        { type: "highshelf" as BiquadFilterType, freq: 13000, gain: 7.5 },       // Crisp vocal breath
+        { type: "peaking"  as BiquadFilterType, freq: 240, gain: 2.0, Q: 1.0 },   // Warm intimate vocal body
+        { type: "peaking"  as BiquadFilterType, freq: 500, gain: -1.8, Q: 1.3 },  // Clean vocal separation
+        { type: "peaking"  as BiquadFilterType, freq: 2600, gain: 3.5, Q: 0.9 },  // Direct, crystal clear lyrics & presence
+        { type: "highshelf" as BiquadFilterType, freq: 12000, gain: 3.0 },        // Silky breath air (zero ear fatigue)
       ],
-      comp: { threshold: -14, ratio: 2.5, attack: 0.002, release: 0.08 },
-      postGain: 1.35,
+      comp: { threshold: -9, ratio: 1.6, attack: 0.015, release: 0.16 },
+      postGain: 1.08,
     },
     spatial: {
       bands: [
-        { type: "lowshelf" as BiquadFilterType, freq: 55, gain: 5.0 },
-        { type: "peaking"  as BiquadFilterType, freq: 220, gain: 3.0, Q: 0.8 },
-        { type: "peaking"  as BiquadFilterType, freq: 450, gain: -5.0, Q: 1.5 }, // Clear center channel for wide 3D stage
-        { type: "peaking"  as BiquadFilterType, freq: 4000, gain: 8.5, Q: 0.8 }, // Binaural ear pinna HRTF boost
-        { type: "highshelf" as BiquadFilterType, freq: 14000, gain: 10.5 },      // Ultra-wide 3D holographic air
+        { type: "lowshelf" as BiquadFilterType, freq: 55, gain: 2.5 },
+        { type: "peaking"  as BiquadFilterType, freq: 220, gain: 1.5, Q: 0.9 },
+        { type: "peaking"  as BiquadFilterType, freq: 450, gain: -2.5, Q: 1.3 },  // Clear binaural center stage
+        { type: "peaking"  as BiquadFilterType, freq: 2500, gain: 2.5, Q: 0.8 },  // HRTF binaural sweetening
+        { type: "highshelf" as BiquadFilterType, freq: 12000, gain: 3.5 },        // Wide open holographic acoustic stage
       ],
-      comp: { threshold: -15, ratio: 2.4, attack: 0.003, release: 0.12 },
-      postGain: 1.40,
+      comp: { threshold: -10, ratio: 1.6, attack: 0.020, release: 0.18 },
+      postGain: 1.08,
     },
     noise_cancel: {
       bands: [
-        { type: "highpass" as BiquadFilterType, freq: 75, gain: 0, Q: 0.8 },      // High-pass: cuts wind, traffic, and AC rumble
-        { type: "peaking"  as BiquadFilterType, freq: 60, gain: -14.0, Q: 5.0 },  // Notch: Eliminates 50/60Hz AC electrical hum
-        { type: "peaking"  as BiquadFilterType, freq: 450, gain: -7.5, Q: 1.6 },  // Deeply notches room chatter and ambient resonance
-        { type: "peaking"  as BiquadFilterType, freq: 3400, gain: 9.5, Q: 1.1 },  // Hyper-presence acoustic masking
-        { type: "highshelf" as BiquadFilterType, freq: 11000, gain: 6.5 },       // Crisp masking of high-frequency ambience
+        { type: "highpass" as BiquadFilterType, freq: 40, gain: 0, Q: 0.7 },      // Cuts ambient sub-rumble below 40Hz
+        { type: "peaking"  as BiquadFilterType, freq: 180, gain: 2.0, Q: 1.0 },   // Warm music core
+        { type: "peaking"  as BiquadFilterType, freq: 450, gain: -3.0, Q: 1.4 },  // Notches ambient room chatter
+        { type: "peaking"  as BiquadFilterType, freq: 2500, gain: 3.0, Q: 0.9 },  // Clean comfortable foreground clarity
+        { type: "highshelf" as BiquadFilterType, freq: 11000, gain: 2.5 },        // Ambient masking without treble fatigue
       ],
-      comp: { threshold: -25, ratio: 5.0, attack: 0.001, release: 0.06 },        // Extreme dynamic expander: pulls all music to the foreground
-      postGain: 1.65, // Massive loudness boost to completely drown external noise
+      comp: { threshold: -11, ratio: 2.0, attack: 0.010, release: 0.14 },
+      postGain: 1.12,
     },
   };
 
@@ -671,7 +671,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }
 
     const cfg = PRESET_CONFIGS[presetKey] || PRESET_CONFIGS.crystal;
-    if (preGainRef.current) preGainRef.current.gain.setTargetAtTime(0.85, now, t); // -1.4 dB headroom
+    if (preGainRef.current) preGainRef.current.gain.setTargetAtTime(0.88, now, t); // -1.1 dB studio headroom to prevent digital clipping
 
     eqNodesRef.current.forEach((node, i) => {
       const b = cfg.bands[i];
@@ -685,7 +685,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
     if (compressorRef.current) {
       compressorRef.current.threshold.setTargetAtTime(cfg.comp.threshold, now, t);
-      compressorRef.current.knee.setTargetAtTime(10, now, t);
+      compressorRef.current.knee.setTargetAtTime(14, now, t);
       compressorRef.current.ratio.setTargetAtTime(cfg.comp.ratio, now, t);
       compressorRef.current.attack.setTargetAtTime(cfg.comp.attack, now, t);
       compressorRef.current.release.setTargetAtTime(cfg.comp.release, now, t);
@@ -696,10 +696,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }
 
     if (limiterRef.current) {
-      limiterRef.current.threshold.setTargetAtTime(-0.8, now, t);
-      limiterRef.current.ratio.setTargetAtTime(20, now, t);
-      limiterRef.current.attack.setTargetAtTime(0.001, now, t);
-      limiterRef.current.release.setTargetAtTime(0.05, now, t);
+      limiterRef.current.threshold.setTargetAtTime(-0.3, now, t);
+      limiterRef.current.knee.setTargetAtTime(12, now, t);
+      limiterRef.current.ratio.setTargetAtTime(8, now, t);
+      limiterRef.current.attack.setTargetAtTime(0.003, now, t);
+      limiterRef.current.release.setTargetAtTime(0.08, now, t);
     }
 
     if (postGainRef.current) {
@@ -758,27 +759,27 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         } catch {}
       }
 
-      // 4. Studio Mastering Compressor
+      // 4. Studio Mastering Compressor (Velvety musical glue)
       const comp = ctx.createDynamicsCompressor();
-      comp.threshold.value = 0;
-      comp.knee.value = 12;
-      comp.ratio.value = 1.0;
-      comp.attack.value = 0.004;
-      comp.release.value = 0.12;
+      comp.threshold.value = -10;
+      comp.knee.value = 14;
+      comp.ratio.value = 1.5;
+      comp.attack.value = 0.020;
+      comp.release.value = 0.18;
       compressorRef.current = comp;
 
-      // 5. Loudness Booster Stage (up to 250% +12dB clean gain)
+      // 5. Clean Audiophile Booster Stage (up to 150% clean gain)
       const boosterGain = ctx.createGain();
       boosterGain.gain.value = state.soundBoost || 1.0;
       boosterGainRef.current = boosterGain;
 
-      // 6. Studio Brickwall Peak Limiter (Guarantees zero clipping at high volume)
+      // 6. Studio Soft-Knee Peak Limiter (Ear-safe ceiling, zero clipping distortion)
       const limiter = ctx.createDynamicsCompressor();
-      limiter.threshold.value = -0.8;
-      limiter.knee.value = 0;
-      limiter.ratio.value = 20;
-      limiter.attack.value = 0.001;
-      limiter.release.value = 0.05;
+      limiter.threshold.value = -0.3;
+      limiter.knee.value = 12;
+      limiter.ratio.value = 8;
+      limiter.attack.value = 0.003;
+      limiter.release.value = 0.08;
       limiterRef.current = limiter;
 
       // 7. Post-Gain stage
