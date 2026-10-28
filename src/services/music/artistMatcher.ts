@@ -71,9 +71,15 @@ export const BILINGUAL_ARTIST_MAP: Record<string, string> = {
   "janat": "جنات",
   "wael jassar": "وائل جسار",
   "wael gassar": "وائل جسار",
-  "wael jassap": "وائل جسار",
   "hamada majrashi": "حماده مجرشي",
   "hamada magrashi": "حماده مجرشي",
+  "hossam habib": "حسام حبيب",
+  "hossam habib topic": "حسام حبيب",
+  "houssam habib": "حسام حبيب",
+  "majid al mohandis": "ماجد المهندس",
+  "majed al mohandis": "ماجد المهندس",
+  "majid almohandis": "ماجد المهندس",
+  "majed almohandis": "ماجد المهندس",
 };
 
 // Build reverse map (Arabic -> Latin primary)
@@ -120,6 +126,8 @@ export const ARABIC_TO_LATIN_MAP: Record<string, string> = {
   "وائل جسار": "wael jassar",
   "حماده مجرشي": "hamada majrashi",
   "حمادة مجرشي": "hamada majrashi",
+  "حسام حبيب": "hossam habib",
+  "ماجد المهندس": "majid al mohandis",
 };
 
 export const UNWANTED_TERMS = [

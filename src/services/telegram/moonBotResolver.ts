@@ -26,6 +26,7 @@ import { saveTelegramCacheRecord, getTelegramDirectUrl } from "./telegramStorage
 import { query } from "@apis/neon";
 import { JANNAT_OLD_CLASSICS } from "@/data/jannatClassics";
 import { ANGHAM_OLD_CLASSICS } from "@/data/anghamClassics";
+import { BILINGUAL_ARTIST_MAP } from "@/services/music/artistMatcher";
 
 const BOT_TOKEN =
   process.env.TELEGRAM_BOT_TOKEN || "8831422517:AAEXQFzQxzcyIKWI1WtfVh2XGzguGXAnCak";
@@ -316,6 +317,25 @@ export function cleanQueryForWeciBot(rawTitle: string, rawArtist?: string): stri
     }
   }
 
+  // Map Latin artist to Arabic if known (e.g. Hossam Habib -> حسام حبيب)
+  if (artist && BILINGUAL_ARTIST_MAP[artist.toLowerCase().trim()]) {
+    artist = BILINGUAL_ARTIST_MAP[artist.toLowerCase().trim()];
+  }
+
+  // Strip hashtags (#انصاص_مشاوير -> انصاص مشاوير)
+  title = title.replace(/#([^\s]+)/g, (_, tag) => tag.replace(/_/g, " "));
+
+  // Strip film/series tags
+  title = title
+    .replace(/من\s+فيلم.*$/gi, "")
+    .replace(/من\s+مسلسل.*$/gi, "")
+    .replace(/فيلم\s+[^\s]+/gi, "")
+    .replace(/مسلسل\s+[^\s]+/gi, "")
+    .replace(/غناء\s+/gi, "")
+    .replace(/أغنية\s+|اغنية\s+/gi, "")
+    .replace(/كلمات\s+.*$/gi, "")
+    .replace(/حصرياً|حصريا/gi, "");
+
   // Strip video suffixes and tags
   title = title
     .replace(/\(Official.*?\)/gi, "")
@@ -343,7 +363,7 @@ export function cleanQueryForWeciBot(rawTitle: string, rawArtist?: string): stri
     }
   }
 
-  // If title has "Artist - Title" format (e.g. "جنات - حب امتلاك")
+  // If title has "Artist - Title" format (e.g. "جنات - حب امتلاك" or "حسام حبيب - شايف نفسي فيك")
   if (title.includes("-")) {
     const parts = title.split("-");
     if (parts.length === 2) {

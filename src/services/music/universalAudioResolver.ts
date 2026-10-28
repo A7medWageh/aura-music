@@ -21,7 +21,7 @@ import { resolveSaavnSong } from "./jiosaavn";
 import { resolveAlbumatyStream } from "../scrapers/albumaty";
 import { getCachedTelegramTrack, getTelegramDirectUrl, uploadAudioUrlToTelegram } from "../telegram/telegramStorage";
 import { resolveViaMoonBot } from "../telegram/moonBotResolver";
-import { findBestOfficialVideo, isStrictArtistMatch } from "./artistMatcher";
+import { findBestOfficialVideo, isStrictArtistMatch, BILINGUAL_ARTIST_MAP } from "./artistMatcher";
 import { JANNAT_OLD_CLASSICS } from "@/data/jannatClassics";
 import { ANGHAM_OLD_CLASSICS } from "@/data/anghamClassics";
 
@@ -558,7 +558,8 @@ export async function resolveUniversalAudio(params: {
     /[\u0600-\u06FF]/.test(title) ||
     /[\u0600-\u06FF]/.test(artist) ||
     Boolean(oembedArabicTitle) ||
-    /amr diab|tamer hosny|hamaki|sherine|shereen|angham|bahaa sultan|wegz|marwan pablo|cairokee|hamza namira|ahmed saad|elissa|nancy ajram|george wassouf|tul8te|rubi|ruby|ashour|mounir|hakim|assala|fairuz|fayrouz|kalthoum|abdel halim|mesh aawza|mish awza|tamally maak|nour el ein/i.test(
+    Boolean(BILINGUAL_ARTIST_MAP[(artist || "").toLowerCase().trim()]) ||
+    /amr diab|tamer hosny|hamaki|sherine|shereen|angham|bahaa sultan|wegz|marwan pablo|cairokee|hamza namira|ahmed saad|elissa|nancy ajram|george wassouf|tul8te|rubi|ruby|ashour|mounir|hakim|assala|fairuz|fayrouz|kalthoum|abdel halim|hossam habib|hossam|houssam|majid al mohandis|majed al mohandis|mohandis|mesh aawza|mish awza|tamally maak|nour el ein/i.test(
       `${title} ${artist}`
     );
 
@@ -568,10 +569,11 @@ export async function resolveUniversalAudio(params: {
   const hasSearchTitle = Boolean(title.trim());
 
   let arabicResolvedTitle = oembedArabicTitle || null;
-  let arabicResolvedArtist = effectiveArtist || null;
+  let arabicResolvedArtist =
+    (artist && BILINGUAL_ARTIST_MAP[artist.toLowerCase().trim()]) || effectiveArtist || null;
 
   if (hasSearchTitle && isArabicSong && (!arabicResolvedTitle || !/[\u0600-\u06FF]/.test(title))) {
-    const webArabic = await extractArabicFromWeb(`${artist || ""} ${title}`);
+    const webArabic = await extractArabicFromWeb(`${arabicResolvedArtist || artist || ""} ${title}`);
     if (webArabic?.title) {
       arabicResolvedTitle = webArabic.title;
       if (webArabic.artist && (!arabicResolvedArtist || !/[\u0600-\u06FF]/.test(arabicResolvedArtist))) {

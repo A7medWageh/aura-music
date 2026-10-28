@@ -131,16 +131,18 @@ function extractArtists(results: any, artistResults: any): any[] {
 }
 
 // ── Junk/noise filter — keeps kids content, vlogs & non-music videos out of results ──
-const JUNK_PATTERN = /(أ?غاني?\s*أ?طفال|كرتون|انمي|anime|kids|nursery|cocomelon|baby\s*(shark|bus|yin)?|طيور\s*الجنة|عصافير|كاريوكي|karaoke|بودكاست|podcast|vlog|فلوج|تحدي|challenge|بريك|مقاطع\s*قصيرة|shorts|جيم|قيمنق|gaming|playstation|فوفوزيلا|lyric[- ]?video|نص الأغنية)/i;
+const JUNK_PATTERN = /(أ?غاني?\s*أ?طفال|كرتون|انمي|anime|kids|nursery|cocomelon|baby\s*(shark|bus|yin)?|طيور\s*الجنة|عصافير|كاريوكي|karaoke|بودكاست|podcast|vlog|فلوج|تحدي|challenge|بريك|مقاطع\s*قصيرة|shorts|جيم|قيمنق|gaming|playstation|فوفوزيلا)/i;
 
 export function isJunkResult(...texts: (string | undefined | null)[]): boolean {
   return JUNK_PATTERN.test(texts.filter(Boolean).join(" "));
 }
 
-/** Parse "3:45" / "1:02:45" / 210 (seconds) into seconds; 0 when unknown. */
+/** Parse "3:45" / "1:02:45" / 210 (seconds) / { seconds: 210 } into seconds; 0 when unknown. */
 function toSeconds(d: any): number {
   if (typeof d === "number") return d;
-  const s = String(d ?? "").replace(/[^0-9:]/g, "");
+  if (typeof d?.seconds === "number") return d.seconds;
+  if (typeof d?.asSeconds === "function") return d.asSeconds();
+  const s = String(d?.timestamp ?? d ?? "").replace(/[^0-9:]/g, "");
   if (!s) return 0;
   const parts = s.split(":").map(Number);
   return parts.length >= 3 ? parts[0] * 3600 + parts[1] * 60 + parts[2] : parts.length === 2 ? parts[0] * 60 + parts[1] : parts[0] || 0;
@@ -148,7 +150,7 @@ function toSeconds(d: any): number {
 
 /** A "song-shaped" regular YouTube video: 40s–12min, no junk keywords. */
 function looksLikeSongVideo(v: any): boolean {
-  const dur = toSeconds(v.duration ?? v.durationString ?? v.lengthSeconds);
+  const dur = typeof v.seconds === "number" ? v.seconds : toSeconds(v.duration ?? v.durationString ?? v.lengthSeconds);
   if (dur && (dur < 40 || dur > 12 * 60)) return false;
   return !isJunkResult(v.title, v.author?.name ?? v.channel?.name);
 }
@@ -203,14 +205,7 @@ export async function getNewReleases() {
   return extractSongs(results).slice(0, 50);
 }
 
-// ── searchYouTube ─────────────────────────────────────────────────────────────
 export async function searchYouTubeInnertube(query: string) {
-  const cacheKey = query.trim().toLowerCase();
-  const cached = searchCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
-    return cached.data;
-  }
-
   const innertube = await getYTWeb();
 
   const [generalResults, songResults, artistResults, albumResults] = await Promise.all([
@@ -276,7 +271,6 @@ export async function searchYouTubeInnertube(query: string) {
   if (songs.length === 0 && albums.length === 0 && artists.length === 0) {
     throw new Error("No search results from YouTube API");
   }
-  searchCache.set(cacheKey, { data: result, expiresAt: Date.now() + SEARCH_TTL });
   return result;
 }
 
@@ -289,7 +283,7 @@ async function searchYouTubeFallbacks(query: string): Promise<any | null> {
     const songs = (r.videos || []).filter(looksLikeSongVideo).slice(0, 20).map((v: any) => ({
       songId: v.videoId,
       youtubeVideoId: v.videoId,
-      duration: toSeconds(v.duration),
+      duration: typeof v.seconds === "number" ? v.seconds : toSeconds(v.duration),
       title: sanitizeTitle(v.title),
       artist: v.author?.name || "فنان غير معروف",
       thumbnailUrl: v.thumbnail || ""
@@ -311,9 +305,7 @@ async function searchYouTubeFallbacks(query: string): Promise<any | null> {
     }));
 
     if (songs.length === 0 && albums.length === 0 && accounts.length === 0) return null;
-    const result = { query, songs, albums, artists: accounts, source: "yt-search" };
-    searchCache.set(query.trim().toLowerCase(), { data: result, expiresAt: Date.now() + SEARCH_TTL });
-    return result;
+    return { query, songs, albums, artists: accounts, source: "yt-search" };
   } catch (err) {
     console.warn("[Search] yt-search fallback failed, trying basic Innertube search:", err);
     try {
@@ -338,29 +330,51 @@ async function searchYouTubeFallbacks(query: string): Promise<any | null> {
 }
 
 export async function searchYouTube(query: string) {
-  let primary: any = null;
-  try {
-    primary = await searchYouTubeInnertube(query);
-  } catch (e) {
-    console.warn(`[Search] Innertube multi-search failed for "${query}", trying fallbacks...`);
+  const cacheKey = query.trim().toLowerCase();
+  const cached = searchCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.data;
   }
 
-  if (primary && primary.songs.length > 0) return primary;
+  const [primaryRes, fbRes] = await Promise.all([
+    searchYouTubeInnertube(query).catch((e) => {
+      console.warn(`[Search] Innertube multi-search failed for "${query}":`, e.message);
+      return null;
+    }),
+    searchYouTubeFallbacks(query).catch((e) => {
+      console.warn(`[Search] Fallback search failed for "${query}":`, e.message);
+      return null;
+    }),
+  ]);
 
-  const fb = await searchYouTubeFallbacks(query);
-  if (!fb) {
-    return primary ?? { query, songs: [], albums: [], artists: [], source: "error" };
+  const primary = primaryRes;
+  const fb = fbRes;
+
+  if (!primary && !fb) {
+    return { query, songs: [], albums: [], artists: [], source: "empty" };
   }
-  if (!primary) return fb;
 
-  // Merge: music-search albums/artists win, fallback supplies the songs
-  return {
+  // Deduplicate and merge songs: fallback (comprehensive YouTube index) + primary (YouTube Music)
+  const seenIds = new Set<string>();
+  const mergedSongs: any[] = [];
+
+  for (const s of [...(fb?.songs || []), ...(primary?.songs || [])]) {
+    const id = String(s.songId || s.youtubeVideoId || s.videoId || "");
+    if (id && !seenIds.has(id)) {
+      seenIds.add(id);
+      mergedSongs.push(s);
+    }
+  }
+
+  const result = {
     query,
-    songs: fb.songs,
-    albums: primary.albums?.length ? primary.albums : fb.albums,
-    artists: primary.artists?.length ? primary.artists : fb.artists,
-    source: fb.source,
+    songs: mergedSongs,
+    albums: primary?.albums?.length ? primary.albums : (fb?.albums || []),
+    artists: primary?.artists?.length ? primary.artists : (fb?.artists || []),
+    source: "hybrid-parallel",
   };
+  searchCache.set(cacheKey, { data: result, expiresAt: Date.now() + SEARCH_TTL });
+  return result;
 }
 
 // ── resolveStream ─────────────────────────────────────────────────────────────

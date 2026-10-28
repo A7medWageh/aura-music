@@ -102,8 +102,20 @@ function tokenScore(w: string, h: string): number {
 const STOP_WORDS = new Set([
   "feat", "ft", "official", "offical", "audio", "video", "lyric", "lyrics",
   "mv", "hd", "4k", "song", "clip", "with", "and", "the", "اغانى", "اغنية",
-  "الكليب", "كليب", "رسمي", "رسماي", "اغني",
+  "الكليب", "كليب", "رسمي", "رسماي", "اغني", "غناء", "اداء", "أداء", "بصوت",
+  "كلمات", "الحان", "ألحان", "توزيع", "موسيقى", "فيديو", "كليب"
 ].map(w => normArabic(w)));
+
+function cleanSearchQuery(raw: string): string {
+  return raw
+    .replace(/^(اغنية|أغنية|اغاني|أغاني|كليب|فيديو|تراك|نزل|تحميل|استماع)\s+/gi, "")
+    .replace(/\s+(اغنية|أغنية|كليب|فيديو|تراك)$/gi, "")
+    .replace(/(^|\s)ل([\u0621-\u064A]{3,})/g, (match, prefix, word) => {
+      if (["ليل", "لحن", "لحظة", "لقاء", "ليلة", "لو", "لا", "لازم", "لعبة"].includes(word)) return match;
+      return prefix + word;
+    })
+    .trim();
+}
 
 function tokenize(s: string): string[] {
   return normArabic(s)
@@ -117,7 +129,16 @@ function tokenCoverage(query: string, title: string, artist: string): number {
   const qTokens = tokenize(query);
   if (qTokens.length === 0) return 1;
   const hay = [...tokenize(title), ...tokenize(artist)];
-  const score = qTokens.reduce((sum, w) => sum + Math.max(0, ...hay.map((h) => tokenScore(w, h))), 0);
+  const score = qTokens.reduce((sum, w) => {
+    let max = 0;
+    for (const h of hay) {
+      if (w === h) { max = 1; break; }
+      const [long, short] = w.length >= h.length ? [w, h] : [h, w];
+      if (short.length >= 3 && long.includes(short)) max = Math.max(max, 0.85);
+      else if (Math.min(w.length, h.length) >= 4 && Math.abs(w.length - h.length) <= 1 && levenshtein(w, h) <= 1) max = Math.max(max, 0.6);
+    }
+    return sum + max;
+  }, 0);
   return score / qTokens.length;
 }
 
@@ -130,26 +151,32 @@ export async function smartSearch(searchTerm: string) {
   const hit = cache.get(q.toLowerCase());
   if (hit && Date.now() - hit.ts < CACHE_TTL) return hit.data;
 
-  // Run YouTube search + local catalog search in parallel. A second,
-  // linguistically-corrected variant (normalized/spaced) is also sent so
-  // "ابيوسف خنزؤور" still reaches YouTube as searchable Arabic.
-  const normQuery = tokenize(q).join(" ");
+  const cleanQ = cleanSearchQuery(q);
+  const normQuery = tokenize(cleanQ || q).join(" ");
   const emptyYt = { songs: [], artists: [], albums: [] };
-  const [ytResults, ytVariant, localCatalog] = await Promise.all([
-    searchYouTube(q).catch(() => emptyYt),
-    normQuery && normQuery.toLowerCase() !== q.toLowerCase()
-      ? searchYouTube(normQuery).catch(() => emptyYt)
-      : Promise.resolve(emptyYt),
+
+  const searchPromises: Promise<any>[] = [searchYouTube(q).catch(() => emptyYt)];
+  if (cleanQ && cleanQ.toLowerCase() !== q.toLowerCase()) {
+    searchPromises.push(searchYouTube(cleanQ).catch(() => emptyYt));
+  }
+  if (normQuery && normQuery.toLowerCase() !== q.toLowerCase() && normQuery.toLowerCase() !== cleanQ.toLowerCase()) {
+    searchPromises.push(searchYouTube(normQuery).catch(() => emptyYt));
+  }
+
+  const [localCatalog, ...ytResultsList] = await Promise.all([
     getLocalCatalog(),
+    ...searchPromises,
   ]);
 
   const ytSongsRaw: any[] = [];
   const ytSeenIds = new Set<string>();
-  for (const item of [...(ytResults.songs || []), ...(ytVariant.songs || [])]) {
-    const id = String(item.songId ?? item.videoId ?? item.youtubeVideoId ?? "");
-    if (!id || ytSeenIds.has(id)) continue;
-    ytSeenIds.add(id);
-    ytSongsRaw.push(item);
+  for (const res of ytResultsList) {
+    for (const item of (res.songs || [])) {
+      const id = String(item.songId ?? item.videoId ?? item.youtubeVideoId ?? "");
+      if (!id || ytSeenIds.has(id)) continue;
+      ytSeenIds.add(id);
+      ytSongsRaw.push(item);
+    }
   }
 
   const mergeByKey = (lists: any[][], key: string) => {
@@ -160,8 +187,10 @@ export async function smartSearch(searchTerm: string) {
     });
     return Array.from(map.values());
   };
-  const ytAlbumsAll = mergeByKey([ytResults.albums || [], ytVariant.albums || []], "albumId");
-  const ytArtistsAll = mergeByKey([ytResults.artists || [], ytVariant.artists || []], "artistId");
+  const allYtAlbums = ytResultsList.map(r => r.albums || []);
+  const allYtArtists = ytResultsList.map(r => r.artists || []);
+  const ytAlbumsAll = mergeByKey(allYtAlbums, "albumId");
+  const ytArtistsAll = mergeByKey(allYtArtists, "artistId");
 
   // Filter local catalog for matches
   const localMatches = localCatalog
@@ -169,29 +198,87 @@ export async function smartSearch(searchTerm: string) {
       song,
       score: scoreMatch(q, song.title, song.artist),
     }))
-    .filter((r) => r.score >= 28) // ≥70% weighted relevance, not just one shared word
+    .filter((r) => r.score >= 28)
     .sort((a, b) => b.score - a.score)
     .slice(0, 10)
     .map((r) => r.song);
 
-  // Normalize YouTube results — junk is always dropped; long-form videos
-  // (podcasts/shows) drop via duration; on multi-word queries uploads without
-  // real artist metadata (podcasts, reaction videos) drop outright.
-  const multiWord = tokenize(q).length >= 2;
+  function computeRelevance(item: any): number {
+    const normTitle = normArabic(item.title || "").toLowerCase();
+    const normArt = normArabic(item.artist || "").toLowerCase();
+    const nq = normArabic(q).toLowerCase();
+    const nCleanQ = normArabic(cleanQ).toLowerCase();
+    
+    const strippedTitle = tokenize(normTitle).join(" ");
+    const strippedCleanQ = tokenize(nCleanQ).join(" ");
+
+    let score = 0;
+
+    // Exact or substring match in original or stripped title
+    if (normTitle === nq || normTitle === nCleanQ || strippedTitle === strippedCleanQ) {
+      score += 130;
+    } else if (
+      normTitle.includes(nq) ||
+      (nCleanQ.length >= 3 && normTitle.includes(nCleanQ)) ||
+      (strippedCleanQ.length >= 3 && strippedTitle.includes(strippedCleanQ))
+    ) {
+      score += 90;
+    }
+
+    // Token coverage across both original and cleaned query
+    const covQ = tokenCoverage(q, item.title ?? "", item.artist ?? "");
+    const covClean = tokenCoverage(cleanQ, item.title ?? "", item.artist ?? "");
+    const bestCov = Math.max(covQ, covClean);
+
+    score += Math.round(bestCov * 70);
+
+    if (bestCov >= 0.95) {
+      score += 45;
+    }
+
+    // Artist matches channel or title
+    const qTokens = tokenize(cleanQ);
+    const artistMatches = qTokens.some(w => normArt.includes(w) || (w.length >= 3 && normArt.includes(w)));
+    if (artistMatches) score += 35;
+
+    // Official channel boost
+    if (/official|records|music|rotana|mazzika|sobky|elsobky|نجوم|مزيكا|روتانا|السبكي|نغم/i.test(item.artist || "")) {
+      score += 25;
+    }
+
+    // Penalty for status / whatsapp cuts (< 60s)
+    const lowerTitle = (item.title || "").toLowerCase();
+    if (/حالة\s*واتس|ستوري|حالات|shorts/i.test(lowerTitle)) {
+      score -= 60;
+    }
+
+    // Penalty for karaoke, instrumental, cover
+    if (!q.includes("كاريوكي") && !q.includes("لحن") && /كاريوكي|لحن|موسيقى فقط|بدون موسيقى|instrumental|karaoke/i.test(lowerTitle)) {
+      score -= 40;
+    }
+
+    // Penalty for 3rd-party cover / remix / fan uploads
+    if (!q.includes("ريمكس") && !q.includes("remix") && /remix|ريمكس|ميكس|slowed|sped up|مبطأ|مسرع/i.test(lowerTitle)) {
+      score -= 25;
+    }
+
+    return Math.round(score);
+  }
+
+  // Normalize YouTube results — junk is always dropped; duration filtered
   const scoredNonJunk = ytSongsRaw
     .filter((item: any) => !isJunkResult(item.title, item.artist))
     .filter((item: any) => !item.duration || (item.duration >= 40 && item.duration <= 55 * 60))
-    .filter((item: any) => !multiWord || (item.artist && item.artist !== "فنان غير معروف"))
-    .map((item: any) => ({ item, cov: tokenCoverage(q, item.title ?? "", item.artist ?? "") }));
-  const passing = scoredNonJunk.filter((r) => r.cov >= 0.5);
-  const partial = scoredNonJunk.filter((r) => r.cov >= 0.45).sort((a, b) => b.cov - a.cov).slice(0, 8);
-  // Last tier keeps YouTube's own ranking order — YouTube matches transliterated
-  // titles (e.g. "Khanza2or" for خنزؤور) that token coverage cannot see. Only for
-  // multi-word queries; junk/long-video/no-artist uploads are already gone.
-  let ytSongsSel: any[];
-  if (passing.length > 0) ytSongsSel = passing;
-  else if (partial.length > 0) ytSongsSel = partial;
-  else ytSongsSel = multiWord ? scoredNonJunk.slice(0, 5) : [];
+    .map((item: any) => ({
+      item,
+      score: computeRelevance(item),
+      cov: Math.max(tokenCoverage(q, item.title ?? "", item.artist ?? ""), tokenCoverage(cleanQ, item.title ?? "", item.artist ?? "")),
+    }));
+
+  scoredNonJunk.sort((a, b) => b.score - a.score);
+
+  const relevantSongs = scoredNonJunk.filter(r => r.score >= 35 || r.cov >= 0.4);
+  const ytSongsSel = (relevantSongs.length > 0 ? relevantSongs : scoredNonJunk).slice(0, 25);
 
   const ytSongs = ytSongsSel.map(({ item }: any) => ({
       songId: item.songId ?? item.videoId,
@@ -210,7 +297,7 @@ export async function smartSearch(searchTerm: string) {
   const mergedSongs = [
     ...localMatches,
     ...ytSongs.filter((s: any) => !seenIds.has(s.youtubeVideoId)),
-  ].slice(0, 20).map(s => ({ ...s, searchQuery: q }));
+  ].slice(0, 25).map(s => ({ ...s, searchQuery: q }));
 
   const result = {
     songs: mergedSongs,
