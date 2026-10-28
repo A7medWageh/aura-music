@@ -30,6 +30,18 @@ const isMobileDevice = () => {
   );
 };
 
+// ── Ensure iOS Safari Audio Session Category is "playback" ──
+// By default, iOS Safari treats web audio as "ambient", silencing audio upon screen lock
+// or when the hardware silent switch is engaged. Setting type="playback" requests
+// AVAudioSessionCategoryPlayback, ensuring non-stop audio in earphones & lock screen.
+const configureAudioSession = () => {
+  if (typeof navigator !== "undefined" && "audioSession" in navigator) {
+    try {
+      (navigator as any).audioSession.type = "playback";
+    } catch {}
+  }
+};
+
 type PlayerContextValue = {
   state: PlayerState;
   currentSong: QueueSong | null;
@@ -91,12 +103,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     } catch {}
   }, []);
 
-  // Auto-clean any corrupted/duplicate Khaleeji audio blobs from user's device in background after idle
+  // Ensure audio session category on mount
   useEffect(() => {
-    const timer = setTimeout(() => {
-      autoPurgeCorruptedJannatBlobs().catch(() => {});
-    }, 4000);
-    return () => clearTimeout(timer);
+    configureAudioSession();
   }, []);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -223,9 +232,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   // Synchronously prime the audio element inside user gestures for iOS WebKit
   const primeAudioElement = () => {
+    configureAudioSession();
     const player = audioRef.current;
     if (!player) return;
     try {
+      player.muted = false;
       const p = player.play();
       if (p !== undefined) {
         p.catch(() => {});
@@ -237,6 +248,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const syncPlayTrack = (song: QueueSong) => {
     const player = audioRef.current;
     if (!player) return;
+
+    configureAudioSession();
+    player.muted = false;
 
     setHasUserTriggeredPlay(true);
     primeAudioElement();
@@ -253,9 +267,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     // 1. Fast handoff if preloaded URL is ready
     if (nextPreloadedRef.current && nextPreloadedRef.current.songId === song.songId) {
       const pUrl = nextPreloadedRef.current.url;
+      player.muted = false;
       player.src = pUrl;
-      player.load();
-      player.play().catch((err) => console.warn("[LockScreen] Preload play error:", err));
+      player.play().catch((err) => {
+        if (err.name !== "AbortError") console.warn("[LockScreen] Preload play error:", err);
+      });
       nextPreloadedRef.current = null;
 
       setState((prev) => {
@@ -282,13 +298,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       `/api/ytdownload?videoId=${encodeURIComponent(targetVid)}&title=${encodeURIComponent(song.title)}&artist=${encodeURIComponent(song.artist || "")}&proxy=true`
     );
 
+    player.muted = false;
     player.src = directStreamUrl;
     player.preload = "auto";
-    player.load();
     const p = player.play();
     if (p !== undefined) {
       p.catch((err) => {
-        console.warn("[Player] Direct play deferred:", err);
+        if (err.name !== "AbortError") console.warn("[Player] Direct play deferred:", err);
       });
     }
 
@@ -308,7 +324,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       };
     });
 
-    // 3. In background, check if offline blob is available; if so, swap to local blob URL
+    // 3. In background, check if offline blob is available; if so, swap to local blob URL ONLY if safe
     getAudioBlob(song.songId).then(async (blob) => {
       let b = blob;
       if (!b && song.youtubeVideoId && song.youtubeVideoId !== song.songId) {
@@ -320,9 +336,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         b = null;
       }
       if (b && stateRef.current.currentSongId === song.songId) {
+        // Critical iOS WebKit safeguard: NEVER swap media source while screen is locked/hidden!
+        // Swapping src while hidden halts media pipeline and silences lock-screen playback.
+        if (typeof document !== "undefined" && document.hidden) return;
+        // Also do not disrupt active audio if already playing smoothly
+        if (player && !player.paused && player.currentTime > 2) return;
         const blobUrl = URL.createObjectURL(b);
+        player.muted = false;
         player.src = blobUrl;
-        player.load();
         player.play().catch(() => {});
         setState((prev) => ({ ...prev, streamUrl: blobUrl, isBuffering: false }));
       }
@@ -427,6 +448,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   prevRef.current = prev;
 
   const togglePlay = () => {
+    configureAudioSession();
     const player = audioRef.current;
     if (player) {
       if (state.isPlaying) {
@@ -438,6 +460,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         syncPositionState();
       } else {
         setHasUserTriggeredPlay(true);
+        player.muted = false;
         const isMobile = isMobileDevice();
         if (!isMobile && !audioCtxRef.current) {
           initWebAudio();
@@ -457,8 +480,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           p.then(() => {
             syncPositionState();
           }).catch((err) => {
-            console.warn("[Player] Direct play() rejected, falling back to syncPlayTrack:", err);
-            if (currentSong) syncPlayTrack(currentSong);
+            if (err.name !== "AbortError") {
+              console.warn("[Player] Direct play() rejected, falling back to syncPlayTrack:", err);
+              if (currentSong) syncPlayTrack(currentSong);
+            }
           });
         } else {
           syncPositionState();
@@ -1083,33 +1108,39 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
 
     navigator.mediaSession.setActionHandler("play", () => {
+      configureAudioSession();
       const player = audioRef.current;
       if (!player) return;
+
+      player.muted = false;
+
       const currentSong = stateRef.current.queue.find((s) => s.songId === stateRef.current.currentSongId);
       if ((!player.src || player.src === "" || player.src === window.location.href) && currentSong) {
         syncPlayTrack(currentSong);
         return;
       }
+
       setHasUserTriggeredPlay(true);
       if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
         navigator.mediaSession.playbackState = "playing";
       }
-      setState((prev) => ({ ...prev, isPlaying: true }));
-      if (audioCtxRef.current && audioCtxRef.current.state === "suspended") {
-        audioCtxRef.current.resume().catch(() => {});
-      }
+
       const p = player.play();
       if (p !== undefined) {
         p.then(() => {
+          setState((prev) => ({ ...prev, isPlaying: true }));
           syncPositionState();
         }).catch((err) => {
-          console.warn("[MediaSession] play() rejected:", err);
-          setState((prev) => ({ ...prev, isPlaying: !player.paused }));
-          if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
-            navigator.mediaSession.playbackState = player.paused ? "paused" : "playing";
+          if (err.name !== "AbortError") {
+            console.warn("[MediaSession] play() rejected:", err);
+            setState((prev) => ({ ...prev, isPlaying: !player.paused }));
+            if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+              navigator.mediaSession.playbackState = player.paused ? "paused" : "playing";
+            }
           }
         });
       } else {
+        setState((prev) => ({ ...prev, isPlaying: true }));
         syncPositionState();
       }
     });
@@ -1120,15 +1151,19 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         player.pause();
       }
       setState((prev) => ({ ...prev, isPlaying: false }));
-      navigator.mediaSession.playbackState = "paused";
+      if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+        navigator.mediaSession.playbackState = "paused";
+      }
       syncPositionState();
     });
 
     navigator.mediaSession.setActionHandler("nexttrack", () => {
+      configureAudioSession();
       nextRef.current();
     });
 
     navigator.mediaSession.setActionHandler("previoustrack", () => {
+      configureAudioSession();
       prevRef.current();
     });
 
@@ -1383,6 +1418,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const isActuallyPlaying = !player.paused;
 
     if (state.isPlaying && !isActuallyPlaying) {
+      player.muted = false;
       const playPromise = player.play();
       if (playPromise !== undefined) {
         playPromise.catch((err) => {
@@ -1445,8 +1481,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
       if (!document.hidden) {
         // Screen unlocked / tab visible:
+        configureAudioSession();
         if (player) {
+          player.muted = false;
           setState((prev) => ({ ...prev, currentTime: player.currentTime || 0 }));
+          // If state marked playing but element was stalled/suspended by background throttling, revive it
+          if (isPlayingRef.current && player.paused) {
+            player.play().catch(() => {});
+          }
         }
         if (ctx && ctx.state === "suspended" && isPlayingRef.current) {
           ctx.resume().then(() => {
@@ -1491,9 +1533,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (typeof window === "undefined") return;
     const unlock = () => {
+      configureAudioSession();
       const player = audioRef.current;
-      if (player && player.paused && !player.src) {
-        player.load();
+      if (player) {
+        player.muted = false;
+        if (player.paused && !player.src) {
+          player.load();
+        }
       }
       if (audioCtxRef.current && audioCtxRef.current.state === "suspended") {
         audioCtxRef.current.resume().catch(() => {});
@@ -1725,7 +1771,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       <audio
         ref={audioRef}
         data-main-player="true"
-        crossOrigin="anonymous"
+        crossOrigin={isMobileDevice() ? undefined : "anonymous"}
         playsInline
         preload="auto"
         onTimeUpdate={onTimeUpdate}

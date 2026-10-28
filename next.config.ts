@@ -29,7 +29,7 @@ const withPWA = withPWAInit({
         urlPattern: ({ url }: any) => url.pathname.startsWith("/_next/static/"),
         handler: "StaleWhileRevalidate",
         options: {
-          cacheName: "aura-static-chunks",
+          cacheName: "aura-static-chunks-v3",
           expiration: {
             maxEntries: 120,
             maxAgeSeconds: 30 * 24 * 60 * 60,
