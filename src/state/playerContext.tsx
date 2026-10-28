@@ -117,6 +117,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const nextPreloadedRef = useRef<{ songId: string; url: string; isBlob: boolean } | null>(null);
   const lastPreloadRef = useRef<string | null>(null);
   const isInitialMountRef = useRef(true);
+  // Tracks the currently active offline blob URL so MediaSession play handler can revive stalled playback
+  const currentBlobUrlRef = useRef<string | null>(null);
 
   const nextRef = useRef<() => void>(() => {});
   const prevRef = useRef<() => void>(() => {});
@@ -264,6 +266,72 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       import("@/services/user/listeningHistory").then(({ trackPlay }) => trackPlay(song)).catch(() => {});
     }
 
+    const targetVid = song.youtubeVideoId || song.songId || "";
+    const directStreamUrl = toAbsoluteApiUrl(
+      `/api/ytdownload?videoId=${encodeURIComponent(targetVid)}&title=${encodeURIComponent(song.title)}&artist=${encodeURIComponent(song.artist || "")}&proxy=true`
+    );
+
+    // ── Strategy: Offline-first ──────────────────────────────────────────────
+    // Eagerly fetch the offline blob BEFORE touching player.src.
+    // This ensures:
+    //   1. Offline songs use their local blob immediately (no network dependency)
+    //   2. The blob URL is stored in currentBlobUrlRef so MediaSession play handler
+    //      can revive stalled offline playback without ever touching the network.
+    //   3. Stream URL is only used as a fallback when no offline blob exists.
+    getAudioBlob(song.songId).then(async (blob) => {
+      let b = blob;
+      if (!b && song.youtubeVideoId && song.youtubeVideoId !== song.songId) {
+        b = await getAudioBlob(song.youtubeVideoId);
+      }
+      if (b && isKhaleejiOrCorruptedJannatBlob(song.artist, b.size, song.songId || song.title)) {
+        await deleteAudioBlobOnly(song.songId);
+        if (song.youtubeVideoId) await deleteAudioBlobOnly(song.youtubeVideoId);
+        b = null;
+      }
+
+      // Guard: only apply if still on the same song
+      if (stateRef.current.currentSongId !== song.songId) return;
+
+      if (b) {
+        // ── OFFLINE PATH: Use local blob as primary source ──
+        // Revoke any previous blob URL to avoid memory leaks
+        if (currentBlobUrlRef.current && currentBlobUrlRef.current !== player.src) {
+          try { URL.revokeObjectURL(currentBlobUrlRef.current); } catch {}
+        }
+        const blobUrl = URL.createObjectURL(b);
+        currentBlobUrlRef.current = blobUrl;
+        player.muted = false;
+        player.src = blobUrl;
+        player.preload = "auto";
+        // Do NOT call player.load() — just play() to preserve iOS gesture chain
+        player.play().catch((err) => {
+          if (err.name !== "AbortError") console.warn("[Player] Offline blob play error:", err);
+        });
+        setState((prev) => {
+          const exists = prev.queue.some((item) => item.songId === song.songId);
+          const nextQueue = exists ? prev.queue : [song, ...prev.queue];
+          return {
+            ...prev,
+            queue: nextQueue,
+            currentSongId: song.songId,
+            isPlaying: true,
+            streamUrl: blobUrl,
+            currentTime: 0,
+            duration: 0,
+            isBuffering: false,
+            error: null,
+          };
+        });
+      } else {
+        // ── ONLINE PATH: No offline blob found, keep the stream URL that was already set ──
+        currentBlobUrlRef.current = null;
+        // Stream URL already set below, nothing extra to do here
+      }
+    }).catch(() => {
+      // If IndexedDB fails, keep the stream URL that was already set
+      currentBlobUrlRef.current = null;
+    });
+
     // 1. Fast handoff if preloaded URL is ready
     if (nextPreloadedRef.current && nextPreloadedRef.current.songId === song.songId) {
       const pUrl = nextPreloadedRef.current.url;
@@ -292,12 +360,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    // 2. Direct streaming start immediately (starts in seconds, never rejected by iOS lock screen)
-    const targetVid = song.youtubeVideoId || song.songId || "";
-    const directStreamUrl = toAbsoluteApiUrl(
-      `/api/ytdownload?videoId=${encodeURIComponent(targetVid)}&title=${encodeURIComponent(song.title)}&artist=${encodeURIComponent(song.artist || "")}&proxy=true`
-    );
-
+    // 2. Start stream URL immediately (fallback while blob check runs async)
+    //    The blob check above will swap to offline blob if found.
     player.muted = false;
     player.src = directStreamUrl;
     player.preload = "auto";
@@ -323,31 +387,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         error: null,
       };
     });
-
-    // 3. In background, check if offline blob is available; if so, swap to local blob URL ONLY if safe
-    getAudioBlob(song.songId).then(async (blob) => {
-      let b = blob;
-      if (!b && song.youtubeVideoId && song.youtubeVideoId !== song.songId) {
-        b = await getAudioBlob(song.youtubeVideoId);
-      }
-      if (b && isKhaleejiOrCorruptedJannatBlob(song.artist, b.size, song.songId || song.title)) {
-        await deleteAudioBlobOnly(song.songId);
-        if (song.youtubeVideoId) await deleteAudioBlobOnly(song.youtubeVideoId);
-        b = null;
-      }
-      if (b && stateRef.current.currentSongId === song.songId) {
-        // Critical iOS WebKit safeguard: NEVER swap media source while screen is locked/hidden!
-        // Swapping src while hidden halts media pipeline and silences lock-screen playback.
-        if (typeof document !== "undefined" && document.hidden) return;
-        // Also do not disrupt active audio if already playing smoothly
-        if (player && !player.paused && player.currentTime > 2) return;
-        const blobUrl = URL.createObjectURL(b);
-        player.muted = false;
-        player.src = blobUrl;
-        player.play().catch(() => {});
-        setState((prev) => ({ ...prev, streamUrl: blobUrl, isBuffering: false }));
-      }
-    }).catch(() => {});
   };
 
   const setQueue = (songs: QueueSong[], startIndex = 0) => {
@@ -1115,8 +1154,34 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       player.muted = false;
 
       const currentSong = stateRef.current.queue.find((s) => s.songId === stateRef.current.currentSongId);
-      if ((!player.src || player.src === "" || player.src === window.location.href) && currentSong) {
-        syncPlayTrack(currentSong);
+
+      // Condition 1: No src at all — full restart needed
+      const hasNoSrc = !player.src || player.src === "" || player.src === window.location.href;
+
+      // Condition 2: Player is stalled / element lost its media (readyState=0 means HAVE_NOTHING)
+      // This happens when iOS suspends the audio pipeline on lock screen for offline blob URLs.
+      // In this case we must reload from our stored offline blob URL rather than re-fetching.
+      const isStalled = player.readyState === 0 && !!player.src;
+
+      if ((hasNoSrc || isStalled) && currentSong) {
+        if (isStalled && currentBlobUrlRef.current) {
+          // Fast-path: Revive stalled offline audio by reassigning the same blob URL.
+          // This is critical for offline songs resumed from lock screen AirPod tap.
+          player.muted = false;
+          player.src = currentBlobUrlRef.current;
+          player.play().then(() => {
+            setState((prev) => ({ ...prev, isPlaying: true }));
+            syncPositionState();
+          }).catch((err) => {
+            if (err.name !== "AbortError") {
+              // Blob URL may have been revoked; full restart
+              console.warn("[MediaSession] Blob revive failed, restarting:", err);
+              syncPlayTrack(currentSong);
+            }
+          });
+        } else {
+          syncPlayTrack(currentSong);
+        }
         return;
       }
 
@@ -1133,10 +1198,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         }).catch((err) => {
           if (err.name !== "AbortError") {
             console.warn("[MediaSession] play() rejected:", err);
-            setState((prev) => ({ ...prev, isPlaying: !player.paused }));
-            if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
-              navigator.mediaSession.playbackState = player.paused ? "paused" : "playing";
-            }
+            // If regular play() also fails, try full restart
+            if (currentSong) syncPlayTrack(currentSong);
           }
         });
       } else {
