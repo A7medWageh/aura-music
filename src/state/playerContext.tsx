@@ -899,6 +899,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (player) {
       if (state.isPlaying) {
         player.pause();
+        isPlayingRef.current = false;
         setState((prev) => ({ ...prev, isPlaying: false }));
         if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
           navigator.mediaSession.playbackState = "paused";
@@ -911,6 +912,30 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         } else if (audioCtxRef.current && audioCtxRef.current.state === "suspended") {
           audioCtxRef.current.resume().catch(() => {});
         }
+
+        // Fast synchronous resume inside user gesture tick
+        if (player.src && player.src !== "" && player.src !== window.location.href) {
+          player.muted = false;
+          try {
+            const playPromise = player.play();
+            if (playPromise !== undefined) {
+              playPromise
+                .then(() => {
+                  if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+                    navigator.mediaSession.playbackState = "playing";
+                  }
+                  isPlayingRef.current = true;
+                  setState((prev) => ({ ...prev, isPlaying: true, isBuffering: false, error: null }));
+                  syncPositionState();
+                })
+                .catch(() => {
+                  executePlayOrRecover("togglePlay-fallback");
+                });
+              return;
+            }
+          } catch {}
+        }
+
         executePlayOrRecover("togglePlay");
       }
     } else {
@@ -1543,7 +1568,45 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
     navigator.mediaSession.setActionHandler("play", () => {
       recordAudioDiagnosticEvent("MediaSession action: play received");
-      executePlayOrRecover("mediasession-play");
+      configureAudioSession();
+      const player = audioRef.current;
+      if (!player) return;
+
+      player.muted = false;
+
+      // ── Zero-Latency Synchronous Play for iOS Lock Screen & AirPods ──
+      // Calling player.play() synchronously in the exact hardware gesture frame
+      // is REQUIRED by iOS WebKit to maintain the user-activation token in background.
+      if (player.src && player.src !== "" && player.src !== window.location.href) {
+        try {
+          const playPromise = player.play();
+          if (playPromise !== undefined) {
+            playPromise
+              .then(() => {
+                recordAudioDiagnosticEvent("MediaSession direct sync play succeeded");
+                if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+                  navigator.mediaSession.playbackState = "playing";
+                }
+                isPlayingRef.current = true;
+                setState((prev) => ({ ...prev, isPlaying: true, isBuffering: false, error: null }));
+                syncPositionState();
+              })
+              .catch((err) => {
+                recordAudioDiagnosticEvent("MediaSession direct play rejected, falling back to recovery engine", {
+                  error: err?.message,
+                  name: err?.name,
+                });
+                executePlayOrRecover("mediasession-play-sync-rejected");
+              });
+            return;
+          }
+        } catch (syncErr) {
+          console.warn("[MediaSession] Synchronous play threw exception:", syncErr);
+        }
+      }
+
+      // If no valid source was attached, proceed with recovery
+      executePlayOrRecover("mediasession-play-no-src");
     });
 
     navigator.mediaSession.setActionHandler("pause", () => {
