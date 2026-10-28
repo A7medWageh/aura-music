@@ -333,6 +333,36 @@ export async function getLyrics(songId: string): Promise<any | null> {
   return record?.lyrics || null;
 }
 
+/** Get all saved lyrics mapped by songId for fast, zero-latency offline searching */
+export async function getAllOfflineLyricsMap(): Promise<Map<string, string>> {
+  try {
+    const db = await openOfflineDb();
+    return await new Promise((resolve) => {
+      const tx = db.transaction(LYRICS_STORE, "readonly");
+      const store = tx.objectStore(LYRICS_STORE);
+      const req = store.getAll();
+      req.onsuccess = () => {
+        const map = new Map<string, string>();
+        const records = req.result || [];
+        for (const r of records) {
+          if (!r?.songId) continue;
+          let text = "";
+          if (typeof r.lyrics === "string") {
+            text = r.lyrics;
+          } else if (r.lyrics && typeof r.lyrics === "object") {
+            text = r.lyrics.lyrics || (Array.isArray(r.lyrics.syncedLyrics) ? r.lyrics.syncedLyrics.map((l: any) => l.text).join(" ") : "") || "";
+          }
+          if (text) map.set(r.songId, text);
+        }
+        resolve(map);
+      };
+      req.onerror = () => resolve(new Map());
+    });
+  } catch {
+    return new Map();
+  }
+}
+
 /** Get all saved songs from library (metadata synchronized with actual audio storage) */
 /** Get all saved songs from library (metadata synchronized with actual audio storage) */
 export async function getAllOfflineSongs(): Promise<any[]> {

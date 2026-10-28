@@ -1,14 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { getAllOfflineSongs, deleteOfflineSong, deleteArtist, deleteAlbum, toggleSongHidden, consolidateArtistFolders } from "@/offline/indexedDbCache";
+import { useEffect, useState, useMemo } from "react";
+import { getAllOfflineSongs, getAllOfflineLyricsMap, deleteOfflineSong, deleteArtist, deleteAlbum, toggleSongHidden, consolidateArtistFolders } from "@/offline/indexedDbCache";
 import { subscribeDownloads } from "@/state/downloadStore";
 import { usePlayer } from "@/state/playerContext";
 import { motion, AnimatePresence } from "framer-motion";
-import { Play, Trash2, WifiOff, ArrowRight, DownloadCloud, Lock, Unlock, EyeOff, Eye, HardDrive, Music, CheckCircle2, AlertCircle, Image as ImageIcon } from "lucide-react";
+import { Play, Trash2, WifiOff, ArrowRight, DownloadCloud, Lock, Unlock, EyeOff, Eye, HardDrive, Music, CheckCircle2, AlertCircle, Image as ImageIcon, Search, X, FileText, Sparkles } from "lucide-react";
 import { getProxyUrl } from "@/utils/media";
 import { openBackgroundCustomizer } from "@/services/theme/customBackgroundStorage";
 import { getCanonicalArtistName } from "@/utils/artistNormalizer";
+import { searchOfflineSongs, type OfflineSearchResult } from "@/utils/arabicSearch";
 
 type Song = {
   songId: string; title: string; artist: string; thumbnailUrl?: string;
@@ -82,7 +83,13 @@ let cachedLibraryStats = { sizeMB: 0, count: 0 };
 export default function LibraryPage() {
   const { playNow, enqueueSongs, setQueue } = usePlayer();
   const [artists, setArtists] = useState<ArtistFolder[]>(() => cachedLibraryArtists);
-  
+  const [allVisibleSongs, setAllVisibleSongs] = useState<Song[]>([]);
+  const [lyricsMap, setLyricsMap] = useState<Map<string, string>>(new Map());
+
+  // Search State
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterMode, setFilterMode] = useState<"all" | "meta" | "lyrics">("all");
+
   // Navigation State
   const [openArtist, setOpenArtist] = useState<string | null>(null);
   const [openAlbum, setOpenAlbum] = useState<string | null>(null);
@@ -99,13 +106,23 @@ export default function LibraryPage() {
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 3500); };
 
+  const searchResults = useMemo(() => {
+    if (!searchQuery.trim()) return [];
+    return searchOfflineSongs(allVisibleSongs, lyricsMap, searchQuery, filterMode);
+  }, [allVisibleSongs, lyricsMap, searchQuery, filterMode]);
+
   const loadLibrary = async () => {
     try {
       if (cachedLibraryArtists.length === 0) setLoading(true);
-      const songs: Song[] = await getAllOfflineSongs();
+      const [songs, lyrMap] = await Promise.all([
+        getAllOfflineSongs(),
+        getAllOfflineLyricsMap(),
+      ]);
+      setLyricsMap(lyrMap);
       
       // Filter hidden songs unless vault is unlocked
-      const visibleSongs = songs.filter(s => vaultUnlocked ? true : !s.isHidden);
+      const visibleSongs: Song[] = songs.filter(s => vaultUnlocked ? true : !s.isHidden);
+      setAllVisibleSongs(visibleSongs);
       
       const estimatedSizeMB = visibleSongs.filter(s => s.audioReady).length * 3.5;
       const newStats = { sizeMB: estimatedSizeMB, count: visibleSongs.length };
@@ -372,9 +389,149 @@ export default function LibraryPage() {
         </div>
       </div>
 
+      {/* Smart Offline Search Bar */}
+      <div className="relative w-full max-w-2xl mx-auto space-y-2.5">
+        <div className="relative flex items-center rounded-2xl bg-white/[0.06] hover:bg-white/[0.09] focus-within:bg-black/60 border border-white/10 focus-within:border-indigo-400/60 focus-within:ring-2 focus-within:ring-indigo-500/20 shadow-lg backdrop-blur-xl transition-all">
+          <div className="pr-4 pl-2 text-gray-400 flex items-center justify-center">
+            <Search className="w-5 h-5 text-gray-400 focus-within:text-indigo-400 transition-colors" />
+          </div>
 
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="ابحث عن أغنية، فنان، أو كلمات من الأغنية (بدون نت)... 🔍"
+            className="w-full py-3.5 pl-10 pr-1 bg-transparent text-white placeholder-gray-400 text-sm sm:text-base font-bold outline-none"
+            dir="rtl"
+          />
 
-      {loading ? (
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery("")}
+              className="absolute left-3 p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-gray-300 hover:text-white transition-all active:scale-90"
+              title="مسح البحث"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+
+        {/* Search Filter Chips & Status */}
+        {searchQuery.trim() && (
+          <div className="flex items-center justify-between px-1 flex-wrap gap-2 text-xs font-bold">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-gray-400 text-[11px]">بحث في:</span>
+              {(
+                [
+                  { id: "all", label: "الكل ⚡" },
+                  { id: "meta", label: "العنوان والفنان 🎵" },
+                  { id: "lyrics", label: "الكلمات 📝" },
+                ] as const
+              ).map((chip) => (
+                <button
+                  key={chip.id}
+                  onClick={() => setFilterMode(chip.id)}
+                  className={`px-2.5 py-1 rounded-full transition-all border ${
+                    filterMode === chip.id
+                      ? "bg-indigo-500 text-white border-indigo-400 shadow-md shadow-indigo-500/25"
+                      : "bg-white/5 text-gray-400 hover:text-white border-white/10"
+                  }`}
+                >
+                  {chip.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-indigo-300 bg-indigo-500/15 border border-indigo-500/30 px-2.5 py-0.5 rounded-full">
+                {searchResults.length} {searchResults.length === 1 ? "أغنية" : "أغانٍ"}
+              </span>
+              {searchResults.length > 0 && (
+                <button
+                  onClick={() => playList(searchResults.map((r) => r.item))}
+                  className="px-3 py-1 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white rounded-full flex items-center gap-1 text-xs shadow-md transition-all active:scale-95"
+                >
+                  <Play className="w-3.5 h-3.5 fill-current" />
+                  <span>تشغيل النتائج</span>
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {searchQuery.trim().length > 0 ? (
+        /* Search Results View */
+        <div className="space-y-4">
+          <div className="flex items-center justify-between pb-2 border-b border-white/10">
+            <h3 className="text-xl font-black text-white flex items-center gap-2">
+              <span>نتائج البحث عن</span>
+              <span className="text-indigo-400">"{searchQuery}"</span>
+            </h3>
+            <button
+              onClick={() => setSearchQuery("")}
+              className="text-xs text-gray-400 hover:text-white underline font-bold"
+            >
+              إلغاء والرجوع للمكتبة
+            </button>
+          </div>
+
+          {searchResults.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 text-center gap-3 bg-white/[0.02] rounded-3xl border border-white/5 p-6">
+              <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center text-3xl">
+                🔍
+              </div>
+              <h3 className="text-xl font-bold text-white">لم نجد أغانٍ مطابقة</h3>
+              <p className="text-sm text-gray-400 max-w-sm">
+                لم نجد أي أغنية مطابقة لبحثك في الأغاني المحملة أوفلاين. جرب كتابة كلمة أخرى من اسم الأغنية أو كلماتها.
+              </p>
+              {filterMode !== "all" && (
+                <button
+                  onClick={() => setFilterMode("all")}
+                  className="mt-2 text-xs font-bold text-indigo-400 hover:text-indigo-300 underline"
+                >
+                  البحث في الكل (العنوان + الفنان + الكلمات)
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="grid gap-2">
+              {searchResults.map((result, i) => (
+                <div key={result.item.songId} className="space-y-1">
+                  <SongRow
+                    song={result.item}
+                    index={i}
+                    play={() => {
+                      if (!result.item.audioReady && typeof navigator !== "undefined" && !navigator.onLine) {
+                        showToast("لم يكتمل تنزيل هذه الأغنية بعد. اتصل بالإنترنت لتحميلها للاستماع أوفلاين.");
+                        return;
+                      }
+                      setQueue(searchResults.map((r) => r.item) as any, i);
+                    }}
+                    onDelete={(e: any) => handleDeleteSong(e, result.item.songId)}
+                    onToggleHide={(e: any) => handleToggleHide(e, result.item)}
+                    vaultUnlocked={vaultUnlocked}
+                    badge={
+                      result.matchedField === "lyrics" ? (
+                        <span className="inline-flex items-center gap-1 text-[9px] sm:text-[10px] text-purple-300 bg-purple-500/20 border border-purple-500/30 px-2 py-0.5 rounded-full font-black shrink-0">
+                          <FileText className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-purple-400" />
+                          مطابقة في الكلمات
+                        </span>
+                      ) : undefined
+                    }
+                  />
+                  {result.lyricsSnippet && (
+                    <div className="mr-10 sm:mr-16 ml-3 px-3 py-1.5 rounded-xl bg-purple-500/10 border border-purple-500/20 text-[11px] sm:text-xs text-purple-200/90 font-medium flex items-center gap-1.5">
+                      <span className="text-purple-400 font-bold shrink-0">📝 من الكلمات:</span>
+                      <span className="italic truncate" dir="rtl">"{result.lyricsSnippet}"</span>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : loading ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-5">
           {[...Array(10)].map((_, i) => (
             <div key={i} className="animate-pulse">
@@ -545,7 +702,7 @@ export default function LibraryPage() {
   );
 }
 
-function SongRow({ song, index, play, onDelete, onToggleHide, vaultUnlocked }: any) {
+function SongRow({ song, index, play, onDelete, onToggleHide, vaultUnlocked, badge }: any) {
   const isReady = song.audioReady ?? false;
   return (
     <div 
@@ -586,6 +743,7 @@ function SongRow({ song, index, play, onDelete, onToggleHide, vaultUnlocked }: a
           <p className="text-[11px] sm:text-xs font-bold text-gray-400 truncate max-w-[130px] sm:max-w-none">
             {song.artist}
           </p>
+          {badge}
           {isReady ? (
             <span className="inline-flex items-center gap-1 text-[9px] sm:text-[10px] text-emerald-400 bg-emerald-500/15 px-1.5 py-0.5 rounded-full font-bold shrink-0">
               <CheckCircle2 className="w-2.5 h-2.5 sm:w-3 sm:h-3" /> جاهزة أوفلاين
