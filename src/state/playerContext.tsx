@@ -9,6 +9,11 @@ import { downloadSong } from "@/services/offline/downloader";
 import { setMainAudioPlaying } from "@/services/offline/backgroundKeepAlive";
 import { useToastStore } from "@/state/toastStore";
 import { toAbsoluteApiUrl } from "@/utils/apiBase";
+import {
+  recordAudioDiagnosticEvent,
+  registerAudioDiagnosticsSource,
+  AudioSourceType
+} from "@/utils/audioDiagnostics";
 
 // ── Accurate iOS Detection (iPhone, iPad, iPod, WKWebView) ──
 const isIOSDevice = () => {
@@ -118,11 +123,79 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const nextPreloadedRef = useRef<{ songId: string; url: string; isBlob: boolean } | null>(null);
   const lastPreloadRef = useRef<string | null>(null);
   const isInitialMountRef = useRef(true);
-  // Tracks the currently active offline blob URL so MediaSession play handler can revive stalled playback
-  const currentBlobUrlRef = useRef<string | null>(null);
+  // ── Source-Aware Offline State & Blob URL Lifecycle (Solutions A, B, F) ──
+  const activeBlobUrlRef = useRef<string | null>(null);
+  const activeBlobRef = useRef<Blob | null>(null);
+  const activeOfflineSongIdRef = useRef<string | null>(null);
+  const currentSourceTypeRef = useRef<AudioSourceType>(null);
+  const isRecoveringRef = useRef(false);
+  const recoveryAttemptCountRef = useRef(0);
+
+  // Backward compatibility alias for currentBlobUrlRef
+  const currentBlobUrlRef = activeBlobUrlRef;
 
   const nextRef = useRef<() => void>(() => {});
   const prevRef = useRef<() => void>(() => {});
+
+  const setActiveBlobSource = (songId: string, blob: Blob): string => {
+    // If we already have a valid active URL for this exact same blob, reuse it
+    if (
+      activeOfflineSongIdRef.current === songId &&
+      activeBlobRef.current === blob &&
+      activeBlobUrlRef.current
+    ) {
+      currentSourceTypeRef.current = "offline-blob";
+      return activeBlobUrlRef.current;
+    }
+
+    const oldUrl = activeBlobUrlRef.current;
+    const newUrl = URL.createObjectURL(blob);
+
+    activeBlobRef.current = blob;
+    activeOfflineSongIdRef.current = songId;
+    activeBlobUrlRef.current = newUrl;
+    currentSourceTypeRef.current = "offline-blob";
+
+    recordAudioDiagnosticEvent("setActiveBlobSource", {
+      songId,
+      blobSize: blob.size,
+      mimeType: blob.type,
+      newUrl,
+    });
+
+    if (oldUrl && oldUrl !== newUrl) {
+      setTimeout(() => {
+        try {
+          if (audioRef.current?.src !== oldUrl) {
+            URL.revokeObjectURL(oldUrl);
+          }
+        } catch {}
+      }, 3000);
+    }
+
+    return newUrl;
+  };
+
+  const clearActiveBlobSource = () => {
+    const oldUrl = activeBlobUrlRef.current;
+    activeBlobRef.current = null;
+    activeOfflineSongIdRef.current = null;
+    activeBlobUrlRef.current = null;
+    currentSourceTypeRef.current = "remote-url";
+
+    recordAudioDiagnosticEvent("clearActiveBlobSource");
+
+    if (oldUrl) {
+      setTimeout(() => {
+        try {
+          if (audioRef.current?.src !== oldUrl) {
+            URL.revokeObjectURL(oldUrl);
+          }
+        } catch {}
+      }, 3000);
+    }
+  };
+
 
   const currentSong = useMemo(
     () => state.queue.find((song) => song.songId === state.currentSongId) ?? null,
@@ -215,6 +288,22 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  // Register developer diagnostics provider for runtime console debugging
+  useEffect(() => {
+    registerAudioDiagnosticsSource(
+      () => audioRef.current,
+      () => {
+        const curSong = stateRef.current.queue.find((s) => s.songId === stateRef.current.currentSongId);
+        return {
+          songId: stateRef.current.currentSongId,
+          songTitle: curSong?.title || null,
+          sourceType: currentSourceTypeRef.current,
+          recoveryAttempts: recoveryAttemptCountRef.current,
+        };
+      }
+    );
+  }, []);
+
   // Persist session to localStorage so active song, queue and progress survive reloads
   useEffect(() => {
     if (state.queue.length > 0 && state.currentSongId) {
@@ -248,6 +337,220 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     } catch {}
   };
 
+  // ── Centralized Playback & Recovery Engine (Solutions A, C, D, F, G) ──
+  const executePlayOrRecover = async (trigger: string): Promise<boolean> => {
+    const player = audioRef.current;
+    if (!player) return false;
+
+    const currentSong = stateRef.current.queue.find((s) => s.songId === stateRef.current.currentSongId);
+    if (!currentSong) return false;
+
+    if (isRecoveringRef.current) {
+      recordAudioDiagnosticEvent("executePlayOrRecover: skipped (concurrent recovery in progress)", { trigger });
+      return false;
+    }
+
+    isRecoveringRef.current = true;
+    recordAudioDiagnosticEvent("executePlayOrRecover: initiated", {
+      trigger,
+      songId: currentSong.songId,
+      sourceType: currentSourceTypeRef.current,
+      readyState: player.readyState,
+      paused: player.paused,
+      currentTime: player.currentTime,
+    });
+
+    try {
+      configureAudioSession();
+      player.muted = false;
+      setHasUserTriggeredPlay(true);
+
+      const isOffline =
+        currentSourceTypeRef.current === "offline-blob" ||
+        currentSong.audioReady === true ||
+        (activeOfflineSongIdRef.current === currentSong.songId && !!activeBlobRef.current) ||
+        (player.src && player.src.startsWith("blob:")) ||
+        (typeof navigator !== "undefined" && !navigator.onLine);
+
+      // ─────────────────────────────────────────────────────────────
+      // 1. OFFLINE PLAYBACK PATH (Airplane Mode safe, 0 network calls)
+      // ─────────────────────────────────────────────────────────────
+      if (isOffline) {
+        currentSourceTypeRef.current = "offline-blob";
+        let targetBlobUrl = activeBlobUrlRef.current;
+
+        const needsSourceAssignment =
+          !targetBlobUrl ||
+          !player.src ||
+          player.src === "" ||
+          player.src === window.location.href ||
+          !player.src.startsWith("blob:") ||
+          player.src !== targetBlobUrl;
+
+        if (!targetBlobUrl) {
+          recordAudioDiagnosticEvent("Retrieving offline blob from IndexedDB", { songId: currentSong.songId });
+          let blob = activeBlobRef.current;
+          if (!blob || activeOfflineSongIdRef.current !== currentSong.songId) {
+            blob = await getAudioBlob(currentSong.songId);
+            if (!blob && currentSong.youtubeVideoId && currentSong.youtubeVideoId !== currentSong.songId) {
+              blob = await getAudioBlob(currentSong.youtubeVideoId);
+            }
+          }
+
+          if (blob) {
+            targetBlobUrl = setActiveBlobSource(currentSong.songId, blob);
+          } else {
+            recordAudioDiagnosticEvent("ERROR: Offline audio blob not found in IndexedDB", { songId: currentSong.songId });
+            setState((prev) => ({
+              ...prev,
+              isPlaying: false,
+              isBuffering: false,
+              error: "الملف الصوتي لهذه الأغنية غير متوفر محلياً في ذاكرة الأوفلاين.",
+            }));
+            return false;
+          }
+        }
+
+        if (needsSourceAssignment && targetBlobUrl) {
+          const savedTime = stateRef.current.currentTime || player.currentTime || 0;
+          player.src = targetBlobUrl;
+          player.preload = "auto";
+          if (savedTime > 0) {
+            try { player.currentTime = savedTime; } catch {}
+          }
+        }
+
+        if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+          navigator.mediaSession.playbackState = "playing";
+        }
+
+        try {
+          await player.play();
+          recordAudioDiagnosticEvent("Offline play() succeeded", {
+            currentTime: player.currentTime,
+            duration: player.duration,
+          });
+          recoveryAttemptCountRef.current = 0;
+          setState((prev) => ({
+            ...prev,
+            isPlaying: true,
+            isBuffering: false,
+            error: null,
+            sourceType: "offline-blob",
+            streamUrl: targetBlobUrl,
+          }));
+          syncPositionState();
+          return true;
+        } catch (playErr: any) {
+          recordAudioDiagnosticEvent("Offline play() rejected on initial attempt", {
+            name: playErr?.name,
+            message: playErr?.message,
+            attempts: recoveryAttemptCountRef.current,
+          });
+
+          if (playErr?.name === "AbortError") {
+            return false;
+          }
+
+          // Bounded local recovery: on iOS, WebKit's blob pipeline in background sometimes requires
+          // a freshly generated blob URL to re-bind the AVAssetResourceLoader
+          if (recoveryAttemptCountRef.current < 1) {
+            recoveryAttemptCountRef.current++;
+            recordAudioDiagnosticEvent("Rejuvenating offline blob URL for background resume", {
+              attempt: recoveryAttemptCountRef.current,
+            });
+
+            let freshBlob = activeBlobRef.current;
+            if (!freshBlob) {
+              freshBlob = await getAudioBlob(currentSong.songId);
+              if (!freshBlob && currentSong.youtubeVideoId) {
+                freshBlob = await getAudioBlob(currentSong.youtubeVideoId);
+              }
+            }
+
+            if (freshBlob) {
+              const freshUrl = URL.createObjectURL(freshBlob);
+              activeBlobRef.current = freshBlob;
+              activeOfflineSongIdRef.current = currentSong.songId;
+              activeBlobUrlRef.current = freshUrl;
+              currentSourceTypeRef.current = "offline-blob";
+
+              const savedTime = stateRef.current.currentTime || player.currentTime || 0;
+              player.src = freshUrl;
+              player.preload = "auto";
+              if (savedTime > 0) {
+                try { player.currentTime = savedTime; } catch {}
+              }
+
+              try {
+                await player.play();
+                recordAudioDiagnosticEvent("Rejuvenated offline blob play() succeeded");
+                recoveryAttemptCountRef.current = 0;
+                setState((prev) => ({
+                  ...prev,
+                  isPlaying: true,
+                  isBuffering: false,
+                  error: null,
+                  sourceType: "offline-blob",
+                  streamUrl: freshUrl,
+                }));
+                syncPositionState();
+                return true;
+              } catch (retryErr: any) {
+                recordAudioDiagnosticEvent("Rejuvenated offline blob play() failed", {
+                  error: retryErr?.message,
+                });
+              }
+            }
+          }
+
+          // CRITICAL: NEVER switch to online streaming when offline!
+          setState((prev) => ({
+            ...prev,
+            isPlaying: false,
+            isBuffering: false,
+            error: "تعذر استئناف الأغنية أوفلاين أثناء قفل الشاشة. يرجى الضغط مرة أخرى أو فتح الموقع.",
+          }));
+          if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+            navigator.mediaSession.playbackState = "paused";
+          }
+          return false;
+        }
+      }
+
+      // ─────────────────────────────────────────────────────────────
+      // 2. ONLINE PLAYBACK PATH
+      // ─────────────────────────────────────────────────────────────
+      recordAudioDiagnosticEvent("Online playback resume", { songId: currentSong.songId });
+      currentSourceTypeRef.current = "remote-url";
+
+      if ((!player.src || player.src === "" || player.src === window.location.href) && currentSong) {
+        syncPlayTrack(currentSong);
+        return true;
+      }
+
+      if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+        navigator.mediaSession.playbackState = "playing";
+      }
+
+      try {
+        await player.play();
+        recordAudioDiagnosticEvent("Online play() succeeded");
+        setState((prev) => ({ ...prev, isPlaying: true, isBuffering: false, error: null, sourceType: "remote-url" }));
+        syncPositionState();
+        return true;
+      } catch (err: any) {
+        recordAudioDiagnosticEvent("Online play() rejected", { error: err?.message, name: err?.name });
+        if (err?.name !== "AbortError") {
+          syncPlayTrack(currentSong);
+        }
+        return false;
+      }
+    } finally {
+      isRecoveringRef.current = false;
+    }
+  };
+
   // Synchronous fast-track starter: plays immediately inside user/handsfree gestures
   const syncPlayTrack = (song: QueueSong) => {
     const player = audioRef.current;
@@ -268,77 +571,20 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       import("@/services/user/listeningHistory").then(({ trackPlay }) => trackPlay(song)).catch(() => {});
     }
 
-    const targetVid = song.youtubeVideoId || song.songId || "";
-    const directStreamUrl = toAbsoluteApiUrl(
-      `/api/ytdownload?videoId=${encodeURIComponent(targetVid)}&title=${encodeURIComponent(song.title)}&artist=${encodeURIComponent(song.artist || "")}&proxy=true`
-    );
-
-    // ── Strategy: Offline-first ──────────────────────────────────────────────
-    // Eagerly fetch the offline blob BEFORE touching player.src.
-    // This ensures:
-    //   1. Offline songs use their local blob immediately (no network dependency)
-    //   2. The blob URL is stored in currentBlobUrlRef so MediaSession play handler
-    //      can revive stalled offline playback without ever touching the network.
-    //   3. Stream URL is only used as a fallback when no offline blob exists.
-    getAudioBlob(song.songId).then(async (blob) => {
-      let b = blob;
-      if (!b && song.youtubeVideoId && song.youtubeVideoId !== song.songId) {
-        b = await getAudioBlob(song.youtubeVideoId);
-      }
-      if (b && isKhaleejiOrCorruptedJannatBlob(song.artist, b.size, song.songId || song.title)) {
-        await deleteAudioBlobOnly(song.songId);
-        if (song.youtubeVideoId) await deleteAudioBlobOnly(song.youtubeVideoId);
-        b = null;
-      }
-
-      // Guard: only apply if still on the same song
-      if (stateRef.current.currentSongId !== song.songId) return;
-
-      if (b) {
-        // ── OFFLINE PATH: Use local blob as primary source ──
-        // Revoke any previous blob URL to avoid memory leaks
-        if (currentBlobUrlRef.current && currentBlobUrlRef.current !== player.src) {
-          try { URL.revokeObjectURL(currentBlobUrlRef.current); } catch {}
-        }
-        const blobUrl = URL.createObjectURL(b);
-        currentBlobUrlRef.current = blobUrl;
-        player.muted = false;
-        player.src = blobUrl;
-        player.preload = "auto";
-        // Do NOT call player.load() — just play() to preserve iOS gesture chain
-        player.play().catch((err) => {
-          if (err.name !== "AbortError") console.warn("[Player] Offline blob play error:", err);
-        });
-        setState((prev) => {
-          const exists = prev.queue.some((item) => item.songId === song.songId);
-          const nextQueue = exists ? prev.queue : [song, ...prev.queue];
-          return {
-            ...prev,
-            queue: nextQueue,
-            currentSongId: song.songId,
-            isPlaying: true,
-            streamUrl: blobUrl,
-            currentTime: 0,
-            duration: 0,
-            isBuffering: false,
-            error: null,
-          };
-        });
-      } else {
-        // ── ONLINE PATH: No offline blob found, keep the stream URL that was already set ──
-        currentBlobUrlRef.current = null;
-        // Stream URL already set below, nothing extra to do here
-      }
-    }).catch(() => {
-      // If IndexedDB fails, keep the stream URL that was already set
-      currentBlobUrlRef.current = null;
-    });
-
     // 1. Fast handoff if preloaded URL is ready
     if (nextPreloadedRef.current && nextPreloadedRef.current.songId === song.songId) {
       const pUrl = nextPreloadedRef.current.url;
+      const isBlob = nextPreloadedRef.current.isBlob;
       player.muted = false;
       player.src = pUrl;
+      player.preload = "auto";
+      if (isBlob) {
+        activeBlobUrlRef.current = pUrl;
+        activeOfflineSongIdRef.current = song.songId;
+        currentSourceTypeRef.current = "offline-blob";
+      } else {
+        clearActiveBlobSource();
+      }
       player.play().catch((err) => {
         if (err.name !== "AbortError") console.warn("[LockScreen] Preload play error:", err);
       });
@@ -353,6 +599,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           currentSongId: song.songId,
           isPlaying: true,
           streamUrl: pUrl,
+          sourceType: isBlob ? "offline-blob" : "remote-url",
           currentTime: 0,
           duration: 0,
           isBuffering: false,
@@ -362,8 +609,164 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    // 2. Start stream URL immediately (fallback while blob check runs async)
-    //    The blob check above will swap to offline blob if found.
+    // 2. Check if we already have the active blob URL for this track in memory
+    if (activeOfflineSongIdRef.current === song.songId && activeBlobUrlRef.current && activeBlobRef.current) {
+      const blobUrl = activeBlobUrlRef.current;
+      player.muted = false;
+      player.src = blobUrl;
+      player.preload = "auto";
+      player.play().catch((err) => {
+        if (err.name !== "AbortError") console.warn("[Player] Cached blob play error:", err);
+      });
+      setState((prev) => {
+        const exists = prev.queue.some((item) => item.songId === song.songId);
+        const nextQueue = exists ? prev.queue : [song, ...prev.queue];
+        return {
+          ...prev,
+          queue: nextQueue,
+          currentSongId: song.songId,
+          isPlaying: true,
+          streamUrl: blobUrl,
+          sourceType: "offline-blob",
+          currentTime: 0,
+          duration: 0,
+          isBuffering: false,
+          error: null,
+        };
+      });
+      return;
+    }
+
+    // 3. Check if this song is an offline track (either marked audioReady or offline mode)
+    const isDefinitelyOffline =
+      song.audioReady === true ||
+      (typeof navigator !== "undefined" && !navigator.onLine);
+
+    if (isDefinitelyOffline) {
+      // OFFLINE-ONLY PATH: Never touch directStreamUrl or network!
+      currentSourceTypeRef.current = "offline-blob";
+      getAudioBlob(song.songId).then(async (blob) => {
+        let b = blob;
+        if (!b && song.youtubeVideoId && song.youtubeVideoId !== song.songId) {
+          b = await getAudioBlob(song.youtubeVideoId);
+        }
+        if (b && isKhaleejiOrCorruptedJannatBlob(song.artist, b.size, song.songId || song.title)) {
+          await deleteAudioBlobOnly(song.songId);
+          if (song.youtubeVideoId) await deleteAudioBlobOnly(song.youtubeVideoId);
+          b = null;
+        }
+
+        if (stateRef.current.currentSongId !== song.songId) return;
+
+        if (b) {
+          const blobUrl = setActiveBlobSource(song.songId, b);
+          player.muted = false;
+          player.src = blobUrl;
+          player.preload = "auto";
+          player.play().catch((err) => {
+            if (err.name !== "AbortError") console.warn("[Player] Offline blob play error:", err);
+          });
+          setState((prev) => {
+            const exists = prev.queue.some((item) => item.songId === song.songId);
+            const nextQueue = exists ? prev.queue : [song, ...prev.queue];
+            return {
+              ...prev,
+              queue: nextQueue,
+              currentSongId: song.songId,
+              isPlaying: true,
+              streamUrl: blobUrl,
+              sourceType: "offline-blob",
+              currentTime: 0,
+              duration: 0,
+              isBuffering: false,
+              error: null,
+            };
+          });
+        } else {
+          recordAudioDiagnosticEvent("ERROR: Offline audio track missing from IndexedDB", { songId: song.songId });
+          setState((prev) => ({
+            ...prev,
+            isPlaying: false,
+            isBuffering: false,
+            error: "هذه الأغنية غير متوفرة في ذاكرة هاتفك الأوفلاين — يرجى الاتصال بالإنترنت أولاً لتنزيلها",
+          }));
+        }
+      }).catch(() => {
+        setState((prev) => ({
+          ...prev,
+          isPlaying: false,
+          isBuffering: false,
+          error: "فشل استرجاع الأغنية من ذاكرة الهاتف الأوفلاين.",
+        }));
+      });
+
+      setState((prev) => {
+        const exists = prev.queue.some((item) => item.songId === song.songId);
+        const nextQueue = exists ? prev.queue : [song, ...prev.queue];
+        return {
+          ...prev,
+          queue: nextQueue,
+          currentSongId: song.songId,
+          isPlaying: true,
+          streamUrl: null,
+          sourceType: "offline-blob",
+          currentTime: 0,
+          duration: 0,
+          isBuffering: true,
+          error: null,
+        };
+      });
+      return;
+    }
+
+    // 4. ONLINE PATH: Check offline cache first, but stream online if not found
+    const targetVid = song.youtubeVideoId || song.songId || "";
+    const directStreamUrl = toAbsoluteApiUrl(
+      `/api/ytdownload?videoId=${encodeURIComponent(targetVid)}&title=${encodeURIComponent(song.title)}&artist=${encodeURIComponent(song.artist || "")}&proxy=true`
+    );
+
+    getAudioBlob(song.songId).then(async (blob) => {
+      let b = blob;
+      if (!b && song.youtubeVideoId && song.youtubeVideoId !== song.songId) {
+        b = await getAudioBlob(song.youtubeVideoId);
+      }
+      if (b && isKhaleejiOrCorruptedJannatBlob(song.artist, b.size, song.songId || song.title)) {
+        await deleteAudioBlobOnly(song.songId);
+        if (song.youtubeVideoId) await deleteAudioBlobOnly(song.youtubeVideoId);
+        b = null;
+      }
+
+      if (stateRef.current.currentSongId !== song.songId) return;
+
+      if (b) {
+        const blobUrl = setActiveBlobSource(song.songId, b);
+        player.muted = false;
+        player.src = blobUrl;
+        player.preload = "auto";
+        player.play().catch((err) => {
+          if (err.name !== "AbortError") console.warn("[Player] Offline blob play error:", err);
+        });
+        setState((prev) => {
+          const exists = prev.queue.some((item) => item.songId === song.songId);
+          const nextQueue = exists ? prev.queue : [song, ...prev.queue];
+          return {
+            ...prev,
+            queue: nextQueue,
+            currentSongId: song.songId,
+            isPlaying: true,
+            streamUrl: blobUrl,
+            sourceType: "offline-blob",
+            currentTime: 0,
+            duration: 0,
+            isBuffering: false,
+            error: null,
+          };
+        });
+      }
+    }).catch(() => {});
+
+    // Start stream URL immediately for online tracks
+    clearActiveBlobSource();
     player.muted = false;
     player.src = directStreamUrl;
     player.preload = "auto";
@@ -383,6 +786,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         currentSongId: song.songId,
         isPlaying: true,
         streamUrl: directStreamUrl,
+        sourceType: "remote-url",
         currentTime: 0,
         duration: 0,
         isBuffering: true,
@@ -390,6 +794,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       };
     });
   };
+
 
   const setQueue = (songs: QueueSong[], startIndex = 0) => {
     const idx = Math.max(0, Math.min(startIndex, songs.length - 1));
@@ -500,35 +905,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         }
         syncPositionState();
       } else {
-        setHasUserTriggeredPlay(true);
-        player.muted = false;
         const isMobile = isMobileDevice();
         if (!isMobile && !audioCtxRef.current) {
           initWebAudio();
         } else if (audioCtxRef.current && audioCtxRef.current.state === "suspended") {
           audioCtxRef.current.resume().catch(() => {});
         }
-        if ((!player.src || player.src === "" || player.src === window.location.href) && currentSong) {
-          syncPlayTrack(currentSong);
-          return;
-        }
-        setState((prev) => ({ ...prev, isPlaying: true }));
-        if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
-          navigator.mediaSession.playbackState = "playing";
-        }
-        const p = player.play();
-        if (p !== undefined) {
-          p.then(() => {
-            syncPositionState();
-          }).catch((err) => {
-            if (err.name !== "AbortError") {
-              console.warn("[Player] Direct play() rejected, falling back to syncPlayTrack:", err);
-              if (currentSong) syncPlayTrack(currentSong);
-            }
-          });
-        } else {
-          syncPositionState();
-        }
+        executePlayOrRecover("togglePlay");
       }
     } else {
       setHasUserTriggeredPlay(true);
@@ -1159,68 +1542,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
 
     navigator.mediaSession.setActionHandler("play", () => {
-      configureAudioSession();
-      const player = audioRef.current;
-      if (!player) return;
-
-      player.muted = false;
-
-      const currentSong = stateRef.current.queue.find((s) => s.songId === stateRef.current.currentSongId);
-
-      // Condition 1: No src at all — full restart needed
-      const hasNoSrc = !player.src || player.src === "" || player.src === window.location.href;
-
-      // Condition 2: Player is stalled / element lost its media (readyState=0 means HAVE_NOTHING)
-      // This happens when iOS suspends the audio pipeline on lock screen for offline blob URLs.
-      // In this case we must reload from our stored offline blob URL rather than re-fetching.
-      const isStalled = player.readyState === 0 && !!player.src;
-
-      if ((hasNoSrc || isStalled) && currentSong) {
-        if (isStalled && currentBlobUrlRef.current) {
-          // Fast-path: Revive stalled offline audio by reassigning the same blob URL.
-          // This is critical for offline songs resumed from lock screen AirPod tap.
-          player.muted = false;
-          player.src = currentBlobUrlRef.current;
-          player.play().then(() => {
-            setState((prev) => ({ ...prev, isPlaying: true }));
-            syncPositionState();
-          }).catch((err) => {
-            if (err.name !== "AbortError") {
-              // Blob URL may have been revoked; full restart
-              console.warn("[MediaSession] Blob revive failed, restarting:", err);
-              syncPlayTrack(currentSong);
-            }
-          });
-        } else {
-          syncPlayTrack(currentSong);
-        }
-        return;
-      }
-
-      setHasUserTriggeredPlay(true);
-      if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
-        navigator.mediaSession.playbackState = "playing";
-      }
-
-      const p = player.play();
-      if (p !== undefined) {
-        p.then(() => {
-          setState((prev) => ({ ...prev, isPlaying: true }));
-          syncPositionState();
-        }).catch((err) => {
-          if (err.name !== "AbortError") {
-            console.warn("[MediaSession] play() rejected:", err);
-            // If regular play() also fails, try full restart
-            if (currentSong) syncPlayTrack(currentSong);
-          }
-        });
-      } else {
-        setState((prev) => ({ ...prev, isPlaying: true }));
-        syncPositionState();
-      }
+      recordAudioDiagnosticEvent("MediaSession action: play received");
+      executePlayOrRecover("mediasession-play");
     });
 
     navigator.mediaSession.setActionHandler("pause", () => {
+      recordAudioDiagnosticEvent("MediaSession action: pause received");
       const player = audioRef.current;
       if (player) {
         player.pause();
@@ -1315,11 +1642,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         }
 
         let audioSourceUrl: string;
+        let isBlobSource = false;
         if (b) {
-          const blobUrl = URL.createObjectURL(b);
-          currentBlobUrlRef.current = blobUrl;
+          const blobUrl = setActiveBlobSource(song.songId, b);
           audioSourceUrl = blobUrl;
+          isBlobSource = true;
         } else {
+          clearActiveBlobSource();
           const targetVid = song.youtubeVideoId || song.songId || "";
           audioSourceUrl = toAbsoluteApiUrl(
             `/api/ytdownload?videoId=${encodeURIComponent(targetVid)}&title=${encodeURIComponent(song.title)}&artist=${encodeURIComponent(song.artist || "")}&proxy=true`
@@ -1340,6 +1669,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         setState((prev) => ({
           ...prev,
           streamUrl: audioSourceUrl,
+          sourceType: isBlobSource ? "offline-blob" : "remote-url",
           currentTime: restoredTime,
           isBuffering: false,
           isPlaying: shouldResume,
@@ -1366,7 +1696,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const isCurrentSrcActive = player.src && (
       (targetVid && player.src.includes(encodeURIComponent(targetVid))) ||
       player.src.includes(encodeURIComponent(song.title)) ||
-      (state.streamUrl && player.src === state.streamUrl)
+      (state.streamUrl && player.src === state.streamUrl) ||
+      (activeBlobUrlRef.current && player.src === activeBlobUrlRef.current)
     );
 
     if (isCurrentSrcActive) {
@@ -1403,9 +1734,16 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
         if (cachedBlob && !cancelled) {
           console.log("[Player] Playing from offline storage.");
-          const blobUrl = URL.createObjectURL(cachedBlob);
+          const blobUrl = setActiveBlobSource(song.songId, cachedBlob);
           isPlayingRef.current = true;
-          setState((prev) => ({ ...prev, isBuffering: false, streamUrl: blobUrl, isPlaying: true, error: null }));
+          setState((prev) => ({
+            ...prev,
+            isBuffering: false,
+            streamUrl: blobUrl,
+            isPlaying: true,
+            error: null,
+            sourceType: "offline-blob",
+          }));
 
           if (song.thumbnailUrl && !song.thumbnailUrl.startsWith("data:")) {
             getOfflineSongMeta(song.songId).then((meta) => {
@@ -1464,6 +1802,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           `/api/ytdownload?videoId=${encodeURIComponent(vid)}&title=${encodeURIComponent(songTitle)}&artist=${encodeURIComponent(songArtist)}&proxy=true`
         );
 
+        clearActiveBlobSource();
         if (player.src !== playUrl) {
           player.src = playUrl;
           player.preload = "auto";
@@ -1478,6 +1817,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           isBuffering: false,
           isPlaying: true,
           streamUrl: playUrl,
+          sourceType: "remote-url",
         }));
 
         player.play().catch((err) => {
@@ -1585,9 +1925,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         if (player) {
           player.muted = false;
           setState((prev) => ({ ...prev, currentTime: player.currentTime || 0 }));
-          // If state marked playing but element was stalled/suspended by background throttling, revive it
+          // If state marked playing but element was stalled/suspended by background throttling, revive it safely
           if (isPlayingRef.current && player.paused) {
-            player.play().catch(() => {});
+            recordAudioDiagnosticEvent("Foreground visibility resume triggered", {
+              paused: player.paused,
+              readyState: player.readyState,
+              src: player.src ? player.src.substring(0, 50) : "empty",
+            });
+            executePlayOrRecover("foreground-visibility-resume").catch(() => {});
           }
         }
         if (ctx && ctx.state === "suspended" && isPlayingRef.current) {
@@ -1711,10 +2056,27 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   };
 
   const onWaiting = () => {
+    recordAudioDiagnosticEvent("Audio onWaiting event", {
+      currentTime: audioRef.current?.currentTime,
+      readyState: audioRef.current?.readyState,
+      networkState: audioRef.current?.networkState,
+    });
     setState((prev) => ({ ...prev, isBuffering: true }));
   };
 
+  const onStalled = () => {
+    recordAudioDiagnosticEvent("Audio onStalled event", {
+      currentTime: audioRef.current?.currentTime,
+      readyState: audioRef.current?.readyState,
+      networkState: audioRef.current?.networkState,
+    });
+  };
+
   const onPlaying = () => {
+    recordAudioDiagnosticEvent("Audio onPlaying event", {
+      currentTime: audioRef.current?.currentTime,
+      duration: audioRef.current?.duration,
+    });
     if (audioCtxRef.current && audioCtxRef.current.state === "suspended") {
       audioCtxRef.current.resume().catch(() => {});
     }
@@ -1726,6 +2088,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   };
 
   const onPlay = () => {
+    recordAudioDiagnosticEvent("Audio onPlay event", {
+      currentTime: audioRef.current?.currentTime,
+    });
     if (audioCtxRef.current && audioCtxRef.current.state === "suspended") {
       audioCtxRef.current.resume().catch(() => {});
     }
@@ -1737,6 +2102,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   };
 
   const onPause = () => {
+    recordAudioDiagnosticEvent("Audio onPause event", {
+      currentTime: audioRef.current?.currentTime,
+      isLoadingNewSong: isLoadingNewSongRef.current,
+    });
     // Do NOT set isPlaying:false if we paused the element ourselves during loading.
     // This prevents the UI from flashing the pause icon between songs.
     if (isLoadingNewSongRef.current) return;
@@ -1878,6 +2247,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         onLoadedMetadata={onLoadedMetadata}
         onDurationChange={onLoadedMetadata}
         onWaiting={onWaiting}
+        onStalled={onStalled}
         onPlaying={onPlaying}
         onCanPlay={onPlaying}
         onPlay={onPlay}
@@ -1887,6 +2257,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           const error = e.currentTarget.error;
           const currentSrc = e.currentTarget.src;
           
+          recordAudioDiagnosticEvent("Audio onError event", {
+            code: error?.code,
+            message: error?.message,
+            src: currentSrc ? (currentSrc.length > 50 ? currentSrc.substring(0, 50) + "..." : currentSrc) : "none"
+          });
+
           console.error("Audio error detected:", {
             code: error?.code,
             message: error?.message,

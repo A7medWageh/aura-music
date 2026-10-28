@@ -293,23 +293,28 @@ export async function storeAudioBlob(songId: string, blob: Blob): Promise<void> 
 /** Get audio blob for offline playback */
 export async function getAudioBlob(songId: string): Promise<Blob | null> {
   if (!songId) return null;
-  const db = await openOfflineDb();
-  const record: any = await new Promise((resolve, reject) => {
-    const tx = db.transaction(AUDIO_STORE, "readonly");
-    const req = tx.objectStore(AUDIO_STORE).get(songId);
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-  if (record) {
-    if (record.buffer instanceof ArrayBuffer) {
-      const accurateType = detectAudioMimeType(record.buffer, record.mimeType || "audio/mp4");
-      return new Blob([record.buffer], { type: accurateType });
+  try {
+    const db = await openOfflineDb();
+    const record: any = await new Promise((resolve, reject) => {
+      const tx = db.transaction(AUDIO_STORE, "readonly");
+      const req = tx.objectStore(AUDIO_STORE).get(songId);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    if (record) {
+      if (record.buffer instanceof ArrayBuffer) {
+        const accurateType = detectAudioMimeType(record.buffer, record.mimeType || "audio/mp4");
+        return new Blob([record.buffer], { type: accurateType });
+      }
+      if (record.blob instanceof Blob) {
+        return record.blob;
+      }
     }
-    if (record.blob instanceof Blob) {
-      return record.blob;
-    }
+    return null;
+  } catch (err) {
+    console.warn(`[IndexedDB] Error reading audio blob for ${songId}:`, err);
+    return null;
   }
-  return null;
 }
 
 export async function storeLyrics(songId: string, lyrics: any): Promise<void> {

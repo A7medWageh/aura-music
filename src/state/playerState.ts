@@ -1,3 +1,5 @@
+import type { AudioSourceType } from "@/utils/audioDiagnostics";
+
 export type RepeatMode = "off" | "one" | "all";
 
 export type QueueSong = {
@@ -24,6 +26,7 @@ export type PlayerState = {
   repeat: RepeatMode;
   isPlaying: boolean;
   streamUrl: string | null;
+  sourceType: AudioSourceType;
   currentTime: number;
   duration: number;
   isBuffering: boolean;
@@ -43,6 +46,7 @@ export const initialPlayerState: PlayerState = {
   repeat: "off",
   isPlaying: false,
   streamUrl: null,
+  sourceType: null,
   currentTime: 0,
   duration: 0,
   isBuffering: false,
@@ -52,3 +56,4 @@ export const initialPlayerState: PlayerState = {
   soundBoost: 1.0,
   is8dActive: false,
 };
+
