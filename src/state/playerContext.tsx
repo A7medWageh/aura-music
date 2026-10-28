@@ -20,6 +20,16 @@ const isIOSDevice = () => {
   );
 };
 
+// ── Accurate Mobile Detection (iOS, Android, Mobile WebViews) ──
+const isMobileDevice = () => {
+  if (typeof window === "undefined" || typeof navigator === "undefined") return false;
+  return (
+    isIOSDevice() ||
+    /Android|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+    (typeof window.matchMedia === "function" && window.matchMedia("(max-width: 768px)").matches && (navigator.maxTouchPoints || 0) > 0)
+  );
+};
+
 type PlayerContextValue = {
   state: PlayerState;
   currentSong: QueueSong | null;
@@ -428,9 +438,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         syncPositionState();
       } else {
         setHasUserTriggeredPlay(true);
-        if (!audioCtxRef.current) {
+        const isMobile = isMobileDevice();
+        if (!isMobile && !audioCtxRef.current) {
           initWebAudio();
-        } else if (audioCtxRef.current.state === "suspended") {
+        } else if (audioCtxRef.current && audioCtxRef.current.state === "suspended") {
           audioCtxRef.current.resume().catch(() => {});
         }
         if ((!player.src || player.src === "" || player.src === window.location.href) && currentSong) {
@@ -644,6 +655,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   // Instant 8D Earbud Test: sweeps hard Left, then hard Right, then returns to Center
   const test8dSound = () => {
+    if (isMobileDevice()) {
+      useToastStore.getState().addToast("لتجنب انقطاع الصوت عند قفل الهاتف، يعمل الصوت النقي المباشر على الموبايل 🎧");
+      return;
+    }
     let ctx = audioCtxRef.current;
     if (!ctx) {
       initWebAudio();
@@ -840,12 +855,27 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const player = audioRef.current;
     if (!player || typeof window === "undefined" || audioCtxRef.current) return;
 
+    // Mobile background safeguard: do NOT attach WebAudio to the main player on mobile devices.
+    // Attaching createMediaElementSource on mobile switches rendering from native OS to Web Audio,
+    // which iOS / Android suspends upon screen lock, cutting off audio in earphones and causing buffer-underrun buzzing.
+    // Standard audio on mobile plays directly through the OS media daemon so that:
+    // 1. Audio never stops when phone is locked.
+    // 2. Lock screen media session and earphones work uninterrupted.
+    // 3. Audio buffer never desyncs, eliminating any buzzing/humming noise upon unlock.
+    if (isMobileDevice()) return;
+
     const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
     if (!AudioCtx) return;
 
     try {
       const ctx = new AudioCtx();
       audioCtxRef.current = ctx;
+
+      ctx.onstatechange = () => {
+        if (ctx.state === "suspended" && isPlayingRef.current && typeof document !== "undefined" && !document.hidden) {
+          ctx.resume().catch(() => {});
+        }
+      };
 
       const source = ctx.createMediaElementSource(player);
       mediaSourceRef.current = source;
@@ -951,12 +981,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
-    if ((state.isHighQuality || state.isPlaying) && !audioCtxRef.current) {
+    const isMobile = isMobileDevice();
+
+    if (!isMobile && !audioCtxRef.current && (state.isPlaying || state.isHighQuality)) {
       initWebAudio();
     }
     const ctx = audioCtxRef.current;
     if (ctx) {
-      if (ctx.state === "suspended" && state.isPlaying) {
+      if (ctx.state === "suspended" && state.isPlaying && typeof document !== "undefined" && !document.hidden) {
         ctx.resume().catch(() => {});
       }
       applyAudioParameters(ctx, state.isHighQuality, soundPreset, state.soundBoost);
@@ -1404,17 +1436,55 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  // Sync currentTime when returning from background lock screen
+  // Sync currentTime and safely resume WebAudio when returning from background lock screen
   useEffect(() => {
     if (typeof document === "undefined") return;
     const handleVisibility = () => {
       const player = audioRef.current;
-      if (player && !document.hidden) {
-        setState((prev) => ({ ...prev, currentTime: player.currentTime || 0 }));
+      const ctx = audioCtxRef.current;
+
+      if (!document.hidden) {
+        // Screen unlocked / tab visible:
+        if (player) {
+          setState((prev) => ({ ...prev, currentTime: player.currentTime || 0 }));
+        }
+        if (ctx && ctx.state === "suspended" && isPlayingRef.current) {
+          ctx.resume().then(() => {
+            if (pannerRef.current) {
+              try {
+                pannerRef.current.pan.cancelScheduledValues(ctx.currentTime);
+                pannerRef.current.pan.setValueAtTime(0, ctx.currentTime);
+              } catch {}
+            }
+            if (isPlayingRef.current) {
+              update8dRotation();
+            }
+          }).catch(() => {});
+        } else if (isPlayingRef.current) {
+          update8dRotation();
+        }
+        syncPositionState();
+      } else {
+        // Screen locked / tab hidden:
+        if (pannerAnimRef.current) {
+          cancelAnimationFrame(pannerAnimRef.current);
+          pannerAnimRef.current = null;
+        }
+        if (ctx && pannerRef.current) {
+          try {
+            pannerRef.current.pan.cancelScheduledValues(ctx.currentTime);
+          } catch {}
+        }
       }
     };
     document.addEventListener("visibilitychange", handleVisibility);
-    return () => document.removeEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("pageshow", handleVisibility);
+    window.addEventListener("focus", handleVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("pageshow", handleVisibility);
+      window.removeEventListener("focus", handleVisibility);
+    };
   }, []);
 
   // Unlock iOS WebKit audio on first touch

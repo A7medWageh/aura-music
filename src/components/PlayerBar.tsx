@@ -113,6 +113,9 @@ function useAnalyserEnergy(getAnalyser: () => AnalyserNode | null, isPlaying: bo
         for (let i = 0; i < 8; i++) bass += bins[i];
         bass /= 8 * 255;
         energyRef.current = energyRef.current * 0.65 + bass * 0.35;
+      } else {
+        const t = performance.now() * 0.003;
+        energyRef.current = 0.2 + 0.25 * Math.abs(Math.sin(t));
       }
       raf = requestAnimationFrame(tick);
     };
