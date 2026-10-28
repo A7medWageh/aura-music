@@ -99,10 +99,10 @@ function hexToRgb(hex: string): [number, number, number] {
 }
 
 // ─── Real Audio Analyser → energy (bass) per frame, no re-renders ────
-function useAnalyserEnergy(getAnalyser: () => AnalyserNode | null, isPlaying: boolean) {
+function useAnalyserEnergy(getAnalyser: () => AnalyserNode | null, isPlaying: boolean, enabled = true) {
   const energyRef = useRef(0);
   useEffect(() => {
-    if (!isPlaying) { energyRef.current = 0; return; }
+    if (!isPlaying || !enabled) { energyRef.current = 0; return; }
     let raf = 0;
     const bins = new Uint8Array(128);
     const tick = () => {
@@ -118,26 +118,47 @@ function useAnalyserEnergy(getAnalyser: () => AnalyserNode | null, isPlaying: bo
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [getAnalyser, isPlaying]);
+  }, [getAnalyser, isPlaying, enabled]);
   return energyRef;
 }
 
-// ─── Live spectrum visualizer (canvas, real audio data) ──────────────
+// ─── Live spectrum visualizer (canvas, real audio data, zero layout reflow) ──────────────
 function LiveVisualizer({
-  getAnalyser, isPlaying, accent,
+  getAnalyser, isPlaying, accent, isOpen = true,
 }: {
-  getAnalyser: () => AnalyserNode | null; isPlaying: boolean; accent: string;
+  getAnalyser: () => AnalyserNode | null; isPlaying: boolean; accent: string; isOpen?: boolean;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const accentRef = useRef(accent);
   accentRef.current = accent;
   const playingRef = useRef(isPlaying);
   playingRef.current = isPlaying;
+  const sizeRef = useRef({ w: 0, h: 0 });
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext("2d");
+    const updateSize = () => {
+      const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+      const w = Math.max(1, Math.round(canvas.clientWidth * dpr));
+      const h = Math.max(1, Math.round(canvas.clientHeight * dpr));
+      sizeRef.current = { w, h };
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+      }
+    };
+    updateSize();
+    const ro = new ResizeObserver(updateSize);
+    ro.observe(canvas);
+    return () => ro.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d", { alpha: true });
     if (!ctx) return;
     const BARS = 42;
     const levels = new Float32Array(BARS);
@@ -147,22 +168,20 @@ function LiveVisualizer({
 
     const draw = () => {
       t += 0.05;
-      const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
-      const w = Math.max(1, Math.round(canvas.clientWidth * dpr));
-      const h = Math.max(1, Math.round(canvas.clientHeight * dpr));
-      if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+      const { w, h } = sizeRef.current;
+      if (w === 0 || h === 0) { raf = requestAnimationFrame(draw); return; }
       ctx.clearRect(0, 0, w, h);
 
       const analyser = getAnalyser();
       const [r, g, b] = hexToRgb(accentRef.current);
       const bw = w / BARS;
       const barW = bw * 0.62;
+      const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
 
       for (let i = 0; i < BARS; i++) {
         let target: number;
         if (analyser && playingRef.current) {
           analyser.getByteFrequencyData(bins as any);
-          // low-frequency-weighted bin mapping
           const idx = Math.min(127, Math.floor(Math.pow(i / BARS, 1.35) * 96));
           target = bins[idx] / 255;
         } else if (playingRef.current) {
@@ -186,27 +205,48 @@ function LiveVisualizer({
     };
     raf = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(raf);
-  }, [getAnalyser]);
+  }, [getAnalyser, isOpen]);
 
   return (
-    <div className="h-7 w-full px-2">
+    <div className="h-7 w-full px-2" style={{ willChange: "transform", transform: "translateZ(0)" }}>
       <canvas ref={canvasRef} className="w-full h-full block" />
     </div>
   );
 }
 
-// ─── Drifting bokeh particle layer tinted by accent ──────────────────
+// ─── Drifting bokeh particle layer tinted by accent (zero layout reflow) ──────────────────
 function AuroraParticles({
-  accent, mode, isPlaying, energyRef,
+  accent, mode, isPlaying, energyRef, isOpen = true,
 }: {
-  accent: string; mode: BgMode; isPlaying: boolean; energyRef: { current: number };
+  accent: string; mode: BgMode; isPlaying: boolean; energyRef: { current: number }; isOpen?: boolean;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const sizeRef = useRef({ w: 0, h: 0 });
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext("2d");
+    const updateSize = () => {
+      const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+      const w = Math.round(canvas.clientWidth * dpr);
+      const h = Math.round(canvas.clientHeight * dpr);
+      sizeRef.current = { w, h };
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+      }
+    };
+    updateSize();
+    const ro = new ResizeObserver(updateSize);
+    ro.observe(canvas);
+    return () => ro.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d", { alpha: true });
     if (!ctx) return;
 
     const COUNTS = { calm: 14, medium: 28, epic: 48 };
@@ -226,10 +266,8 @@ function AuroraParticles({
     let t = 0;
     const draw = () => {
       t += 0.016;
-      const w = Math.round(canvas.clientWidth * dpr);
-      const h = Math.round(canvas.clientHeight * dpr);
+      const { w, h } = sizeRef.current;
       if (w === 0 || h === 0) { raf = requestAnimationFrame(draw); return; }
-      if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
       ctx.clearRect(0, 0, w, h);
 
       const energy = isPlaying && mode !== "calm" ? energyRef.current : 0;
@@ -254,20 +292,23 @@ function AuroraParticles({
     };
     raf = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(raf);
-  }, [accent, mode, isPlaying, energyRef]);
+  }, [accent, mode, isPlaying, energyRef, isOpen]);
 
-  return <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" style={{ willChange: "transform" }} />;
+  if (!isOpen) return null;
+
+  return <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none" style={{ willChange: "transform", transform: "translateZ(0)" }} />;
 }
 
 // ─── Beat-synced glow: rAF writes style directly, zero re-renders ────
 function BeatGlow({ accent, energyRef, enabled }: { accent: string; energyRef: { current: number }; enabled: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
+    if (!enabled) return;
     let raf = 0;
     const tick = () => {
       const el = ref.current;
       if (el) {
-        const e = enabled ? energyRef.current : 0;
+        const e = energyRef.current;
         el.style.opacity = String(0.28 + e * 0.65);
         el.style.transform = `scale(${1 + e * 0.22})`;
       }
@@ -276,11 +317,14 @@ function BeatGlow({ accent, energyRef, enabled }: { accent: string; energyRef: {
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, [enabled, energyRef]);
+
+  if (!enabled) return null;
+
   return (
     <div
       ref={ref}
       className="absolute -inset-7 rounded-full pointer-events-none"
-      style={{ background: `radial-gradient(circle, ${accent}66 0%, transparent 68%)`, filter: "blur(26px)", willChange: "opacity, transform" }}
+      style={{ background: `radial-gradient(circle, ${accent}66 0%, transparent 68%)`, willChange: "opacity, transform", transform: "translateZ(0)" }}
     />
   );
 }
@@ -383,7 +427,7 @@ function FullPlayer({
     try { localStorage.setItem("aura_player_bg_mode", nextMode); } catch {}
     showToast(`الخلفية ${BG_MODES.find((m) => m.id === nextMode)?.label} ✨`);
   };
-  const energyRef = useAnalyserEnergy(getAnalyser, state.isPlaying);
+  const energyRef = useAnalyserEnergy(getAnalyser, state.isPlaying, isOpen);
   const orbBoost = bgMode === "calm" ? 0.45 : bgMode === "epic" ? 1.7 : 1;
 
   const skip15Back = useCallback(() => {
@@ -607,6 +651,26 @@ function FullPlayer({
   const inScrollerRef = useRef(false);
   const [swipeOffset, setSwipeOffset] = useState(0);
 
+  // Transition orchestration: keeps slide down silky smooth at 60fps and only hides offscreen after transition
+  const [isRendered, setIsRendered] = useState(isOpen);
+  const [isTransitioning, setIsTransitioning] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      setIsRendered(true);
+      setIsTransitioning(true);
+      const timer = setTimeout(() => setIsTransitioning(false), 370);
+      return () => clearTimeout(timer);
+    } else {
+      setIsTransitioning(true);
+      const timer = setTimeout(() => {
+        setIsTransitioning(false);
+        setIsRendered(false);
+      }, 370);
+      return () => clearTimeout(timer);
+    }
+  }, [isOpen]);
+
   const handleTouchStart = (e: React.TouchEvent) => {
     startY.current = e.touches[0].clientY;
     // A gesture that begins inside a scrollable pane belongs to that pane
@@ -628,10 +692,11 @@ function FullPlayer({
     <motion.div
       initial={false}
       animate={{ y: !isOpen ? "100%" : (swipeOffset > 0 ? swipeOffset : 0) }}
-      transition={{ type: "spring", damping: 28, stiffness: 220 }}
+      transition={{ type: "tween", ease: [0.32, 0.72, 0, 1], duration: 0.35 }}
       className="fixed inset-0 z-50 flex flex-col overflow-hidden"
       style={{
         pointerEvents: isOpen ? "auto" : "none",
+        visibility: isOpen || isRendered || swipeOffset > 0 ? "visible" : "hidden",
         background: "#08090d",
         willChange: "transform",
         transform: "translateZ(0)",
@@ -643,30 +708,40 @@ function FullPlayer({
       onTouchEnd={handleTouchEnd}
     >
       {/* ── Aurora ambient background: breathing artwork + drifting accent orbs ── */}
-      <div className="absolute inset-0 overflow-hidden" style={{ willChange: "transform", transform: "translateZ(0)" }}>
+      <div className="absolute inset-0 overflow-hidden pointer-events-none" style={{ willChange: "transform", transform: "translateZ(0)" }}>
         <motion.img
           src={proxyArt}
           alt=""
           className="w-full h-full object-cover"
-          style={{ filter: "blur(70px) brightness(0.32) saturate(1.35)", willChange: "transform", transform: "translateZ(0)" }}
-          animate={state.isPlaying ? { scale: [1.22, 1.32, 1.22] } : { scale: 1.22 }}
+          style={{ filter: "blur(60px) brightness(0.32) saturate(1.35)", willChange: "transform", transform: "translateZ(0)" }}
+          animate={isOpen && state.isPlaying ? { scale: [1.22, 1.32, 1.22] } : { scale: 1.22 }}
           transition={{ duration: 14, repeat: Infinity, ease: "easeInOut" }}
           onError={(e) => { (e.target as HTMLImageElement).src = "/placeholder-song.jpg"; }}
         />
         <motion.div
-          className="absolute -top-28 -right-24 w-80 h-80 rounded-full"
-          style={{ background: accent, opacity: 0.16 * orbBoost, filter: "blur(90px)" }}
-          animate={{ x: [0, 60, 0], y: [0, 40, 0] }}
+          className="absolute -top-28 -right-24 w-80 h-80 rounded-full pointer-events-none"
+          style={{
+            background: `radial-gradient(circle, ${accent}33 0%, ${accent}12 40%, transparent 70%)`,
+            opacity: 0.9 * orbBoost,
+            willChange: "transform",
+            transform: "translateZ(0)",
+          }}
+          animate={isOpen ? { x: [0, 60, 0], y: [0, 40, 0] } : undefined}
           transition={{ duration: bgMode === "epic" ? 7 : 10, repeat: Infinity, ease: "easeInOut" }}
         />
         <motion.div
-          className="absolute -bottom-32 -left-24 w-96 h-96 rounded-full"
-          style={{ background: accent, opacity: 0.1 * orbBoost, filter: "blur(100px)" }}
-          animate={{ x: [0, -50, 0], y: [0, -30, 0] }}
+          className="absolute -bottom-32 -left-24 w-96 h-96 rounded-full pointer-events-none"
+          style={{
+            background: `radial-gradient(circle, ${accent}28 0%, ${accent}0e 45%, transparent 70%)`,
+            opacity: 0.9 * orbBoost,
+            willChange: "transform",
+            transform: "translateZ(0)",
+          }}
+          animate={isOpen ? { x: [0, -50, 0], y: [0, -30, 0] } : undefined}
           transition={{ duration: bgMode === "epic" ? 9 : 13, repeat: Infinity, ease: "easeInOut" }}
         />
         <div className="absolute inset-0 bg-gradient-to-b from-[#090b10]/90 via-[#06070a]/95 to-[#040507]" />
-        <AuroraParticles accent={accent} mode={bgMode} isPlaying={state.isPlaying} energyRef={energyRef} />
+        <AuroraParticles accent={accent} mode={bgMode} isPlaying={state.isPlaying} energyRef={energyRef} isOpen={isOpen && !isTransitioning} />
       </div>
 
         {/* ── Content ── */}
@@ -740,7 +815,7 @@ function FullPlayer({
                 className="relative w-[min(76vw,34vh,290px)] aspect-square flex items-center justify-center mx-auto"
               >
                 {bgMode !== "calm" && (
-                  <BeatGlow accent={accent} energyRef={energyRef} enabled={state.isPlaying} />
+                  <BeatGlow accent={accent} energyRef={energyRef} enabled={state.isPlaying && isOpen && !isTransitioning} />
                 )}
                 {state.isPlaying && (
                   <motion.div
@@ -792,7 +867,7 @@ function FullPlayer({
 
             {/* Live spectrum visualizer — real WebAudio data (accent tinted) */}
             <div className="w-full shrink-0">
-              <LiveVisualizer getAnalyser={getAnalyser} isPlaying={state.isPlaying} accent={accent} />
+              <LiveVisualizer getAnalyser={getAnalyser} isPlaying={state.isPlaying} accent={accent} isOpen={isOpen && !isTransitioning} />
             </div>
 
             {/* Seek Bar + Times */}
@@ -1364,8 +1439,12 @@ export function PlayerBar() {
 
       {/* Mini Bar — mobile: above tab bar, desktop: bottom-0 */}
       <footer
-        className="fixed left-0 right-0 z-30"
+        className="fixed left-0 right-0 z-30 transition-opacity duration-200"
         style={{
+          opacity: fullOpen ? 0 : 1,
+          pointerEvents: fullOpen ? "none" : "auto",
+          willChange: "transform, opacity",
+          transform: "translateZ(0)",
           bottom:
             typeof window !== "undefined" && window.innerWidth >= 768
               ? "0px"
@@ -1390,6 +1469,8 @@ export function PlayerBar() {
             background: "rgba(9,11,16,0.82)",
             borderColor: "rgba(255,255,255,0.08)",
             boxShadow: `0 14px 44px rgba(0,0,0,0.78), 0 0 24px ${accent}22`,
+            willChange: "transform",
+            transform: "translateZ(0)",
           }}
         >
           {/* accent hairline glow across the top */}

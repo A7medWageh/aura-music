@@ -491,7 +491,6 @@ export async function GET(req: NextRequest) {
             workerPromise,
             Promise.race([cacheLookup, new Promise<null[]>((r) => setTimeout(() => r([]), 2500))]),
           ]);
-          if (!worker) return never;
           const [byVid, byTrack] = (rows || []) as any[];
           const cached = byVid || byTrack;
           if (cached?.tgFileId) {

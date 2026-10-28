@@ -12,6 +12,7 @@ import { searchYouTube, isJunkResult } from "@apis/youtubei.js";
 import { resolveUniversalAudio } from "@/services/music/universalAudioResolver";
 import { getAllSongs, getAllArtists } from "@/services/music/musicApiClient";
 import { enrichSongs } from "@/services/music/songEnricher";
+import { BILINGUAL_ARTIST_MAP, ARABIC_TO_LATIN_MAP } from "@/services/music/artistMatcher";
 
 // ── In-memory cache shared across all requests ────────────────────────────────
 const cache = new Map<string, { data: any; ts: number }>();
@@ -117,6 +118,48 @@ function cleanSearchQuery(raw: string): string {
     .trim();
 }
 
+function parseQueryIntent(raw: string): { cleanQ: string; titlePart: string; artistPart: string; invertedQ: string } {
+  const cleaned = raw
+    .replace(/^(اغنية|أغنية|اغاني|أغاني|كليب|فيديو|تراك|نزل|تحميل|استماع)\s+/gi, "")
+    .replace(/\s+(اغنية|أغنية|كليب|فيديو|تراك)$/gi, "")
+    .trim();
+
+  let titlePart = "";
+  let artistPart = "";
+
+  // 1. Check preposition pattern: "شايف نفسي فيك لحسام حبيب" -> "شايف نفسي فيك", "حسام حبيب"
+  const prepositionMatch = cleaned.match(/^(.*?)\s+ل([\u0621-\u064A]{3,}(?:\s+[\u0621-\u064A]{2,})*)$/);
+  if (prepositionMatch) {
+    const rawArtist = prepositionMatch[2].trim();
+    if (!["ليل", "لحن", "لحظة", "لقاء", "ليلة", "لو", "لا", "لازم", "لعبة"].includes(rawArtist)) {
+      titlePart = prepositionMatch[1].trim();
+      artistPart = rawArtist;
+    }
+  }
+
+  // 2. If no preposition, check known artists from dictionary
+  if (!artistPart) {
+    const norm = normArabic(cleaned).toLowerCase();
+    for (const arArtist of Object.keys(ARABIC_TO_LATIN_MAP)) {
+      const normAr = normArabic(arArtist).toLowerCase();
+      if (norm.startsWith(normAr + " ")) {
+        artistPart = arArtist;
+        titlePart = cleaned.slice(arArtist.length).trim();
+        break;
+      } else if (norm.endsWith(" " + normAr)) {
+        artistPart = arArtist;
+        titlePart = cleaned.slice(0, cleaned.length - arArtist.length).trim();
+        break;
+      }
+    }
+  }
+
+  const cleanQ = (artistPart && titlePart) ? `${titlePart} ${artistPart}` : cleanSearchQuery(raw);
+  const invertedQ = (artistPart && titlePart) ? `${artistPart} ${titlePart}` : "";
+
+  return { cleanQ, titlePart, artistPart, invertedQ };
+}
+
 function tokenize(s: string): string[] {
   return normArabic(s)
     .split(" ")
@@ -151,13 +194,16 @@ export async function smartSearch(searchTerm: string) {
   const hit = cache.get(q.toLowerCase());
   if (hit && Date.now() - hit.ts < CACHE_TTL) return hit.data;
 
-  const cleanQ = cleanSearchQuery(q);
+  const { cleanQ, titlePart, artistPart, invertedQ } = parseQueryIntent(q);
   const normQuery = tokenize(cleanQ || q).join(" ");
   const emptyYt = { songs: [], artists: [], albums: [] };
 
   const searchPromises: Promise<any>[] = [searchYouTube(q).catch(() => emptyYt)];
   if (cleanQ && cleanQ.toLowerCase() !== q.toLowerCase()) {
     searchPromises.push(searchYouTube(cleanQ).catch(() => emptyYt));
+  }
+  if (invertedQ && invertedQ.toLowerCase() !== cleanQ.toLowerCase()) {
+    searchPromises.push(searchYouTube(invertedQ).catch(() => emptyYt));
   }
   if (normQuery && normQuery.toLowerCase() !== q.toLowerCase() && normQuery.toLowerCase() !== cleanQ.toLowerCase()) {
     searchPromises.push(searchYouTube(normQuery).catch(() => emptyYt));
@@ -192,112 +238,147 @@ export async function smartSearch(searchTerm: string) {
   const ytAlbumsAll = mergeByKey(allYtAlbums, "albumId");
   const ytArtistsAll = mergeByKey(allYtArtists, "artistId");
 
-  // Filter local catalog for matches
-  const localMatches = localCatalog
-    .map((song: any) => ({
-      song,
-      score: scoreMatch(q, song.title, song.artist),
-    }))
-    .filter((r) => r.score >= 28)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 10)
-    .map((r) => r.song);
-
   function computeRelevance(item: any): number {
     const normTitle = normArabic(item.title || "").toLowerCase();
+    const rawTitleLower = (item.title || "").toLowerCase();
     const normArt = normArabic(item.artist || "").toLowerCase();
+    const rawArtLower = (item.artist || "").toLowerCase();
     const nq = normArabic(q).toLowerCase();
     const nCleanQ = normArabic(cleanQ).toLowerCase();
-    
+    const nInvertedQ = invertedQ ? normArabic(invertedQ).toLowerCase() : "";
+    const nTitlePart = titlePart ? normArabic(titlePart).toLowerCase() : "";
+    const nArtistPart = artistPart ? normArabic(artistPart).toLowerCase() : "";
+    const latinArtist = artistPart ? (ARABIC_TO_LATIN_MAP[artistPart] || "") : "";
+
     const strippedTitle = tokenize(normTitle).join(" ");
     const strippedCleanQ = tokenize(nCleanQ).join(" ");
+    const strippedInvertedQ = invertedQ ? tokenize(nInvertedQ).join(" ") : "";
 
     let score = 0;
 
-    // Exact or substring match in original or stripped title
-    if (normTitle === nq || normTitle === nCleanQ || strippedTitle === strippedCleanQ) {
-      score += 130;
-    } else if (
-      normTitle.includes(nq) ||
+    // 1. Exact or Full Substring Match in title (both [Song - Artist] AND [Artist - Song] orders)
+    const isDirectMatch = normTitle === nq || normTitle === nCleanQ || strippedTitle === strippedCleanQ;
+    const isInvertedMatch = (nInvertedQ && normTitle === nInvertedQ) || (strippedInvertedQ && strippedTitle === strippedInvertedQ);
+    const isDualOrderSubstring = normTitle.includes(nq) ||
       (nCleanQ.length >= 3 && normTitle.includes(nCleanQ)) ||
-      (strippedCleanQ.length >= 3 && strippedTitle.includes(strippedCleanQ))
-    ) {
+      (strippedCleanQ.length >= 3 && strippedTitle.includes(strippedCleanQ)) ||
+      (nInvertedQ.length >= 3 && normTitle.includes(nInvertedQ)) ||
+      (strippedInvertedQ.length >= 3 && strippedTitle.includes(strippedInvertedQ));
+
+    if (isDirectMatch || isInvertedMatch) {
+      score += 160;
+    } else if (isDualOrderSubstring) {
+      score += 120;
+    } else if (nTitlePart && normTitle.includes(nTitlePart)) {
       score += 90;
     }
 
-    // Token coverage across both original and cleaned query
+    // 2. Token coverage
     const covQ = tokenCoverage(q, item.title ?? "", item.artist ?? "");
     const covClean = tokenCoverage(cleanQ, item.title ?? "", item.artist ?? "");
     const bestCov = Math.max(covQ, covClean);
-
     score += Math.round(bestCov * 70);
 
     if (bestCov >= 0.95) {
-      score += 45;
+      score += 50;
     }
 
-    // Artist matches channel or title
-    const qTokens = tokenize(cleanQ);
-    const artistMatches = qTokens.some(w => normArt.includes(w) || (w.length >= 3 && normArt.includes(w)));
-    if (artistMatches) score += 35;
-
-    // Official channel boost
-    if (/official|records|music|rotana|mazzika|sobky|elsobky|نجوم|مزيكا|روتانا|السبكي|نغم/i.test(item.artist || "")) {
-      score += 25;
+    // 3. Official Artist Verification (Artist channel or bilingual channel matches)
+    if (artistPart) {
+      if (normArt.includes(nArtistPart) || (latinArtist && rawArtLower.includes(latinArtist))) {
+        score += 110;
+      }
+    } else {
+      const qTokens = tokenize(cleanQ);
+      if (qTokens.some(w => normArt.includes(w))) {
+        score += 35;
+      }
     }
 
-    // Penalty for status / whatsapp cuts (< 60s)
-    const lowerTitle = (item.title || "").toLowerCase();
-    if (/حالة\s*واتس|ستوري|حالات|shorts/i.test(lowerTitle)) {
-      score -= 60;
+    // 4. Official Record Label / Production Channel boost
+    const isOfficialLabel = /official|records|music|rotana|mazzika|sobky|elsobky|نجوم|مزيكا|روتانا|السبكي|نغم|عالم الفن|free music|craft media|watary|sony music|universal/i.test(item.artist || "");
+    if (isOfficialLabel) {
+      score += 85;
     }
 
-    // Penalty for karaoke, instrumental, cover
-    if (!q.includes("كاريوكي") && !q.includes("لحن") && /كاريوكي|لحن|موسيقى فقط|بدون موسيقى|instrumental|karaoke/i.test(lowerTitle)) {
-      score -= 40;
+    // 5. Official badges in video title
+    if (/official\s*(audio|lyric|video)|كليب\s*رسمي|فيديو\s*كليب|النسخة\s*الأصلية/i.test(item.title || "")) {
+      score += 40;
     }
 
-    // Penalty for 3rd-party cover / remix / fan uploads
-    if (!q.includes("ريمكس") && !q.includes("remix") && /remix|ريمكس|ميكس|slowed|sped up|مبطأ|مسرع/i.test(lowerTitle)) {
-      score -= 25;
+    // ─── STRICT NOISE & JUNK PENALTIES (Drop non-original / fan edits) ───
+    // Foreign translation / subtitles (e.g. [Indonesian Translation])
+    if (!q.includes("ترجمة") && !q.includes("translation") &&
+        /translation|ترجمة|مترجم|مترجمة|indonesian|spanish|turkish|english sub|subtitles/i.test(rawTitleLower)) {
+      score -= 150;
+    }
+
+    // WhatsApp status / TikTok / Shorts cuts
+    if (/حالة\s*واتس|ستوري|حالات|ستوريات|shorts|تيك\s*توك|tiktok/i.test(rawTitleLower)) {
+      score -= 180;
+    }
+
+    // TV / Series fan scenes
+    if (!q.includes("مسلسل") && /مسلسل|مشاهد\s*من|كليب\s*من\s*مسلسل|طبيب\s*البلدة|omer\s*ve\s*leyla/i.test(rawTitleLower)) {
+      score -= 110;
+    }
+
+    // Fan audio mods: 8D, 3D, slowed, reverb, sped up
+    if (!q.includes("8d") && !q.includes("ريمكس") && !q.includes("remix") &&
+        /8d|3d|بطيء|مسرع|slowed|sped\s*up|reverb|ريمكس|remix|معدل|تعديل|bass\s*boosted/i.test(rawTitleLower)) {
+      score -= 100;
+    }
+
+    // Karaoke, instrumental, fan covers
+    if (!q.includes("كاريوكي") && !q.includes("لحن") &&
+        /كاريوكي|لحن|موسيقى\s*فقط|بدون\s*(موسيقى|صوت)|instrumental|karaoke|backing\s*track|cover|كفر|بصوت|تقليد/i.test(rawTitleLower)) {
+      score -= 150;
     }
 
     return Math.round(score);
   }
 
-  // Normalize YouTube results — junk is always dropped; duration filtered
-  const scoredNonJunk = ytSongsRaw
+  // Filter YouTube junk
+  const scoredYt = ytSongsRaw
     .filter((item: any) => !isJunkResult(item.title, item.artist))
     .filter((item: any) => !item.duration || (item.duration >= 40 && item.duration <= 55 * 60))
     .map((item: any) => ({
-      item,
+      song: {
+        songId: item.songId ?? item.videoId,
+        title: item.title,
+        artist: item.artist ?? "فنان غير معروف",
+        artistId: `yt-${item.artist ?? "unknown"}`,
+        albumId: null,
+        albumTitle: null,
+        youtubeVideoId: item.youtubeVideoId ?? item.songId,
+        thumbnailUrl: item.thumbnailUrl ?? null,
+        source: "youtube",
+      },
       score: computeRelevance(item),
       cov: Math.max(tokenCoverage(q, item.title ?? "", item.artist ?? ""), tokenCoverage(cleanQ, item.title ?? "", item.artist ?? "")),
     }));
 
-  scoredNonJunk.sort((a, b) => b.score - a.score);
+  // Score local catalog songs too
+  const scoredLocal = localCatalog.map((song: any) => ({
+    song,
+    score: computeRelevance(song),
+    cov: Math.max(tokenCoverage(q, song.title ?? "", song.artist ?? ""), tokenCoverage(cleanQ, song.title ?? "", song.artist ?? "")),
+  })).filter((r: any) => r.score >= 50);
 
-  const relevantSongs = scoredNonJunk.filter(r => r.score >= 35 || r.cov >= 0.4);
-  const ytSongsSel = (relevantSongs.length > 0 ? relevantSongs : scoredNonJunk).slice(0, 25);
+  // Merge both by true relevance score
+  const allScored = [...scoredLocal, ...scoredYt];
+  allScored.sort((a, b) => b.score - a.score);
 
-  const ytSongs = ytSongsSel.map(({ item }: any) => ({
-      songId: item.songId ?? item.videoId,
-      title: item.title,
-      artist: item.artist ?? "فنان غير معروف",
-      artistId: `yt-${item.artist ?? "unknown"}`,
-      albumId: null,
-      albumTitle: null,
-      youtubeVideoId: item.youtubeVideoId ?? item.songId,
-      thumbnailUrl: item.thumbnailUrl ?? null,
-      source: "youtube",
-    }));
-
-  // Merge: local first (official catalog), then YouTube (deduped by title)
-  const seenIds = new Set(localMatches.map((s: any) => s.youtubeVideoId));
-  const mergedSongs = [
-    ...localMatches,
-    ...ytSongs.filter((s: any) => !seenIds.has(s.youtubeVideoId)),
-  ].slice(0, 25).map(s => ({ ...s, searchQuery: q }));
+  const seenVids = new Set<string>();
+  const mergedSongs: any[] = [];
+  for (const { song, score, cov } of allScored) {
+    if (score < 30 && cov < 0.4) continue;
+    const vid = song.youtubeVideoId || song.songId;
+    if (!vid || seenVids.has(vid)) continue;
+    seenVids.add(vid);
+    mergedSongs.push({ ...song, searchQuery: q });
+    if (mergedSongs.length >= 25) break;
+  }
 
   const result = {
     songs: mergedSongs,
