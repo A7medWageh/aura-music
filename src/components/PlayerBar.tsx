@@ -332,10 +332,10 @@ function BeatGlow({ accent, energyRef, enabled }: { accent: string; energyRef: {
   );
 }
 
-// ─── Seek Bar ────────────────────────────────────────────────────────
+// ─── Seek Bar (Pro Zero-Latency Touch & Scrub Engine) ─────────────────
 function SeekBar({
-  progress, duration, onSeek, height = "h-1", rtl = true,
-  accent = "white", isPremium = true, onPremiumClick
+  progress, duration, onSeek, height = "h-1.5", rtl = false,
+  accent = "#00e5ff", isPremium = true, onPremiumClick
 }: {
   progress: number; duration: number; onSeek: (t: number) => void;
   height?: string; rtl?: boolean; accent?: string;
@@ -344,57 +344,92 @@ function SeekBar({
   const [isDragging, setIsDragging] = useState(false);
   const [dragProgress, setDragProgress] = useState(0);
   const barRef = useRef<HTMLDivElement>(null);
+  const isDraggingRef = useRef(false);
 
-  const calculatePos = (clientX: number) => {
-    if (!barRef.current) return 0;
+  const calculateTime = useCallback((clientX: number) => {
+    if (!barRef.current || !duration || duration <= 0) return 0;
     const rect = barRef.current.getBoundingClientRect();
-    const pos = rtl
-      ? 1 - (clientX - rect.left) / rect.width
+    if (rect.width <= 0) return 0;
+    const ratio = rtl
+      ? (rect.right - clientX) / rect.width
       : (clientX - rect.left) / rect.width;
-    return Math.max(0, Math.min(1, pos));
+    const clamped = Math.max(0, Math.min(1, ratio));
+    return clamped * duration;
+  }, [duration, rtl]);
+
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isPremium && onPremiumClick) {
+      onPremiumClick();
+      return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {}
+
+    isDraggingRef.current = true;
+    setIsDragging(true);
+
+    const targetTime = calculateTime(e.clientX);
+    setDragProgress(targetTime);
+    onSeek(targetTime); // Instant seek on touch/click!
   };
 
-  const handleUpdate = (clientX: number) => {
-    const pos = calculatePos(clientX);
-    setDragProgress(pos * duration);
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isDraggingRef.current) return;
+    e.preventDefault();
+    const targetTime = calculateTime(e.clientX);
+    setDragProgress(targetTime);
   };
 
-  useEffect(() => {
-    if (!isDragging || !isPremium) return;
-    const onMove = (e: MouseEvent) => handleUpdate(e.clientX);
-    const onUp = (e: MouseEvent) => { onSeek(calculatePos(e.clientX) * duration); setIsDragging(false); };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-    return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
-  }, [isDragging, duration]);
+  const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isDraggingRef.current) return;
+    try {
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {}
+    isDraggingRef.current = false;
+    setIsDragging(false);
 
-  useEffect(() => {
-    if (!isDragging || !isPremium) return;
-    const onTouchMove = (e: TouchEvent) => handleUpdate(e.touches[0].clientX);
-    const onTouchEnd = (e: TouchEvent) => { onSeek(calculatePos(e.changedTouches[0].clientX) * duration); setIsDragging(false); };
-    window.addEventListener("touchmove", onTouchMove);
-    window.addEventListener("touchend", onTouchEnd);
-    return () => { window.removeEventListener("touchmove", onTouchMove); window.removeEventListener("touchend", onTouchEnd); };
-  }, [isDragging, duration]);
+    const targetTime = calculateTime(e.clientX);
+    onSeek(targetTime); // Commit final scrubbed position
+  };
 
   const displayProgress = isDragging ? dragProgress : progress;
-  const pct = duration > 0 ? (displayProgress / duration) * 100 : 0;
+  const pct = duration > 0 ? Math.max(0, Math.min(100, (displayProgress / duration) * 100)) : 0;
 
   return (
     <div
       ref={barRef}
-      onMouseDown={(e) => { if (!isPremium && onPremiumClick) { onPremiumClick(); return; } setIsDragging(true); handleUpdate(e.clientX); }}
-      onTouchStart={(e) => { if (!isPremium && onPremiumClick) { onPremiumClick(); return; } setIsDragging(true); handleUpdate(e.touches[0].clientX); }}
-      className={`relative w-full ${height} bg-white/15 rounded-full cursor-pointer group`}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerUp}
+      className="relative w-full py-3.5 -my-3.5 flex items-center cursor-pointer select-none touch-none group"
+      dir={rtl ? "rtl" : "ltr"}
     >
-      <div className="absolute inset-0 bg-white/5 rounded-full" />
+      {/* Background track */}
+      <div className={`relative w-full ${height} bg-white/15 rounded-full overflow-hidden transition-all duration-150 group-hover:h-2`}>
+        <div className="absolute inset-0 bg-white/5 rounded-full" />
+        {/* Filled progress bar */}
+        <div
+          className={`absolute inset-y-0 ${rtl ? "right-0" : "left-0"} rounded-full ${
+            isDragging ? "transition-none" : "transition-all duration-100 ease-linear"
+          }`}
+          style={{ width: `${pct}%`, background: accent }}
+        />
+      </div>
+
+      {/* Scrubber thumb handle */}
       <div
-        className={`absolute inset-y-0 ${rtl ? "right-0" : "left-0"} rounded-full transition-all ${isDragging ? "" : "duration-200"}`}
-        style={{ width: `${pct}%`, background: accent }}
-      />
-      <div
-        className={`absolute top-1/2 -translate-y-1/2 w-4 h-4 rounded-full shadow-xl border-2 border-white/20 transition-transform ${isDragging ? "scale-125" : "scale-100 opacity-0 group-hover:opacity-100"}`}
-        style={{ background: accent, ...(rtl ? { right: `calc(${pct}% - 8px)` } : { left: `calc(${pct}% - 8px)` }) }}
+        className={`absolute top-1/2 -translate-y-1/2 w-4 h-4 rounded-full border-2 border-white/80 transition-transform pointer-events-none ${
+          isDragging ? "scale-125 opacity-100" : "scale-100 opacity-0 group-hover:opacity-100"
+        }`}
+        style={{
+          background: accent,
+          ...(rtl ? { right: `calc(${pct}% - 8px)` } : { left: `calc(${pct}% - 8px)` }),
+          boxShadow: `0 0 12px ${accent}aa, 0 2px 6px rgba(0,0,0,0.8)`,
+        }}
       />
     </div>
   );
@@ -648,13 +683,13 @@ function FullPlayer({
     }
   }, [activeLineIndex, activeTab]);
 
-  // Swipe down to close
-  const dragY = useRef(0);
+  // Swipe down to close with zero-rerender direct GPU transform
+  const containerRef = useRef<HTMLDivElement>(null);
   const startY = useRef(0);
   const inScrollerRef = useRef(false);
-  const [swipeOffset, setSwipeOffset] = useState(0);
+  const isDraggingRef = useRef(false);
 
-  // Transition orchestration: keeps slide down silky smooth at 60fps and only hides offscreen after transition
+  // Transition orchestration: keeps slide down silky smooth at 120fps
   const [isRendered, setIsRendered] = useState(isOpen);
   const [isTransitioning, setIsTransitioning] = useState(false);
 
@@ -662,63 +697,84 @@ function FullPlayer({
     if (isOpen) {
       setIsRendered(true);
       setIsTransitioning(true);
-      const timer = setTimeout(() => setIsTransitioning(false), 370);
+      if (containerRef.current) {
+        containerRef.current.style.transition = "transform 0.35s cubic-bezier(0.22, 1, 0.36, 1)";
+        containerRef.current.style.transform = "translate3d(0, 0, 0)";
+      }
+      const timer = setTimeout(() => setIsTransitioning(false), 360);
       return () => clearTimeout(timer);
     } else {
       setIsTransitioning(true);
+      if (containerRef.current) {
+        containerRef.current.style.transition = "transform 0.35s cubic-bezier(0.22, 1, 0.36, 1)";
+        containerRef.current.style.transform = "translate3d(0, 100%, 0)";
+      }
       const timer = setTimeout(() => {
         setIsTransitioning(false);
         setIsRendered(false);
-      }, 370);
+      }, 360);
       return () => clearTimeout(timer);
     }
   }, [isOpen]);
 
   const handleTouchStart = (e: React.TouchEvent) => {
     startY.current = e.touches[0].clientY;
-    // A gesture that begins inside a scrollable pane belongs to that pane
-    // (queue list, lyrics scroll) — never turn it into a close-swipe.
     inScrollerRef.current = !!(e.target as HTMLElement)?.closest?.("[data-scroll]");
+    isDraggingRef.current = false;
   };
   const handleTouchMove = (e: React.TouchEvent) => {
-    if (inScrollerRef.current) return;
+    if (inScrollerRef.current || !containerRef.current) return;
     const dy = e.touches[0].clientY - startY.current;
-    if (dy > 0) setSwipeOffset(dy);
+    if (dy > 0) {
+      isDraggingRef.current = true;
+      containerRef.current.style.transition = "none";
+      containerRef.current.style.transform = `translate3d(0, ${dy}px, 0)`;
+    }
   };
-  const handleTouchEnd = () => {
-    if (swipeOffset > 120 && !inScrollerRef.current) { onClose(); }
-    setSwipeOffset(0);
-    inScrollerRef.current = false;
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (inScrollerRef.current || !containerRef.current) return;
+    const dy = e.changedTouches[0].clientY - startY.current;
+    isDraggingRef.current = false;
+    containerRef.current.style.transition = "transform 0.35s cubic-bezier(0.22, 1, 0.36, 1)";
+    if (dy > 110) {
+      containerRef.current.style.transform = "translate3d(0, 100%, 0)";
+      onClose();
+    } else {
+      containerRef.current.style.transform = "translate3d(0, 0, 0)";
+    }
   };
 
   return (
-    <motion.div
-      initial={false}
-      animate={{ y: !isOpen ? "100%" : (swipeOffset > 0 ? swipeOffset : 0) }}
-      transition={{ type: "tween", ease: [0.32, 0.72, 0, 1], duration: 0.35 }}
+    <div
+      ref={containerRef}
       className="fixed inset-0 z-50 flex flex-col overflow-hidden"
       style={{
         pointerEvents: isOpen ? "auto" : "none",
-        visibility: isOpen || isRendered || swipeOffset > 0 ? "visible" : "hidden",
+        visibility: isOpen || isRendered ? "visible" : "hidden",
         background: "#08090d",
+        transform: isOpen ? "translate3d(0, 0, 0)" : "translate3d(0, 100%, 0)",
+        transition: isDraggingRef.current ? "none" : "transform 0.35s cubic-bezier(0.22, 1, 0.36, 1)",
         willChange: "transform",
-        transform: "translateZ(0)",
         height: "100dvh",
         maxHeight: "100dvh",
+        contain: "paint layout",
       }}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
     >
       {/* ── Aurora ambient background: breathing artwork + drifting accent orbs ── */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none" style={{ willChange: "transform", transform: "translateZ(0)" }}>
-        <motion.img
+      <div className="absolute inset-0 overflow-hidden pointer-events-none" style={{ contain: "strict", transform: "translateZ(0)" }}>
+        <img
           src={proxyArt}
           alt=""
-          className="w-full h-full object-cover"
-          style={{ filter: "blur(60px) brightness(0.32) saturate(1.35)", willChange: "transform", transform: "translateZ(0)" }}
-          animate={isOpen && state.isPlaying ? { scale: [1.22, 1.32, 1.22] } : { scale: 1.22 }}
-          transition={{ duration: 14, repeat: Infinity, ease: "easeInOut" }}
+          className="w-full h-full object-cover scale-125"
+          style={{
+            filter: "blur(60px) brightness(0.32) saturate(1.35)",
+            transform: "translateZ(0)",
+            willChange: "transform",
+            backfaceVisibility: "hidden",
+          }}
           onError={(e) => { (e.target as HTMLImageElement).src = "/placeholder-song.jpg"; }}
         />
         <motion.div
@@ -729,7 +785,7 @@ function FullPlayer({
             willChange: "transform",
             transform: "translateZ(0)",
           }}
-          animate={isOpen ? { x: [0, 60, 0], y: [0, 40, 0] } : undefined}
+          animate={isOpen && !isTransitioning ? { x: [0, 60, 0], y: [0, 40, 0] } : undefined}
           transition={{ duration: bgMode === "epic" ? 7 : 10, repeat: Infinity, ease: "easeInOut" }}
         />
         <motion.div
@@ -740,7 +796,7 @@ function FullPlayer({
             willChange: "transform",
             transform: "translateZ(0)",
           }}
-          animate={isOpen ? { x: [0, -50, 0], y: [0, -30, 0] } : undefined}
+          animate={isOpen && !isTransitioning ? { x: [0, -50, 0], y: [0, -30, 0] } : undefined}
           transition={{ duration: bgMode === "epic" ? 9 : 13, repeat: Infinity, ease: "easeInOut" }}
         />
         <div className="absolute inset-0 bg-gradient-to-b from-[#090b10]/90 via-[#06070a]/95 to-[#040507]" />
@@ -1361,7 +1417,7 @@ function FullPlayer({
 
       </div>
 
-    </motion.div>
+    </div>
   );
 }
 
@@ -1422,7 +1478,7 @@ export function PlayerBar() {
   const { accent } = useDominantColor(proxyArt);
   const pct = state.duration > 0 ? (state.currentTime / state.duration) * 100 : 0;
 
-  if (!currentSong || (!state.isPlaying && state.currentTime === 0 && !hasUserTriggeredPlay)) return null;
+  if (!currentSong) return null;
 
   return (
     <>
@@ -1442,12 +1498,12 @@ export function PlayerBar() {
 
       {/* Mini Bar — mobile: above tab bar, desktop: bottom-0 */}
       <footer
-        className="fixed left-0 right-0 z-30 transition-opacity duration-200"
+        className="fixed left-0 right-0 z-30 transition-all duration-300 ease-out"
         style={{
           opacity: fullOpen ? 0 : 1,
           pointerEvents: fullOpen ? "none" : "auto",
+          transform: fullOpen ? "translate3d(0, 20px, 0)" : "translate3d(0, 0, 0)",
           willChange: "transform, opacity",
-          transform: "translateZ(0)",
           bottom:
             typeof window !== "undefined" && window.innerWidth >= 768
               ? "0px"

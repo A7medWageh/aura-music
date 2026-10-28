@@ -90,13 +90,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           localStorage.removeItem("aura-player-session");
           localStorage.removeItem("aura-player-state");
         } else if (parsed.queue && parsed.queue.length > 0 && parsed.currentSongId) {
+          setHasUserTriggeredPlay(true);
           setState((prev) => ({
             ...prev,
             queue: parsed.queue,
             currentSongId: parsed.currentSongId,
             currentTime: parsed.currentTime || 0,
             volume: parsed.volume ?? initialPlayerState.volume,
-            isPlaying: false, // keep paused on initial mount so browser autoplay policies are respected
+            isPlaying: !!parsed.wasPlaying,
           }));
         }
       }
@@ -224,13 +225,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
             queue: state.queue,
             currentSongId: state.currentSongId,
             currentTime: Math.floor(state.currentTime || 0),
-            volume: state.volume
+            volume: state.volume,
+            wasPlaying: state.isPlaying,
           })
         );
         localStorage.setItem("aura-player-state", JSON.stringify({ queue: state.queue }));
       } catch { /* ignore */ }
     }
-  }, [state.queue, state.currentSongId, state.volume]);
+  }, [state.queue, state.currentSongId, state.volume, state.isPlaying]);
 
   // Synchronously prime the audio element inside user gestures for iOS WebKit
   const primeAudioElement = () => {
@@ -581,8 +583,18 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const seekTo = (time: number) => {
     const player = audioRef.current;
     if (!player) return;
-    player.currentTime = Math.max(0, Math.min(time, player.duration || 0));
-    setState((prev) => ({ ...prev, currentTime: player.currentTime }));
+    const maxDur = (player.duration && !isNaN(player.duration) && player.duration > 0)
+      ? player.duration
+      : (stateRef.current.duration > 0 ? stateRef.current.duration : Infinity);
+    const clampedTime = Math.max(0, Math.min(time, maxDur));
+    try {
+      player.currentTime = clampedTime;
+    } catch {}
+    setState((prev) => ({ ...prev, currentTime: clampedTime }));
+    if (stateRef.current.isPlaying && player.paused) {
+      player.play().catch(() => {});
+    }
+    syncPositionState();
   };
 
   const [soundPreset, setSoundPresetState] = useState<"crystal" | "bass" | "vocal" | "spatial" | "concert" | "noise_cancel">("crystal");
@@ -1285,43 +1297,68 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const isFirstLoad = isInitialMountRef.current;
     if (isFirstLoad) {
       isInitialMountRef.current = false;
-      // If refreshed or newly loaded and not explicitly playing, stay paused!
-      if (!stateRef.current.isPlaying) {
-        isLoadingNewSongRef.current = false;
-        player.pause();
-        getAudioBlob(song.songId).then(async (cachedBlob) => {
-          if (cachedBlob && isKhaleejiOrCorruptedJannatBlob(song.artist, cachedBlob.size, song.songId || song.title)) {
-            console.warn(`[Player] Detected corrupted Khaleeji blob (${cachedBlob.size} bytes) on mount for Jannat track "${song.title}". Auto-purging...`);
-            await deleteAudioBlobOnly(song.songId);
-            if (song.youtubeVideoId && song.youtubeVideoId !== song.songId) {
-              await deleteAudioBlobOnly(song.youtubeVideoId);
-            }
-            cachedBlob = null;
+      const restoredTime = stateRef.current.currentTime || 0;
+      const shouldResume = stateRef.current.isPlaying;
+
+      getAudioBlob(song.songId).then(async (cachedBlob) => {
+        let b = cachedBlob;
+        if (!b && song.youtubeVideoId && song.youtubeVideoId !== song.songId) {
+          b = await getAudioBlob(song.youtubeVideoId);
+        }
+        if (b && isKhaleejiOrCorruptedJannatBlob(song.artist, b.size, song.songId || song.title)) {
+          console.warn(`[Player] Detected corrupted Khaleeji blob (${b.size} bytes) on mount for "${song.title}". Purging...`);
+          await deleteAudioBlobOnly(song.songId);
+          if (song.youtubeVideoId && song.youtubeVideoId !== song.songId) {
+            await deleteAudioBlobOnly(song.youtubeVideoId);
           }
-          if (cachedBlob && !cancelled) {
-            const blobUrl = URL.createObjectURL(cachedBlob);
-            player.src = blobUrl;
-            if (stateRef.current.currentTime > 0) {
-              try { player.currentTime = stateRef.current.currentTime; } catch {}
-            }
-            setState((prev) => ({
-              ...prev,
-              streamUrl: blobUrl,
-              isBuffering: false,
-              isPlaying: false,
-            }));
-          } else {
-            setState((prev) => ({
-              ...prev,
-              isBuffering: false,
-              isPlaying: false,
-            }));
+          b = null;
+        }
+
+        let audioSourceUrl: string;
+        if (b) {
+          const blobUrl = URL.createObjectURL(b);
+          currentBlobUrlRef.current = blobUrl;
+          audioSourceUrl = blobUrl;
+        } else {
+          const targetVid = song.youtubeVideoId || song.songId || "";
+          audioSourceUrl = toAbsoluteApiUrl(
+            `/api/ytdownload?videoId=${encodeURIComponent(targetVid)}&title=${encodeURIComponent(song.title)}&artist=${encodeURIComponent(song.artist || "")}&proxy=true`
+          );
+        }
+
+        if (cancelled) return;
+
+        player.muted = false;
+        player.src = audioSourceUrl;
+        player.preload = "auto";
+        if (restoredTime > 0) {
+          try { player.currentTime = restoredTime; } catch {}
+        }
+
+        updateMediaSessionMetadata(song);
+
+        setState((prev) => ({
+          ...prev,
+          streamUrl: audioSourceUrl,
+          currentTime: restoredTime,
+          isBuffering: false,
+          isPlaying: shouldResume,
+        }));
+
+        if (shouldResume) {
+          const p = player.play();
+          if (p !== undefined) {
+            p.catch((err) => {
+              if (err.name === "NotAllowedError") {
+                armGestureResume(player);
+              }
+            });
           }
-        }).catch(() => {
-          setState((prev) => ({ ...prev, isBuffering: false, isPlaying: false }));
-        });
-        return;
-      }
+        }
+      }).catch(() => {
+        setState((prev) => ({ ...prev, isBuffering: false }));
+      });
+      return;
     }
 
     // If the audio element was already started synchronously by syncPlayTrack/playNow/next/prev, do not pause or reload!
