@@ -7,7 +7,7 @@ import { JANNAT_OLD_CLASSICS } from "@/data/jannatClassics";
 import { ANGHAM_OLD_CLASSICS } from "@/data/anghamClassics";
 import { downloadSong } from "@/services/offline/downloader";
 import { setMainAudioPlaying } from "@/services/offline/backgroundKeepAlive";
-import { holdAudioSessionOnPause, releaseAudioSession } from "@/services/offline/audioSessionKeepAlive";
+import { holdAudioSessionOnPause, releaseAudioSession, primeSilentCarrier } from "@/services/offline/audioSessionKeepAlive";
 import { useToastStore } from "@/state/toastStore";
 import { toAbsoluteApiUrl } from "@/utils/apiBase";
 import {
@@ -558,6 +558,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const player = audioRef.current;
     if (!player) return;
 
+    primeSilentCarrier();
     configureAudioSession();
     player.muted = false;
 
@@ -896,6 +897,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   prevRef.current = prev;
 
   const togglePlay = () => {
+    primeSilentCarrier();
     configureAudioSession();
     const player = audioRef.current;
     if (player) {

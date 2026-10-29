@@ -14,6 +14,7 @@
  * from suspending the process.
  * 
  * Crucially:
+ * - Pre-warmed / unlocked on first user touch so iOS never blocks it with NotAllowedError.
  * - We NEVER touch `navigator.mediaSession.metadata` so lock-screen artwork and song title stay intact.
  * - When user resumes playback, the silent carrier is paused and real audio takes over instantly.
  * - IndexedDB storage and user data (downloaded songs) are NEVER touched.
@@ -23,6 +24,7 @@ import { createSilentWavBlob } from "./backgroundKeepAlive";
 
 let silentCarrierAudio: HTMLAudioElement | null = null;
 let idleTimeout: NodeJS.Timeout | null = null;
+let isCarrierPrimed = false;
 const MAX_IDLE_MINUTES = 30; // Auto-release after 30 min of inactivity to preserve iPhone battery
 
 function getSilentCarrier(): HTMLAudioElement | null {
@@ -44,6 +46,40 @@ function getSilentCarrier(): HTMLAudioElement | null {
 }
 
 /**
+ * Permanently authorizes/unlocks the silent carrier audio element for iOS Safari.
+ * MUST be invoked during a direct user touch/click gesture (e.g. initial touch or play).
+ */
+export function primeSilentCarrier() {
+  if (typeof window === "undefined" || isCarrierPrimed) return;
+  const carrier = getSilentCarrier();
+  if (!carrier) return;
+
+  try {
+    const p = carrier.play();
+    if (p !== undefined) {
+      p.then(() => {
+        isCarrierPrimed = true;
+        // Successfully unlocked on iOS! Immediately pause until holdAudioSessionOnPause needs it.
+        carrier.pause();
+      }).catch((err) => {
+        console.warn("[AudioSessionKeepAlive] Prime caught:", err);
+      });
+    }
+  } catch {}
+}
+
+// Auto-prime on first user touch anywhere on the page
+if (typeof window !== "undefined") {
+  const onFirstTouch = () => {
+    primeSilentCarrier();
+    window.removeEventListener("touchstart", onFirstTouch);
+    window.removeEventListener("click", onFirstTouch);
+  };
+  window.addEventListener("touchstart", onFirstTouch, { passive: true, once: true });
+  window.addEventListener("click", onFirstTouch, { passive: true, once: true });
+}
+
+/**
  * Activates silent carrier when real music is paused.
  * Keeps iOS WebKit from freezing the background process so lock-screen Play works.
  */
@@ -59,10 +95,10 @@ export function holdAudioSessionOnPause() {
   if (!carrier) return;
 
   try {
+    carrier.muted = false;
     const p = carrier.play();
     if (p !== undefined) {
       p.catch((err) => {
-        // Can be ignored if browser blocks silent carrier
         console.warn("[AudioSessionKeepAlive] Silent carrier play caught:", err);
       });
     }
