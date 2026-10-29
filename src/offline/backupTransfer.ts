@@ -122,13 +122,24 @@ export async function exportOfflineLibrary(
 }
 
 /**
+ * Creates and returns the exported backup blob and metadata.
+ */
+export async function createOfflineLibraryBackup(
+  onProgress?: (progress: BackupProgress) => void
+): Promise<{ blob: Blob; fileName: string; sizeMB: number }> {
+  const blob = await exportOfflineLibrary(onProgress);
+  const fileName = `aura-music-offline-backup-${new Date().toISOString().slice(0, 10)}.aurapack`;
+  const sizeMB = blob.size / (1024 * 1024);
+  return { blob, fileName, sizeMB };
+}
+
+/**
  * Triggers native browser/iOS file download for the exported library.
  */
 export async function downloadLibraryBackup(
   onProgress?: (progress: BackupProgress) => void
 ): Promise<string> {
-  const blob = await exportOfflineLibrary(onProgress);
-  const fileName = `aura-music-offline-backup-${new Date().toISOString().slice(0, 10)}.aurapack`;
+  const { blob, fileName } = await createOfflineLibraryBackup(onProgress);
 
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
