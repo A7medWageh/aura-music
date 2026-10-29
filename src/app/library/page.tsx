@@ -5,11 +5,12 @@ import { getAllOfflineSongs, getAllOfflineLyricsMap, deleteOfflineSong, deleteAr
 import { subscribeDownloads } from "@/state/downloadStore";
 import { usePlayer } from "@/state/playerContext";
 import { motion, AnimatePresence } from "framer-motion";
-import { Play, Trash2, WifiOff, ArrowRight, DownloadCloud, Lock, Unlock, EyeOff, Eye, HardDrive, Music, CheckCircle2, AlertCircle, Image as ImageIcon, Search, X, FileText, Sparkles, RefreshCw } from "lucide-react";
+import { Play, Trash2, WifiOff, ArrowRight, DownloadCloud, Lock, Unlock, EyeOff, Eye, HardDrive, Music, CheckCircle2, AlertCircle, Image as ImageIcon, Search, X, FileText, Sparkles, RefreshCw, Smartphone } from "lucide-react";
 import { getProxyUrl } from "@/utils/media";
 import { openBackgroundCustomizer } from "@/services/theme/customBackgroundStorage";
 import { getCanonicalArtistName } from "@/utils/artistNormalizer";
 import { searchOfflineSongs, type OfflineSearchResult } from "@/utils/arabicSearch";
+import { LibraryBackupModal } from "@/components/LibraryBackupModal";
 
 type Song = {
   songId: string; title: string; artist: string; thumbnailUrl?: string;
@@ -103,6 +104,7 @@ export default function LibraryPage() {
   const [loading, setLoading] = useState(() => cachedLibraryArtists.length === 0);
   const [toast, setToast] = useState<string | null>(null);
   const [stats, setStats] = useState(() => cachedLibraryStats);
+  const [showBackupModal, setShowBackupModal] = useState(false);
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 3500); };
 
@@ -346,6 +348,15 @@ export default function LibraryPage() {
         </div>
       )}
 
+      {/* Transfer / Backup Modal */}
+      <LibraryBackupModal
+        isOpen={showBackupModal}
+        onClose={() => setShowBackupModal(false)}
+        songsCount={stats.count}
+        totalSizeMB={stats.sizeMB}
+        onSuccess={() => loadLibrary()}
+      />
+
       {/* Header */}
       <div className="flex items-center justify-between">
         {openAlbum ? (
@@ -367,6 +378,16 @@ export default function LibraryPage() {
         )}
 
         <div className="flex items-center gap-2 sm:gap-3 flex-wrap justify-end">
+          {/* Transfer to Native App Button */}
+          <button
+            onClick={() => setShowBackupModal(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all bg-gradient-to-r from-blue-600/25 to-indigo-600/25 hover:from-blue-600/35 hover:to-indigo-600/35 text-blue-200 border border-blue-500/30 hover:border-blue-400 active:scale-95 shadow-sm"
+            title="نقل وتصدير الأغاني إلى تطبيق الآيفون المثبت (تصدير / استيراد)"
+          >
+            <Smartphone className="w-3.5 h-3.5 text-blue-400" />
+            <span>نقل الأغاني للتطبيق 📲</span>
+          </button>
+
           {/* Refresh/Update PWA Player Button */}
           <button
             onClick={async () => {
