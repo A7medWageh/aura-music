@@ -84,8 +84,12 @@ export function LibraryBackupModal({
       };
       setReadyFile(ready);
 
-      // Attempt immediate share if iOS allows it
-      tryShareFile(ready);
+      // Only attempt immediate share if file is under 150MB to avoid iOS Jetsam WebKit process crash
+      if (ready.sizeMB < 150) {
+        tryShareFile(ready);
+      } else {
+        setStatusMessage("تم تجهيز ملف الأغاني بنجاح! نظراً لأن الحجم كبير (أكثر من 150 ميجابايت)، يفضل استخدام زر التنزيل المباشر بالأسفل لتجنب ضغط رامات الآيفون.");
+      }
     } catch (err: any) {
       setErrorMessage(err?.message || "حدث خطأ أثناء تجهيز ملف الأغاني.");
     } finally {
