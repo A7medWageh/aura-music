@@ -7,6 +7,7 @@ import { JANNAT_OLD_CLASSICS } from "@/data/jannatClassics";
 import { ANGHAM_OLD_CLASSICS } from "@/data/anghamClassics";
 import { downloadSong } from "@/services/offline/downloader";
 import { setMainAudioPlaying } from "@/services/offline/backgroundKeepAlive";
+import { holdAudioSessionOnPause, releaseAudioSession } from "@/services/offline/audioSessionKeepAlive";
 import { useToastStore } from "@/state/toastStore";
 import { toAbsoluteApiUrl } from "@/utils/apiBase";
 import {
@@ -361,6 +362,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     });
 
     try {
+      releaseAudioSession();
       configureAudioSession();
       player.muted = false;
       setHasUserTriggeredPlay(true);
@@ -900,12 +902,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       if (state.isPlaying) {
         player.pause();
         isPlayingRef.current = false;
+        holdAudioSessionOnPause();
         setState((prev) => ({ ...prev, isPlaying: false }));
         if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
           navigator.mediaSession.playbackState = "paused";
         }
         syncPositionState();
       } else {
+        releaseAudioSession();
         const isMobile = isMobileDevice();
         if (!isMobile && !audioCtxRef.current) {
           initWebAudio();
@@ -1568,6 +1572,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
     navigator.mediaSession.setActionHandler("play", () => {
       recordAudioDiagnosticEvent("MediaSession action: play received");
+      releaseAudioSession();
       configureAudioSession();
       const player = audioRef.current;
       if (!player) return;
@@ -1615,6 +1620,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       if (player) {
         player.pause();
       }
+      isPlayingRef.current = false;
+      holdAudioSessionOnPause();
       setState((prev) => ({ ...prev, isPlaying: false }));
       if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
         navigator.mediaSession.playbackState = "paused";
@@ -1656,11 +1663,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     });
 
     navigator.mediaSession.setActionHandler("stop", () => {
+      releaseAudioSession();
       const player = audioRef.current;
       if (player) {
         player.pause();
         player.currentTime = 0;
       }
+      isPlayingRef.current = false;
       setState((prev) => ({ ...prev, isPlaying: false, currentTime: 0 }));
       navigator.mediaSession.playbackState = "none";
     });

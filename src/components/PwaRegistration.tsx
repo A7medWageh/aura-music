@@ -1,8 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Download, X, Share } from "lucide-react";
+import { Download, X, Share, RefreshCw, Sparkles } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+
+// Current PWA client release version
+export const PWA_APP_VERSION = "v2.5.0";
 
 // Detect if running on iOS
 function isIOS() {
@@ -17,35 +20,109 @@ function isStandalone() {
     window.matchMedia("(display-mode: standalone)").matches;
 }
 
+/**
+ * Manually force a PWA cache update & reload.
+ * CRITICAL: NEVER touches IndexedDB or user songs!
+ */
+export async function forceUpdatePwa(): Promise<void> {
+  if (typeof window === "undefined") return;
+
+  try {
+    if ("serviceWorker" in navigator) {
+      const reg = await navigator.serviceWorker.getRegistration();
+      if (reg) {
+        await reg.update();
+        if (reg.waiting) {
+          reg.waiting.postMessage({ type: "SKIP_WAITING" });
+        }
+      }
+    }
+
+    // Clear stale script/cache assets without touching IndexedDB
+    if ("caches" in window) {
+      const keys = await caches.keys();
+      for (const key of keys) {
+        if (key.includes("pages") || key.includes("chunks") || key.includes("static")) {
+          await caches.delete(key);
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("[PWA] Force update error:", err);
+  }
+
+  // Force clean reload
+  window.location.reload();
+}
+
 export function PwaRegistration() {
   const [showIOSPrompt, setShowIOSPrompt] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [showInstallBanner, setShowInstallBanner] = useState(false);
+  const [showUpdateBanner, setShowUpdateBanner] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
 
   useEffect(() => {
-    // ── Register service worker ──
+    // ── Register service worker with aggressive auto-update for iOS ──
     if ("serviceWorker" in navigator) {
+      let refreshing = false;
+
+      // When the service worker updates and takes control, reload to activate new code
+      const onControllerChange = () => {
+        if (!refreshing) {
+          refreshing = true;
+          window.location.reload();
+        }
+      };
+      navigator.serviceWorker.addEventListener("controllerchange", onControllerChange);
+
       navigator.serviceWorker.register("/sw.js", { scope: "/" })
         .then((reg) => {
-          console.log("[SW] Registered:", reg.scope);
+          console.log("[SW] Registered with scope:", reg.scope);
+
+          // If a new worker is already waiting in the wings, prompt update
+          if (reg.waiting) {
+            setShowUpdateBanner(true);
+            reg.waiting.postMessage({ type: "SKIP_WAITING" });
+          }
+
           // Check for fresh code on server immediately
           reg.update().catch(() => {});
-          if (reg.waiting) reg.waiting.postMessage({ type: "SKIP_WAITING" });
+
           reg.addEventListener("updatefound", () => {
             const newWorker = reg.installing;
             if (newWorker) {
               newWorker.addEventListener("statechange", () => {
-                if (newWorker.state === "installed" && navigator.serviceWorker.controller) {
-                  newWorker.postMessage({ type: "SKIP_WAITING" });
+                if (newWorker.state === "installed") {
+                  if (navigator.serviceWorker.controller) {
+                    // New version available!
+                    setShowUpdateBanner(true);
+                    newWorker.postMessage({ type: "SKIP_WAITING" });
+                  }
                 }
               });
             }
           });
         })
         .catch((err) => console.warn("[SW] Registration failed:", err));
+
+      // Check for updates when user returns to the app
+      const onVisibilityChange = () => {
+        if (document.visibilityState === "visible") {
+          navigator.serviceWorker.getRegistration().then((reg) => {
+            reg?.update().catch(() => {});
+          });
+        }
+      };
+      document.addEventListener("visibilitychange", onVisibilityChange);
+
+      return () => {
+        navigator.serviceWorker.removeEventListener("controllerchange", onControllerChange);
+        document.removeEventListener("visibilitychange", onVisibilityChange);
+      };
     }
 
-    // Don't show if already installed
+    // Don't show install banner if already installed
     if (isStandalone()) return;
 
     // iOS: show custom install guide after 3s (if not dismissed before)
@@ -79,7 +156,6 @@ export function PwaRegistration() {
       }
     };
 
-    // Listen for audio play/pause events globally to manage pings
     const onPlay = () => {
       if (!interval) {
         interval = setInterval(ping, 20000); // ping every 20 seconds
@@ -110,6 +186,11 @@ export function PwaRegistration() {
     setShowInstallBanner(false);
   };
 
+  const handleApplyUpdate = async () => {
+    setIsUpdating(true);
+    await forceUpdatePwa();
+  };
+
   const dismissIOS = () => {
     sessionStorage.setItem("ios_prompt_dismissed", "1");
     setShowIOSPrompt(false);
@@ -122,6 +203,49 @@ export function PwaRegistration() {
 
   return (
     <>
+      {/* Update Available Banner (Guarantees fresh code without touching IndexedDB) */}
+      <AnimatePresence>
+        {showUpdateBanner && (
+          <motion.div
+            initial={{ y: -80, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: -80, opacity: 0 }}
+            className="fixed top-0 left-0 right-0 z-[120] flex items-center justify-between gap-3 px-4 py-3 shadow-2xl"
+            style={{
+              background: "linear-gradient(135deg, rgba(79, 70, 229, 0.95), rgba(124, 58, 237, 0.95))",
+              backdropFilter: "blur(12px)",
+              paddingTop: "calc(10px + env(safe-area-inset-top, 0px))",
+              borderBottom: "1px solid rgba(255,255,255,0.2)",
+            }}
+          >
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className="text-xl animate-pulse">⚡</span>
+              <div className="min-w-0">
+                <p className="text-xs font-black text-white">تحديث جديد متوفر للمشغل ({PWA_APP_VERSION})</p>
+                <p className="text-[11px] text-indigo-100 truncate">تحسين شاشة القفل والأوفلاين (أغانيك محفوظة 100%)</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={handleApplyUpdate}
+                disabled={isUpdating}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 bg-white text-indigo-600 rounded-full text-xs font-black shadow-md active:scale-95 transition-all"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isUpdating ? "animate-spin" : ""}`} />
+                <span>{isUpdating ? "جارٍ التحديث..." : "تطبيق الآن"}</span>
+              </button>
+              <button
+                onClick={() => setShowUpdateBanner(false)}
+                className="p-1 text-white/70 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* iOS Install Prompt */}
       <AnimatePresence>
         {showIOSPrompt && (

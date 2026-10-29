@@ -5,7 +5,7 @@ import { getAllOfflineSongs, getAllOfflineLyricsMap, deleteOfflineSong, deleteAr
 import { subscribeDownloads } from "@/state/downloadStore";
 import { usePlayer } from "@/state/playerContext";
 import { motion, AnimatePresence } from "framer-motion";
-import { Play, Trash2, WifiOff, ArrowRight, DownloadCloud, Lock, Unlock, EyeOff, Eye, HardDrive, Music, CheckCircle2, AlertCircle, Image as ImageIcon, Search, X, FileText, Sparkles } from "lucide-react";
+import { Play, Trash2, WifiOff, ArrowRight, DownloadCloud, Lock, Unlock, EyeOff, Eye, HardDrive, Music, CheckCircle2, AlertCircle, Image as ImageIcon, Search, X, FileText, Sparkles, RefreshCw } from "lucide-react";
 import { getProxyUrl } from "@/utils/media";
 import { openBackgroundCustomizer } from "@/services/theme/customBackgroundStorage";
 import { getCanonicalArtistName } from "@/utils/artistNormalizer";
@@ -367,6 +367,21 @@ export default function LibraryPage() {
         )}
 
         <div className="flex items-center gap-2 sm:gap-3 flex-wrap justify-end">
+          {/* Refresh/Update PWA Player Button */}
+          <button
+            onClick={async () => {
+              if (confirm("هل تريد تحديث ملفات المشغل لأحدث إصدار؟\n\nأغانيك المحملة (الـ 1 جيجا) محفوظة في الذاكرة ولن تفقد أي أغنية نهائياً.")) {
+                const { forceUpdatePwa } = await import("@/components/PwaRegistration");
+                forceUpdatePwa();
+              }
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 hover:border-emerald-400 active:scale-95 shadow-sm"
+            title="تحديث ملفات المشغل وتفعيل ميزة استئناف شاشة القفل (أغانيك المحملة آمنة 100%)"
+          >
+            <RefreshCw className="w-3.5 h-3.5 text-emerald-400" />
+            <span>تحديث المشغل (v2.5)</span>
+          </button>
+
           {/* Custom Background Button */}
           <button
             onClick={() => openBackgroundCustomizer("library")}
