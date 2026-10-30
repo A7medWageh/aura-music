@@ -55,6 +55,16 @@ export async function forceUpdatePwa(): Promise<void> {
   window.location.reload();
 }
 
+function isNativeApp() {
+  if (typeof window === "undefined") return false;
+  return !!(
+    (window as any).Capacitor ||
+    (window as any).webkit?.messageHandlers?.bridge ||
+    (window as any).webkit?.messageHandlers?.cordova_iab ||
+    /Capacitor/i.test(navigator.userAgent)
+  );
+}
+
 export function PwaRegistration() {
   const [showIOSPrompt, setShowIOSPrompt] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
@@ -62,7 +72,14 @@ export function PwaRegistration() {
   const [showUpdateBanner, setShowUpdateBanner] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
 
+  // In native Capacitor app on iOS, avoid running service workers or PWA banners
+  const [isNative, setIsNative] = useState(false);
   useEffect(() => {
+    setIsNative(isNativeApp());
+  }, []);
+
+  useEffect(() => {
+    if (isNativeApp()) return;
     // ── Register service worker without disruptive auto-reload ──
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("/sw.js", { scope: "/" })
@@ -179,6 +196,10 @@ export function PwaRegistration() {
     sessionStorage.setItem("install_banner_dismissed", "1");
     setShowInstallBanner(false);
   };
+
+  if (isNative) {
+    return null;
+  }
 
   return (
     <>

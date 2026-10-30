@@ -12,6 +12,7 @@ export function getApiBaseUrl(): string {
     !origin ||
     origin === "null" ||
     origin.startsWith("capacitor:") ||
+    origin.startsWith("auramusic:") ||
     origin.startsWith("ionic:") ||
     origin.startsWith("file:") ||
     origin.includes("localhost")

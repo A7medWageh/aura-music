@@ -1,10 +1,16 @@
 import UIKit
 import Capacitor
 import WebKit
+import MediaPlayer
+import AVFoundation
 
 class MainViewController: CAPBridgeViewController {
     private var isFallbackLoaded = false
     private var hasInitialPageLoaded = false
+
+    override var canBecomeFirstResponder: Bool {
+        return true
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -12,6 +18,113 @@ class MainViewController: CAPBridgeViewController {
         self.webView?.backgroundColor = UIColor(red: 8/255, green: 9/255, blue: 13/255, alpha: 1.0)
         self.webView?.isOpaque = false
         self.webView?.scrollView.backgroundColor = UIColor(red: 8/255, green: 9/255, blue: 13/255, alpha: 1.0)
+
+        // Setup AirPods & Bluetooth Headphone Remote Control
+        setupAirPodsRemoteControls()
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        self.becomeFirstResponder()
+    }
+
+    private func setupAirPodsRemoteControls() {
+        UIApplication.shared.beginReceivingRemoteControlEvents()
+
+        let commandCenter = MPRemoteCommandCenter.shared()
+
+        // Disable unneeded commands to prevent lock-screen UI conflicts
+        commandCenter.seekForwardCommand.isEnabled = false
+        commandCenter.seekBackwardCommand.isEnabled = false
+
+        // 1. AirPods stem squeeze / single click sends togglePlayPause
+        commandCenter.togglePlayPauseCommand.isEnabled = true
+        commandCenter.togglePlayPauseCommand.addTarget { [weak self] _ -> MPRemoteCommandHandlerStatus in
+            print("[AuraMusic iOS] AirPods / Remote command: togglePlayPause")
+            DispatchQueue.main.async {
+                self?.webView?.evaluateJavaScript("window.__auraRemoteToggle ? window.__auraRemoteToggle() : null")
+            }
+            return .success
+        }
+
+        // 2. Play
+        commandCenter.playCommand.isEnabled = true
+        commandCenter.playCommand.addTarget { [weak self] _ -> MPRemoteCommandHandlerStatus in
+            print("[AuraMusic iOS] AirPods / Remote command: play")
+            DispatchQueue.main.async {
+                self?.webView?.evaluateJavaScript("window.__auraRemotePlay ? window.__auraRemotePlay() : null")
+            }
+            return .success
+        }
+
+        // 3. Pause
+        commandCenter.pauseCommand.isEnabled = true
+        commandCenter.pauseCommand.addTarget { [weak self] _ -> MPRemoteCommandHandlerStatus in
+            print("[AuraMusic iOS] AirPods / Remote command: pause")
+            DispatchQueue.main.async {
+                self?.webView?.evaluateJavaScript("window.__auraRemotePause ? window.__auraRemotePause() : null")
+            }
+            return .success
+        }
+
+        // 4. Next track (AirPods double click)
+        commandCenter.nextTrackCommand.isEnabled = true
+        commandCenter.nextTrackCommand.addTarget { [weak self] _ -> MPRemoteCommandHandlerStatus in
+            print("[AuraMusic iOS] AirPods / Remote command: nextTrack")
+            DispatchQueue.main.async {
+                self?.webView?.evaluateJavaScript("window.__auraRemoteNext ? window.__auraRemoteNext() : null")
+            }
+            return .success
+        }
+
+        // 5. Previous track (AirPods triple click)
+        commandCenter.previousTrackCommand.isEnabled = true
+        commandCenter.previousTrackCommand.addTarget { [weak self] _ -> MPRemoteCommandHandlerStatus in
+            print("[AuraMusic iOS] AirPods / Remote command: previousTrack")
+            DispatchQueue.main.async {
+                self?.webView?.evaluateJavaScript("window.__auraRemotePrev ? window.__auraRemotePrev() : null")
+            }
+            return .success
+        }
+    }
+
+    override func remoteControlReceived(with event: UIEvent?) {
+        guard let event = event, event.type == .remoteControl else { return }
+        switch event.subtype {
+        case .remoteControlTogglePlayPause:
+            self.webView?.evaluateJavaScript("window.__auraRemoteToggle ? window.__auraRemoteToggle() : null")
+        case .remoteControlPlay:
+            self.webView?.evaluateJavaScript("window.__auraRemotePlay ? window.__auraRemotePlay() : null")
+        case .remoteControlPause:
+            self.webView?.evaluateJavaScript("window.__auraRemotePause ? window.__auraRemotePause() : null")
+        case .remoteControlNextTrack:
+            self.webView?.evaluateJavaScript("window.__auraRemoteNext ? window.__auraRemoteNext() : null")
+        case .remoteControlPreviousTrack:
+            self.webView?.evaluateJavaScript("window.__auraRemotePrev ? window.__auraRemotePrev() : null")
+        default:
+            break
+        }
+    }
+
+    override func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        guard let url = navigationAction.request.url else {
+            decisionHandler(.allow)
+            return
+        }
+        let host = url.host?.lowercased() ?? ""
+        let scheme = url.scheme?.lowercased() ?? ""
+
+        // In-app app navigation & audio blobs must always load smoothly in WKWebView without reloads or cancellation
+        if host.contains("aura-musiic.vercel.app") ||
+           host.contains("vercel.app") ||
+           scheme == "blob" ||
+           scheme == "about" ||
+           scheme == "data" {
+            decisionHandler(.allow)
+            return
+        }
+
+        super.webView(webView, decidePolicyFor: navigationAction, decisionHandler: decisionHandler)
     }
 
     override func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {

@@ -8,19 +8,25 @@ import { ArrowRight, ArrowLeft, ChevronRight } from "lucide-react";
 export function AndroidEdgeBackGesture() {
   const router = useRouter();
 
-  // Gesture state
+  const [isIOSDevice, setIsIOSDevice] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
-  const [activeEdge, setActiveEdge] = useState<"right" | "left" | null>(null);
   const [dragDist, setDragDist] = useState(0);
   const [touchY, setTouchY] = useState(300);
   const [isReadyToTrigger, setIsReadyToTrigger] = useState(false);
   const [isFullPlayerOpen, setIsFullPlayerOpen] = useState(false);
+  const [activeEdge, setActiveEdge] = useState<"right" | "left" | null>(null);
 
   const startXRef = useRef(0);
   const startYRef = useRef(0);
   const isGestureActiveRef = useRef(false);
   const activeEdgeRef = useRef<"right" | "left" | null>(null);
   const hasVibratedRef = useRef(false);
+
+  useEffect(() => {
+    if (typeof navigator !== "undefined") {
+      setIsIOSDevice(/iPhone|iPad|iPod/i.test(navigator.userAgent));
+    }
+  }, []);
 
   const TRIGGER_THRESHOLD = 52; // Sleek, responsive threshold
 
@@ -47,7 +53,7 @@ export function AndroidEdgeBackGesture() {
   }, []);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined" || isIOSDevice) return;
 
     const handleTouchStart = (e: TouchEvent) => {
       if (e.touches.length !== 1) return;
@@ -149,9 +155,9 @@ export function AndroidEdgeBackGesture() {
       window.removeEventListener("touchend", handleTouchEnd);
       window.removeEventListener("touchcancel", handleTouchEnd);
     };
-  }, [triggerBack, isReadyToTrigger]);
+  }, [triggerBack, isReadyToTrigger, isIOSDevice]);
 
-  if (isFullPlayerOpen) return null;
+  if (isIOSDevice || isFullPlayerOpen) return null;
 
   const progress = Math.min(1, dragDist / TRIGGER_THRESHOLD);
 

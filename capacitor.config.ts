@@ -15,20 +15,23 @@ const config: CapacitorConfig = {
     iosScheme: "https",
     url: "https://aura-musiic.vercel.app",
     allowNavigation: [
+      "https://aura-musiic.vercel.app*",
+      "*.vercel.app",
+      "aura-musiic.vercel.app",
       "*.saavncdn.com",
       "*.albumaty.com",
       "*.sndcdn.com",
       "*.googlevideo.com",
       "*.youtube.com",
       "*.piped.video",
-      "saavn.dev",
-      "aura-musiic.vercel.app"
+      "saavn.dev"
     ],
   },
   ios: {
     contentInset: "always",
     preferredContentMode: "mobile",
-    scheme: "auramusic",
+    allowsLinkPreview: false,
+    scrollEnabled: true,
   },
 };
 

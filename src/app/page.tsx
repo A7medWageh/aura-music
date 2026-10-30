@@ -9,6 +9,7 @@ import { downloadSong } from "@/services/offline/downloader";
 import { FavoriteButton } from "@/components/FavoriteButton";
 import { PremiumModal } from "@/components/PremiumModal";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCacheWarm } from "@/hooks/useCacheWarm";
 
 type ArtistEntry = { name: string; artistId: string; thumbnailUrl: string };
@@ -88,6 +89,7 @@ function ArtistGrid({ artists, loading, count = 10 }: { artists: ArtistEntry[]; 
 import { getClientCached, setClientCached } from "@/utils/clientCache";
 
 export default function HomePage() {
+  const router = useRouter();
   const { playNow } = usePlayer();
   const [greeting, setGreeting] = useState("مساء الخير");
   
@@ -309,7 +311,7 @@ export default function HomePage() {
                setPremiumFeatureName("تحميل الأغاني بدون إنترنت");
                setShowPremiumModal(true);
             } else {
-               window.location.href = "/library";
+               router.push("/library");
             }
         }} className="relative premium-card bg-gradient-to-br from-orange-500/20 to-red-600/20 border-orange-500/20 flex flex-col justify-between h-40 group cursor-pointer">
           {!isPremium && <div className="absolute top-2 left-2 px-2 py-0.5 bg-amber-500/20 text-amber-500 text-[10px] font-black rounded flex items-center gap-1 border border-amber-500/30"><Crown className="w-3 h-3"/> PREMIUM</div>}

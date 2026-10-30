@@ -14,7 +14,14 @@ export function AppBackgroundLayer() {
   const [activeConfig, setActiveConfig] = useState<CustomBackgroundConfig | null>(null);
   const [activeScope, setActiveScope] = useState<BackgroundScope | null>(null);
   const [scrollOffset, setScrollOffset] = useState(0);
+  const [isMobile, setIsMobile] = useState(false);
   const layerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setIsMobile(window.innerWidth < 768 || /iPhone|iPad|iPod|Android/i.test(navigator.userAgent));
+    }
+  }, []);
 
   const isLibrary = pathname?.startsWith("/library");
 
@@ -111,21 +118,23 @@ export function AppBackgroundLayer() {
           {isAutoFit ? (
             /* ── Auto-Fit Safe Viewport Mode (Measured to Mobile Screen minus Navbar & Bottom Player) ── */
             <>
-              {/* 1. Ambient Blurred Backdrop to smoothly fill edge-to-edge with matching natural colors */}
-              <div
-                className="absolute inset-0 w-full h-full opacity-45 overflow-hidden"
-                style={{
-                  transform: `translate3d(0, ${-parallaxY * 0.5}px, 0) scale(1.1)`,
-                  filter: "blur(20px) saturate(1.3) brightness(0.7)",
-                  WebkitFilter: "blur(20px) saturate(1.3) brightness(0.7)",
-                }}
-              >
-                <img
-                  src={activeConfig.dataUrl}
-                  alt=""
-                  className="w-full h-full object-cover object-center"
-                />
-              </div>
+              {/* 1. Ambient Blurred Backdrop to smoothly fill edge-to-edge with matching natural colors (Desktop only to prevent mobile Jetsam memory kill) */}
+              {!isMobile && (
+                <div
+                  className="absolute inset-0 w-full h-full opacity-45 overflow-hidden"
+                  style={{
+                    transform: `translate3d(0, ${-parallaxY * 0.5}px, 0) scale(1.1)`,
+                    filter: "blur(20px) saturate(1.3) brightness(0.7)",
+                    WebkitFilter: "blur(20px) saturate(1.3) brightness(0.7)",
+                  }}
+                >
+                  <img
+                    src={activeConfig.dataUrl}
+                    alt=""
+                    className="w-full h-full object-cover object-center"
+                  />
+                </div>
+              )}
 
               {/* 2. Full High-Definition Focal Image (Fitted to Safe Viewport without any stretching or cropping) */}
               <div
@@ -187,8 +196,8 @@ export function AppBackgroundLayer() {
                 radial-gradient(ellipse at center, rgba(0,0,0,${overlayOpacity * 0.4}) 0%, rgba(0,0,0,${Math.min(0.92, overlayOpacity * 1.25)}) 100%),
                 linear-gradient(to bottom, rgba(0,0,0,0.65) 0%, rgba(0,0,0,${overlayOpacity * 0.25}) 30%, rgba(0,0,0,${overlayOpacity * 0.55}) 70%, rgba(0,0,0,0.92) 100%)
               `,
-              backdropFilter: blurPx > 0 ? `blur(${Math.min(blurPx, 8)}px)` : undefined,
-              WebkitBackdropFilter: blurPx > 0 ? `blur(${Math.min(blurPx, 8)}px)` : undefined,
+              backdropFilter: (!isMobile && blurPx > 0) ? `blur(${Math.min(blurPx, 8)}px)` : undefined,
+              WebkitBackdropFilter: (!isMobile && blurPx > 0) ? `blur(${Math.min(blurPx, 8)}px)` : undefined,
             }}
           />
 

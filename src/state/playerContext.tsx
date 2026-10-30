@@ -1802,6 +1802,67 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  // ── Global Native AirPods & Bluetooth Headphone Remote Bridge ──
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    (window as any).__auraRemoteToggle = () => {
+      recordAudioDiagnosticEvent("Native AirPods remote: toggle requested");
+      togglePlay();
+    };
+
+    (window as any).__auraRemotePlay = () => {
+      recordAudioDiagnosticEvent("Native AirPods remote: play requested");
+      const player = audioRef.current;
+      if (!player) return;
+      if (!isPlayingRef.current || player.paused) {
+        togglePlay();
+      }
+    };
+
+    (window as any).__auraRemotePause = () => {
+      recordAudioDiagnosticEvent("Native AirPods remote: pause requested");
+      const player = audioRef.current;
+      if (!player) return;
+      if (isPlayingRef.current || !player.paused) {
+        togglePlay();
+      }
+    };
+
+    (window as any).__auraRemoteNext = () => {
+      recordAudioDiagnosticEvent("Native AirPods remote: next requested");
+      nextRef.current();
+    };
+
+    (window as any).__auraRemotePrev = () => {
+      recordAudioDiagnosticEvent("Native AirPods remote: prev requested");
+      prevRef.current();
+    };
+
+    // Support toggleplaypause in mediaSession if supported by browser/iOS WebKit
+    if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+      try {
+        navigator.mediaSession.setActionHandler("toggleplaypause" as any, () => {
+          recordAudioDiagnosticEvent("MediaSession action: toggleplaypause received");
+          togglePlay();
+        });
+      } catch {}
+    }
+
+    return () => {
+      delete (window as any).__auraRemoteToggle;
+      delete (window as any).__auraRemotePlay;
+      delete (window as any).__auraRemotePause;
+      delete (window as any).__auraRemoteNext;
+      delete (window as any).__auraRemotePrev;
+      if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+        try {
+          navigator.mediaSession.setActionHandler("toggleplaypause" as any, null);
+        } catch {}
+      }
+    };
+  }, [togglePlay]);
+
   useEffect(() => {
     const player = audioRef.current;
     if (!player) return;
