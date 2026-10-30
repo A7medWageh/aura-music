@@ -8,7 +8,6 @@ import {
   RotateCcw, RotateCw, Maximize2, Minimize2, X
 } from "lucide-react";
 import { usePlayer } from "@/state/playerContext";
-import { useOfflinePlayer } from "@/state/offlinePlayerContext";
 import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { getProxyUrl } from "@/utils/media";
@@ -1437,7 +1436,6 @@ function FullPlayer({
 // ─── Mini Player Bar ──────────────────────────────────────────────────
 export function PlayerBar() {
   const { state, currentSong, next, prev, togglePlay, setVolume, seekTo, hasUserTriggeredPlay, closePlayer } = usePlayer();
-  const { hasActiveSong: isOfflineActive } = useOfflinePlayer();
   const [isLiked, setIsLiked] = useState(false);
   const [fullOpen, setFullOpen] = useState(() => {
     if (typeof document !== "undefined") {
@@ -1503,7 +1501,7 @@ export function PlayerBar() {
   const { accent } = useDominantColor(proxyArt);
   const pct = state.duration > 0 ? (state.currentTime / state.duration) * 100 : 0;
 
-  if (!currentSong || isOfflineActive) return null;
+  if (!currentSong) return null;
 
   return (
     <>

@@ -4,7 +4,6 @@ import { useEffect, useState, useMemo } from "react";
 import { getAllOfflineSongs, getAllOfflineLyricsMap, deleteOfflineSong, deleteArtist, deleteAlbum, toggleSongHidden, consolidateArtistFolders } from "@/offline/indexedDbCache";
 import { subscribeDownloads } from "@/state/downloadStore";
 import { usePlayer } from "@/state/playerContext";
-import { useOfflinePlayer } from "@/state/offlinePlayerContext";
 import { motion, AnimatePresence } from "framer-motion";
 import { Play, Trash2, WifiOff, ArrowRight, DownloadCloud, Lock, Unlock, EyeOff, Eye, HardDrive, Music, CheckCircle2, AlertCircle, Image as ImageIcon, Search, X, FileText, Sparkles, RefreshCw, Smartphone } from "lucide-react";
 import { getProxyUrl } from "@/utils/media";
@@ -83,7 +82,7 @@ let cachedLibraryArtists: ArtistFolder[] = [];
 let cachedLibraryStats = { sizeMB: 0, count: 0 };
 
 export default function LibraryPage() {
-  const { playSongList: playOfflineList } = useOfflinePlayer();
+  const { playNow, enqueueSongs, setQueue } = usePlayer();
   const [artists, setArtists] = useState<ArtistFolder[]>(() => cachedLibraryArtists);
   const [allVisibleSongs, setAllVisibleSongs] = useState<Song[]>([]);
   const [lyricsMap, setLyricsMap] = useState<Map<string, string>>(new Map());
@@ -311,7 +310,7 @@ export default function LibraryPage() {
       return;
     }
     const idx = Math.max(0, Math.min(startIndex, ready.length - 1));
-    playOfflineList(ready as any, idx);
+    setQueue(ready as any, idx);
   };
 
   const currentArtistData = artists.find(a => a.name === openArtist);
@@ -544,7 +543,7 @@ export default function LibraryPage() {
                         showToast("لم يكتمل تنزيل هذه الأغنية بعد. اتصل بالإنترنت لتحميلها للاستماع أوفلاين.");
                         return;
                       }
-                      playOfflineList(searchResults.map((r) => r.item) as any, i);
+                      setQueue(searchResults.map((r) => r.item) as any, i);
                     }}
                     onDelete={(e: any) => handleDeleteSong(e, result.item.songId)}
                     onToggleHide={(e: any) => handleToggleHide(e, result.item)}
@@ -628,7 +627,7 @@ export default function LibraryPage() {
                     return;
                   }
                   // Set full album queue starting from this track so it advances automatically
-                  playOfflineList(currentAlbumData.songs as any, i);
+                  setQueue(currentAlbumData.songs as any, i);
                 }}
                 onDelete={(e: any) => handleDeleteSong(e, song.songId)}
                 onToggleHide={(e: any) => handleToggleHide(e, song)}
@@ -698,7 +697,7 @@ export default function LibraryPage() {
                          showToast("لم يكتمل تنزيل هذه الأغنية بعد. اتصل بالإنترنت لتحميلها للاستماع أوفلاين.");
                          return;
                        }
-                       playOfflineList(currentArtistData.singles as any, i);
+                       setQueue(currentArtistData.singles as any, i);
                      }}
                      onDelete={(e: any) => handleDeleteSong(e, song.songId)}
                      onToggleHide={(e: any) => handleToggleHide(e, song)}

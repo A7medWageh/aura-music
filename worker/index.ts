@@ -227,10 +227,10 @@ self.addEventListener('fetch', (event: any) => {
         if (cached) return cached;
         const library = await caches.match('/library');
         if (library) return library;
+        const offline = (await caches.match('/offline.html')) || (await (await caches.open('aura-offline-core')).match('/offline.html'));
+        if (offline) return offline;
         const root = await caches.match('/');
         if (root) return root;
-        const offline = await caches.match('/offline.html');
-        if (offline) return offline;
         return new Response('Offline', { status: 503, headers: { 'Content-Type': 'text/plain' } });
       })
     );
