@@ -14,7 +14,6 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         } catch {
             print("[AuraMusic] Failed to configure AVAudioSession: \(error)")
         }
-        application.beginReceivingRemoteControlEvents()
         return true
     }
 

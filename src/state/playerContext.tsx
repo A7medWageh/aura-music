@@ -178,6 +178,34 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     return newUrl;
   };
 
+  const rejuvenateActiveBlobSource = (): string | null => {
+    if (!activeBlobRef.current || !activeOfflineSongIdRef.current) return null;
+    const blob = activeBlobRef.current;
+    const songId = activeOfflineSongIdRef.current;
+    const oldUrl = activeBlobUrlRef.current;
+    const newUrl = URL.createObjectURL(blob);
+
+    activeBlobUrlRef.current = newUrl;
+    currentSourceTypeRef.current = "offline-blob";
+
+    recordAudioDiagnosticEvent("rejuvenateActiveBlobSource", {
+      songId,
+      newUrl,
+    });
+
+    if (oldUrl && oldUrl !== newUrl) {
+      setTimeout(() => {
+        try {
+          if (audioRef.current?.src !== oldUrl) {
+            URL.revokeObjectURL(oldUrl);
+          }
+        } catch {}
+      }, 5000);
+    }
+
+    return newUrl;
+  };
+
   const clearActiveBlobSource = () => {
     const oldUrl = activeBlobUrlRef.current;
     activeBlobRef.current = null;
@@ -279,9 +307,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (dur && !isNaN(dur) && isFinite(dur) && dur > 0) {
       try {
         const curTime = player.currentTime || 0;
+        const isPaused = player.paused || !stateRef.current.isPlaying;
         navigator.mediaSession.setPositionState({
           duration: Math.max(1, dur),
-          playbackRate: Math.max(0.5, Math.min(2, player.playbackRate || 1)),
+          playbackRate: isPaused ? 0 : Math.max(0.5, Math.min(2, player.playbackRate || 1)),
           position: Math.max(0, Math.min(curTime, dur)),
         });
       } catch (e) {
@@ -552,6 +581,79 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     } finally {
       isRecoveringRef.current = false;
     }
+  };
+
+  const stallWatchdogTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  /**
+   * iOS WebKit Background & Bluetooth Lock-Screen Stall Watchdog:
+   * On iOS, when audio is paused while the screen is locked, WebKit often detaches the
+   * Blob URL's AVAssetResourceLoader or suspends the AVPlayer timebase.
+   * Calling player.play() resolves successfully without errors, but the progress bar
+   * is frozen (currentTime does not advance) and no sound reaches the Bluetooth headset.
+   * 
+   * This watchdog checks ~380ms after resume: if the element is marked playing but
+   * currentTime hasn't moved, it immediately performs an in-hardware un-stall:
+   * 1. If offline blob: re-binds AVAssetResourceLoader with a rejuvenated blob URL.
+   * 2. If online: nudges currentTime by +0.01s to force the AVPlayer timebase awake.
+   * 3. If still stalled: executes full centralized playback recovery.
+   */
+  const armStallWatchdog = (expectedTime: number, context: string) => {
+    if (stallWatchdogTimeoutRef.current) {
+      clearTimeout(stallWatchdogTimeoutRef.current);
+      stallWatchdogTimeoutRef.current = null;
+    }
+
+    stallWatchdogTimeoutRef.current = setTimeout(async () => {
+      const player = audioRef.current;
+      if (!player || player.paused || !isPlayingRef.current) return;
+
+      const curTime = player.currentTime || 0;
+      const isStalled = Math.abs(curTime - expectedTime) < 0.05 && (player.duration > 1 || stateRef.current.duration > 1);
+
+      if (isStalled) {
+        console.warn(`[Player] Stall detected (${context}) at ${curTime.toFixed(2)}s. Kickstarting audio pipeline...`);
+        recordAudioDiagnosticEvent("iOS audio stall watchdog triggered", {
+          context,
+          currentTime: curTime,
+          expectedTime,
+          sourceType: currentSourceTypeRef.current,
+          readyState: player.readyState,
+        });
+
+        // Recovery Path A: If offline blob, refresh the blob URL to re-bind AVAssetResourceLoader
+        if (currentSourceTypeRef.current === "offline-blob" && activeBlobRef.current) {
+          const freshUrl = rejuvenateActiveBlobSource();
+          if (freshUrl) {
+            try {
+              player.src = freshUrl;
+              player.preload = "auto";
+              if (expectedTime > 0) {
+                try { player.currentTime = expectedTime; } catch {}
+              }
+              await player.play();
+              syncPositionState();
+              recordAudioDiagnosticEvent("Watchdog revived offline blob successfully");
+              return;
+            } catch (e) {
+              console.warn("[Player] Watchdog offline blob restart caught:", e);
+            }
+          }
+        }
+
+        // Recovery Path B: Force AVPlayer timebase awake by micro-nudging currentTime
+        try {
+          const nudgeTime = Math.max(0, expectedTime + 0.01);
+          player.currentTime = nudgeTime;
+          await player.play();
+          syncPositionState();
+          recordAudioDiagnosticEvent("Watchdog timebase nudge succeeded");
+        } catch {
+          // Recovery Path C: Full recovery fallback
+          executePlayOrRecover("stall-watchdog-fallback");
+        }
+      }
+    }, 380);
   };
 
   // Synchronous fast-track starter: plays immediately inside user/handsfree gestures
@@ -903,6 +1005,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const player = audioRef.current;
     if (player) {
       if (state.isPlaying) {
+        if (stallWatchdogTimeoutRef.current) {
+          clearTimeout(stallWatchdogTimeoutRef.current);
+          stallWatchdogTimeoutRef.current = null;
+        }
         player.pause();
         isPlayingRef.current = false;
         holdAudioSessionOnPause();
@@ -920,6 +1026,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           audioCtxRef.current.resume().catch(() => {});
         }
 
+        const savedTime = player.currentTime || stateRef.current.currentTime || 0;
+
         // Fast synchronous resume inside user gesture tick
         if (player.src && player.src !== "" && player.src !== window.location.href) {
           player.muted = false;
@@ -934,6 +1042,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
                   isPlayingRef.current = true;
                   setState((prev) => ({ ...prev, isPlaying: true, isBuffering: false, error: null }));
                   syncPositionState();
+                  armStallWatchdog(savedTime, "togglePlay-sync");
                 })
                 .catch(() => {
                   executePlayOrRecover("togglePlay-fallback");
@@ -1586,18 +1695,23 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       // Calling player.play() synchronously in the exact hardware gesture frame
       // is REQUIRED by iOS WebKit to maintain the user-activation token in background.
       if (player.src && player.src !== "" && player.src !== window.location.href) {
+        const savedTime = player.currentTime || stateRef.current.currentTime || 0;
         try {
           const playPromise = player.play();
           if (playPromise !== undefined) {
             playPromise
               .then(() => {
-                recordAudioDiagnosticEvent("MediaSession direct sync play succeeded");
+                recordAudioDiagnosticEvent("MediaSession direct sync play succeeded", {
+                  currentTime: player.currentTime,
+                  readyState: player.readyState,
+                });
                 if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
                   navigator.mediaSession.playbackState = "playing";
                 }
                 isPlayingRef.current = true;
                 setState((prev) => ({ ...prev, isPlaying: true, isBuffering: false, error: null }));
                 syncPositionState();
+                armStallWatchdog(savedTime, "mediasession-direct-play");
               })
               .catch((err) => {
                 recordAudioDiagnosticEvent("MediaSession direct play rejected, falling back to recovery engine", {
@@ -1619,6 +1733,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
     navigator.mediaSession.setActionHandler("pause", () => {
       recordAudioDiagnosticEvent("MediaSession action: pause received");
+      if (stallWatchdogTimeoutRef.current) {
+        clearTimeout(stallWatchdogTimeoutRef.current);
+        stallWatchdogTimeoutRef.current = null;
+      }
       const player = audioRef.current;
       if (player) {
         player.pause();
@@ -1955,6 +2073,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const onTimeUpdate = () => {
     const player = audioRef.current;
     if (player) {
+      if (stallWatchdogTimeoutRef.current && (player.currentTime || 0) > 0) {
+        clearTimeout(stallWatchdogTimeoutRef.current);
+        stallWatchdogTimeoutRef.current = null;
+      }
       const now = performance.now();
       if (now - lastTimeUpdateRef.current >= 300 || player.currentTime === 0) {
         lastTimeUpdateRef.current = now;
@@ -2180,6 +2302,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   };
 
   const onPause = () => {
+    if (stallWatchdogTimeoutRef.current) {
+      clearTimeout(stallWatchdogTimeoutRef.current);
+      stallWatchdogTimeoutRef.current = null;
+    }
     recordAudioDiagnosticEvent("Audio onPause event", {
       currentTime: audioRef.current?.currentTime,
       isLoadingNewSong: isLoadingNewSongRef.current,

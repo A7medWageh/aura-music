@@ -81,7 +81,9 @@ if (typeof window !== "undefined") {
 
 /**
  * Activates silent carrier when real music is paused.
- * Keeps iOS WebKit from freezing the background process so lock-screen Play works.
+ * Note: We intentionally avoid playing a secondary silent audio loop during pause,
+ * as iOS WebKit treats carrier pause + real player play in the same hardware tick
+ * as an audio route interruption, stalling Bluetooth headphones and freezing currentTime.
  */
 export function holdAudioSessionOnPause() {
   if (typeof window === "undefined") return;
@@ -90,24 +92,6 @@ export function holdAudioSessionOnPause() {
     clearTimeout(idleTimeout);
     idleTimeout = null;
   }
-
-  const carrier = getSilentCarrier();
-  if (!carrier) return;
-
-  try {
-    carrier.muted = false;
-    const p = carrier.play();
-    if (p !== undefined) {
-      p.catch((err) => {
-        console.warn("[AudioSessionKeepAlive] Silent carrier play caught:", err);
-      });
-    }
-  } catch {}
-
-  // Safety timer: if user leaves it paused for 30 minutes, release carrier to conserve battery
-  idleTimeout = setTimeout(() => {
-    releaseAudioSession();
-  }, MAX_IDLE_MINUTES * 60 * 1000);
 }
 
 /**
