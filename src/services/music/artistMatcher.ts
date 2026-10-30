@@ -356,7 +356,9 @@ export function findBestOfficialVideo(
       score += 150; // Official artist channel!
     }
 
-    if (rawChannel.includes("topic") || rawChannel.includes("vevo") || rawChannel.includes("official")) {
+    if (rawChannel.includes("topic")) {
+      score += 220; // Official YouTube Music pristine studio audio master! Zero video dialogue or empty silence.
+    } else if (rawChannel.includes("vevo") || rawChannel.includes("official")) {
       score += 80;
     }
 
@@ -365,26 +367,34 @@ export function findBestOfficialVideo(
       score += 120;
     }
 
-    // 4. Official video/audio indicators in title
-    if (/official (video|music video|audio)|فيديو كليب|كليب رسمي|الأغنية الرسمية|الأوديو الرسمي/i.test(rawTitle)) {
-      score += 70;
+    // 4. Official audio indicators vs video clips with theatrical dialogues & silence
+    if (/official audio|الأوديو الرسمي|النسخة الأصلية|original audio|audio\b/i.test(rawTitle)) {
+      score += 200; // Pure studio audio track
+    } else if (/فيديو كليب|كليب رسمي|music video|official video|short film|فيلم قصير|مشهد/i.test(rawTitle)) {
+      // Penalize video clips as they often contain minutes of theatrical dialogues, sound effects, or dead silence
+      score -= 120;
     }
 
     // 5. Penalize third-party / fan channels
     if (/lyrics|حالات|قناة|تصميم|انطوائي|روميو/i.test(rawChannel)) {
-      score -= 80;
+      score -= 100;
     }
 
-    // 6. Realistic song duration (between 1:45 and 7:30)
+    // 6. Realistic song duration (normal songs are 2:00 to 5:30)
     const dur = c.durationSec || 0;
-    if (dur >= 105 && dur <= 450) {
-      score += 40;
-    } else if (dur > 600) {
-      // Long video / full album -> penalize heavily
-      score -= 100;
-    } else if (dur > 0 && dur < 60) {
-      // Short / teaser -> reject
-      score -= 200;
+    if (dur >= 120 && dur <= 330) {
+      score += 70; // Ideal pristine song length
+    } else if (dur > 330 && dur <= 420) {
+      score += 15;
+    } else if (dur > 420 && dur <= 480) {
+      // Long video (over 7 minutes) -> penalize heavily
+      score -= 350;
+    } else if (dur > 480) {
+      // Extremely long video (over 8 minutes) -> Reject! (Often compilation or video clip with dead silence)
+      continue;
+    } else if (dur > 0 && dur < 75) {
+      // Teaser / snippet -> Reject!
+      continue;
     }
 
     if (score > bestScore) {

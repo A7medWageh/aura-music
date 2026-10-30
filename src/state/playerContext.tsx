@@ -15,6 +15,7 @@ import {
   registerAudioDiagnosticsSource,
   AudioSourceType
 } from "@/utils/audioDiagnostics";
+import { analyzeAudioSilence, getCachedSilenceAnalysis } from "@/utils/audioSilenceDetector";
 
 // ── Accurate iOS Detection (iPhone, iPad, iPod, WKWebView) ──
 const isIOSDevice = () => {
@@ -138,6 +139,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   const nextRef = useRef<() => void>(() => {});
   const prevRef = useRef<() => void>(() => {});
+  const prevPreloadedRef = useRef<{ songId: string; url: string; isBlob: boolean } | null>(null);
+  const queueBlobCacheRef = useRef<Map<string, { blob: Blob; url: string }>>(new Map());
+  const activeTrimmedStartRef = useRef<number>(0);
+  const activeTrimmedEndRef = useRef<number>(0);
 
   const setActiveBlobSource = (songId: string, blob: Blob): string => {
     // If we already have a valid active URL for this exact same blob, reuse it
@@ -164,6 +169,23 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       mimeType: blob.type,
       newUrl,
     });
+
+    // ── Auto-Detect and Trim Dead Silence & Dialogue ──
+    analyzeAudioSilence(songId, blob)
+      .then((silenceRes) => {
+        if (silenceRes && activeOfflineSongIdRef.current === songId) {
+          activeTrimmedStartRef.current = silenceRes.startSec;
+          activeTrimmedEndRef.current = silenceRes.endSec;
+          console.log(
+            `[SilenceDetector] Song "${songId}": start=${silenceRes.startSec}s, end=${silenceRes.endSec}s, duration=${silenceRes.totalDuration}s`
+          );
+          const player = audioRef.current;
+          if (player && silenceRes.hasLeadingSilence && player.currentTime < silenceRes.startSec) {
+            player.currentTime = silenceRes.startSec;
+          }
+        }
+      })
+      .catch(() => {});
 
     if (oldUrl && oldUrl !== newUrl) {
       setTimeout(() => {
@@ -207,6 +229,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   };
 
   const clearActiveBlobSource = () => {
+    activeTrimmedStartRef.current = 0;
+    activeTrimmedEndRef.current = 0;
     const oldUrl = activeBlobUrlRef.current;
     activeBlobRef.current = null;
     activeOfflineSongIdRef.current = null;
@@ -260,6 +284,16 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     // Route artwork through our dedicated high-res proxy (/api/artwork)
     // iOS NowPlaying requires absolute HTTPS URLs serving image/jpeg or image/png with CORS headers
     const baseUrl = typeof window !== "undefined" ? window.location.origin : "https://aura-music.vercel.app";
+    const artworkList: Array<{ src: string; sizes: string; type: string }> = [];
+
+    // 1. If song has a data URI (cached base64) or direct image, include it first
+    if (artUrl && (artUrl.startsWith("data:") || artUrl.startsWith("blob:"))) {
+      artworkList.push({ src: artUrl, sizes: "512x512", type: "image/jpeg" });
+    } else if (artUrl && (artUrl.startsWith("http://") || artUrl.startsWith("https://"))) {
+      artworkList.push({ src: artUrl, sizes: "512x512", type: "image/jpeg" });
+    }
+
+    // 2. High-res proxy URL (for online and service worker cache)
     const p = new URLSearchParams();
     if (artUrl && !artUrl.startsWith("blob:") && !artUrl.startsWith("data:")) {
       p.set("url", artUrl);
@@ -269,24 +303,47 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (songArtist) p.set("artist", songArtist);
 
     const fullArtworkUrl = `${baseUrl}/api/artwork?${p.toString()}`;
+    artworkList.push(
+      { src: fullArtworkUrl, sizes: "96x96", type: "image/jpeg" },
+      { src: fullArtworkUrl, sizes: "192x192", type: "image/jpeg" },
+      { src: fullArtworkUrl, sizes: "512x512", type: "image/jpeg" }
+    );
+
+    // 3. Precached offline fallback icons (essential for iOS Safari PWA in Airplane Mode)
+    artworkList.push(
+      { src: `${baseUrl}/icons/icon-192.png`, sizes: "192x192", type: "image/png" },
+      { src: `${baseUrl}/icons/icon-512.png`, sizes: "512x512", type: "image/png" },
+      { src: `${baseUrl}/logo-v2.png`, sizes: "512x512", type: "image/png" }
+    );
 
     try {
       navigator.mediaSession.metadata = new MediaMetadata({
         title: song.title || "أغنية",
         artist: songArtist,
         album: albumName,
-        artwork: [
-          { src: fullArtworkUrl, sizes: "96x96", type: "image/jpeg" },
-          { src: fullArtworkUrl, sizes: "128x128", type: "image/jpeg" },
-          { src: fullArtworkUrl, sizes: "192x192", type: "image/jpeg" },
-          { src: fullArtworkUrl, sizes: "256x256", type: "image/jpeg" },
-          { src: fullArtworkUrl, sizes: "384x384", type: "image/jpeg" },
-          { src: fullArtworkUrl, sizes: "512x512", type: "image/jpeg" },
-          { src: fullArtworkUrl, sizes: "1024x1024", type: "image/jpeg" },
-        ],
+        artwork: artworkList,
       });
     } catch (err) {
       console.warn("[MediaSession] Metadata update error:", err);
+    }
+
+    // If no direct data URL was present, check offline IndexedDB metadata for cached thumbnail
+    if (!artUrl || (!artUrl.startsWith("data:") && !artUrl.startsWith("blob:"))) {
+      getOfflineSongMeta(song.songId).then((meta) => {
+        if (meta?.thumbnailUrl && meta.thumbnailUrl.startsWith("data:")) {
+          try {
+            navigator.mediaSession.metadata = new MediaMetadata({
+              title: song.title || "أغنية",
+              artist: songArtist,
+              album: albumName,
+              artwork: [
+                { src: meta.thumbnailUrl, sizes: "512x512", type: "image/jpeg" },
+                ...artworkList,
+              ],
+            });
+          } catch {}
+        }
+      }).catch(() => {});
     }
   };
 
@@ -302,6 +359,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     let dur = player.duration;
     if (!dur || isNaN(dur) || !isFinite(dur) || dur <= 0) {
       dur = stateRef.current.duration;
+    }
+
+    // If silence detector trimmed trailing dead silence, adjust displayed duration
+    if (activeTrimmedEndRef.current > 0 && dur > activeTrimmedEndRef.current) {
+      dur = activeTrimmedEndRef.current;
     }
 
     if (dur && !isNaN(dur) && isFinite(dur) && dur > 0) {
@@ -677,10 +739,24 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       import("@/services/user/listeningHistory").then(({ trackPlay }) => trackPlay(song)).catch(() => {});
     }
 
-    // 1. Fast handoff if preloaded URL is ready
-    if (nextPreloadedRef.current && nextPreloadedRef.current.songId === song.songId) {
-      const pUrl = nextPreloadedRef.current.url;
-      const isBlob = nextPreloadedRef.current.isBlob;
+    // 1. Fast handoff if preloaded URL is ready (next, prev, or cached blob)
+    let preloadedHandoff =
+      nextPreloadedRef.current && nextPreloadedRef.current.songId === song.songId
+        ? nextPreloadedRef.current
+        : prevPreloadedRef.current && prevPreloadedRef.current.songId === song.songId
+          ? prevPreloadedRef.current
+          : null;
+
+    if (!preloadedHandoff) {
+      const cachedMem = queueBlobCacheRef.current.get(song.songId);
+      if (cachedMem) {
+        preloadedHandoff = { songId: song.songId, url: cachedMem.url, isBlob: true };
+      }
+    }
+
+    if (preloadedHandoff) {
+      const pUrl = preloadedHandoff.url;
+      const isBlob = preloadedHandoff.isBlob;
       player.muted = false;
       player.src = pUrl;
       player.preload = "auto";
@@ -694,7 +770,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       player.play().catch((err) => {
         if (err.name !== "AbortError") console.warn("[LockScreen] Preload play error:", err);
       });
-      nextPreloadedRef.current = null;
+      if (nextPreloadedRef.current?.songId === song.songId) nextPreloadedRef.current = null;
+      if (prevPreloadedRef.current?.songId === song.songId) prevPreloadedRef.current = null;
+
+      preloadSurrounding(song.songId, stateRef.current.queue);
 
       setState((prev) => {
         const exists = prev.queue.some((item) => item.songId === song.songId);
@@ -724,6 +803,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       player.play().catch((err) => {
         if (err.name !== "AbortError") console.warn("[Player] Cached blob play error:", err);
       });
+      preloadSurrounding(song.songId, stateRef.current.queue);
       setState((prev) => {
         const exists = prev.queue.some((item) => item.songId === song.songId);
         const nextQueue = exists ? prev.queue : [song, ...prev.queue];
@@ -766,12 +846,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
         if (b) {
           const blobUrl = setActiveBlobSource(song.songId, b);
+          queueBlobCacheRef.current.set(song.songId, { blob: b, url: blobUrl });
           player.muted = false;
           player.src = blobUrl;
           player.preload = "auto";
           player.play().catch((err) => {
             if (err.name !== "AbortError") console.warn("[Player] Offline blob play error:", err);
           });
+          preloadSurrounding(song.songId, stateRef.current.queue);
           setState((prev) => {
             const exists = prev.queue.some((item) => item.songId === song.songId);
             const nextQueue = exists ? prev.queue : [song, ...prev.queue];
@@ -1622,50 +1704,77 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
 
 
-  const preloadNext = async (currentId: string, queue: QueueSong[]) => {
+  const preloadSurrounding = async (currentId: string, queue: QueueSong[]) => {
     if (!queue || queue.length <= 1 || !currentId) return;
-    const currentIndex = queue.findIndex(s => s.songId === currentId);
+    const currentIndex = queue.findIndex((s) => s.songId === currentId);
     if (currentIndex < 0) return;
-    const nextIndex = (currentIndex + 1) % queue.length;
-    const nextSong = queue[nextIndex];
-    if (!nextSong || nextPreloadedRef.current?.songId === nextSong.songId) return;
 
-    try {
-      // 1. Check offline storage first (instant blob URL)
-      let cachedBlob = await getAudioBlob(nextSong.songId);
-      if (!cachedBlob && nextSong.youtubeVideoId) {
-        cachedBlob = await getAudioBlob(nextSong.youtubeVideoId);
+    const nextIndex = (currentIndex + 1) % queue.length;
+    const prevIndex = currentIndex <= 0 ? queue.length - 1 : currentIndex - 1;
+    const nextSong = queue[nextIndex];
+    const prevSong = queue[prevIndex];
+
+    const resolveSongSource = async (song: QueueSong) => {
+      // 1. In-memory queue blob cache
+      const mem = queueBlobCacheRef.current.get(song.songId);
+      if (mem) return { songId: song.songId, url: mem.url, isBlob: true };
+
+      // 2. Offline storage first (instant blob URL)
+      let cachedBlob = await getAudioBlob(song.songId);
+      if (!cachedBlob && song.youtubeVideoId) {
+        cachedBlob = await getAudioBlob(song.youtubeVideoId);
       }
-      if (cachedBlob && isKhaleejiOrCorruptedJannatBlob(nextSong.artist, cachedBlob.size, nextSong.songId || nextSong.title)) {
+      if (cachedBlob && isKhaleejiOrCorruptedJannatBlob(song.artist, cachedBlob.size, song.songId || song.title)) {
         cachedBlob = null;
       }
       if (cachedBlob) {
         const url = URL.createObjectURL(cachedBlob);
-        nextPreloadedRef.current = { songId: nextSong.songId, url, isBlob: true };
-        console.log(`[Player] Next track "${nextSong.title}" preloaded from offline cache`);
-        return;
+        queueBlobCacheRef.current.set(song.songId, { blob: cachedBlob, url });
+        return { songId: song.songId, url, isBlob: true };
       }
 
-      // 2. Pre-resolve stream URL if online
+      // 3. Pre-resolve stream URL if online
       if (typeof navigator !== "undefined" && navigator.onLine) {
-        const params = new URLSearchParams();
-        const vid = nextSong.youtubeVideoId || nextSong.songId || "";
-        if (vid && /^[a-zA-Z0-9_-]{11}$/.test(vid)) params.set("videoId", vid);
-        if (nextSong.title) params.set("title", nextSong.title);
-        if (nextSong.artist) params.set("artist", nextSong.artist);
-        params.set("resolveOnly", "true");
+        try {
+          const params = new URLSearchParams();
+          const vid = song.youtubeVideoId || song.songId || "";
+          if (vid && /^[a-zA-Z0-9_-]{11}$/.test(vid)) params.set("videoId", vid);
+          if (song.title) params.set("title", song.title);
+          if (song.artist) params.set("artist", song.artist);
+          params.set("resolveOnly", "true");
 
-        const res = await fetch(toAbsoluteApiUrl(`/api/ytdownload?${params.toString()}`));
-        if (res.ok) {
-          const data = await res.json();
-          if (data.url) {
-            nextPreloadedRef.current = { songId: nextSong.songId, url: data.url, isBlob: false };
-            console.log(`[Player] Next track "${nextSong.title}" stream URL pre-resolved`);
+          const res = await fetch(toAbsoluteApiUrl(`/api/ytdownload?${params.toString()}`));
+          if (res.ok) {
+            const data = await res.json();
+            if (data.url) {
+              return { songId: song.songId, url: data.url, isBlob: false };
+            }
           }
-        }
+        } catch {}
       }
-    } catch {}
+      return null;
+    };
+
+    if (nextSong && nextPreloadedRef.current?.songId !== nextSong.songId) {
+      resolveSongSource(nextSong).then((res) => {
+        if (res) {
+          nextPreloadedRef.current = res;
+          console.log(`[Player] Next track "${nextSong.title}" preloaded (${res.isBlob ? "offline blob" : "stream URL"})`);
+        }
+      }).catch(() => {});
+    }
+
+    if (prevSong && prevSong.songId !== nextSong?.songId && prevPreloadedRef.current?.songId !== prevSong.songId) {
+      resolveSongSource(prevSong).then((res) => {
+        if (res) {
+          prevPreloadedRef.current = res;
+          console.log(`[Player] Prev track "${prevSong.title}" preloaded (${res.isBlob ? "offline blob" : "stream URL"})`);
+        }
+      }).catch(() => {});
+    }
   };
+
+  const preloadNext = preloadSurrounding;
 
   // ─── Media Session API (Lock Screen & Bluetooth Headset Remote Control) ─────
   useEffect(() => {
@@ -1989,7 +2098,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         if (cachedBlob && !cancelled) {
           console.log("[Player] Playing from offline storage.");
           const blobUrl = setActiveBlobSource(song.songId, cachedBlob);
+          queueBlobCacheRef.current.set(song.songId, { blob: cachedBlob, url: blobUrl });
           isPlayingRef.current = true;
+          updateMediaSessionMetadata(song);
+          if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+            navigator.mediaSession.playbackState = "playing";
+          }
+          preloadSurrounding(song.songId, stateRef.current.queue);
+
           setState((prev) => ({
             ...prev,
             isBuffering: false,
@@ -2012,7 +2128,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           }
 
           player.src = blobUrl;
-          player.load();
           const p = player.play();
           if (p !== undefined) {
             p.catch((err) => {
@@ -2143,10 +2258,31 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         lastTimeUpdateRef.current = now;
         setState((prev) => ({ ...prev, currentTime: player.currentTime || 0 }));
 
+        // ── Auto-Skip Dead Silence & Theatrical Dialogue ──
+        if (
+          activeTrimmedStartRef.current > 0 &&
+          player.currentTime < activeTrimmedStartRef.current &&
+          player.currentTime < 1.0
+        ) {
+          console.log(`[SilenceDetector] Auto-skipping ${activeTrimmedStartRef.current.toFixed(1)}s of leading silence/dialogue`);
+          player.currentTime = activeTrimmedStartRef.current;
+        }
+
+        if (
+          activeTrimmedEndRef.current > 0 &&
+          player.currentTime >= activeTrimmedEndRef.current &&
+          player.duration > (activeTrimmedEndRef.current + 2)
+        ) {
+          console.log(`[SilenceDetector] Reached end of musical content (${player.currentTime.toFixed(1)}s >= ${activeTrimmedEndRef.current.toFixed(1)}s). Auto-advancing track!`);
+          activeTrimmedEndRef.current = 0;
+          onEnded();
+          return;
+        }
+
         // Trigger preloading for next track once current track is underway
-        if (player.currentTime > 5 && lastPreloadRef.current !== stateRef.current.currentSongId && stateRef.current.currentSongId) {
+        if (player.currentTime > 2 && lastPreloadRef.current !== stateRef.current.currentSongId && stateRef.current.currentSongId) {
           lastPreloadRef.current = stateRef.current.currentSongId;
-          preloadNext(stateRef.current.currentSongId, stateRef.current.queue);
+          preloadSurrounding(stateRef.current.currentSongId, stateRef.current.queue);
         }
 
         // Real-time lock screen & Bluetooth position sync
@@ -2382,6 +2518,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   };
 
   const onEnded = () => {
+    activeTrimmedStartRef.current = 0;
+    activeTrimmedEndRef.current = 0;
     const currentState = stateRef.current;
     if (!currentState.queue.length || !currentState.currentSongId) {
       setState((prev) => ({ ...prev, isPlaying: false }));
@@ -2392,7 +2530,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (currentState.repeat === "one") {
       const player = audioRef.current;
       if (player) {
-        player.currentTime = 0;
+        player.currentTime = activeTrimmedStartRef.current || 0;
         player.play().catch(() => undefined);
       }
       return;
