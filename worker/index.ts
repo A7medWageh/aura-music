@@ -163,18 +163,28 @@ self.addEventListener('notificationclick', (event) => {
 self.addEventListener('install', (event: any) => {
   self.skipWaiting();
   event.waitUntil(
-    caches.open('aura-offline-core').then((cache) => {
-      return cache.addAll([
+    caches.open('aura-offline-core').then(async (cache) => {
+      const coreUrls = [
         '/',
         '/library',
         '/offline.html',
         '/manifest.json',
         '/icons/icon-192.png',
+        '/icons/icon-512.png',
+        '/logo-v2.png',
         '/placeholder-song.jpg',
         '/placeholder-album.jpg',
         '/placeholder-artist.jpg',
-      ]);
-    }).catch((err) => console.warn('[SW] Offline precache error:', err))
+      ];
+      // Use Promise.allSettled so one failed asset never aborts precaching the others
+      await Promise.allSettled(
+        coreUrls.map((url) =>
+          cache.add(new Request(url, { cache: 'reload' })).catch((err) => {
+            console.warn(`[SW] Precache skipped for ${url}:`, err.message);
+          })
+        )
+      );
+    })
   );
 });
 
@@ -183,13 +193,84 @@ self.addEventListener('activate', (event: any) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  OFFLINE NAVIGATION & IMAGE CACHE FALLBACK
+//  OFFLINE NAVIGATION & ASSET CACHING ENGINE (Instant Cold-Start on iOS PWA)
 // ─────────────────────────────────────────────────────────────────────────────
 self.addEventListener('fetch', (event: any) => {
   const req = event.request;
   const url = new URL(req.url);
 
-  // 1. Image caching & offline fallback
+  // 1. Navigation requests (Instant 0ms offline cold start)
+  if (req.mode === 'navigate') {
+    event.respondWith(
+      (async () => {
+        // Fast offline path: If device is in Airplane Mode or offline, DO NOT call fetch!
+        // Calling fetch while offline on iOS WebKit hangs for 30s causing a black screen!
+        if (!self.navigator.onLine) {
+          const cached =
+            (await caches.match(req)) ||
+            (await caches.match('/library')) ||
+            (await caches.match('/'));
+          if (cached) return cached;
+
+          const offlineDoc =
+            (await caches.match('/offline.html')) ||
+            (await (await caches.open('aura-offline-core')).match('/offline.html'));
+          if (offlineDoc) return offlineDoc;
+        }
+
+        // Online path with strict 1200ms timeout
+        try {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 1200);
+          const netRes = await fetch(req, { signal: controller.signal });
+          clearTimeout(timer);
+          if (netRes && (netRes.status === 200 || netRes.type === 'opaque')) {
+            const cache = await caches.open('aura-offline-core');
+            cache.put(req, netRes.clone()).catch(() => {});
+            return netRes;
+          }
+        } catch {}
+
+        // Fallback to cached pages
+        const cachedFallback =
+          (await caches.match(req)) ||
+          (await caches.match('/library')) ||
+          (await caches.match('/'));
+        if (cachedFallback) return cachedFallback;
+
+        const offlineFallback =
+          (await caches.match('/offline.html')) ||
+          (await (await caches.open('aura-offline-core')).match('/offline.html'));
+        if (offlineFallback) return offlineFallback;
+
+        return new Response('Offline', { status: 503, headers: { 'Content-Type': 'text/plain' } });
+      })()
+    );
+    return;
+  }
+
+  // 2. Next.js Static Chunks & CSS (Cache-First to ensure React mounts offline)
+  if (url.pathname.startsWith('/_next/static/') || /\.(?:js|css)$/i.test(url.pathname)) {
+    event.respondWith(
+      caches.match(req).then((cached) => {
+        if (cached) return cached;
+        return fetch(req)
+          .then(async (response) => {
+            if (response && response.status === 200) {
+              const cache = await caches.open('aura-static-chunks-v3');
+              cache.put(req, response.clone()).catch(() => {});
+            }
+            return response;
+          })
+          .catch(() => {
+            return new Response('', { status: 404 });
+          });
+      })
+    );
+    return;
+  }
+
+  // 3. Image caching & offline fallback
   const isImage =
     req.destination === 'image' ||
     /\.(?:png|jpg|jpeg|svg|gif|webp|ico)$/i.test(url.pathname) ||
@@ -200,39 +281,23 @@ self.addEventListener('fetch', (event: any) => {
     event.respondWith(
       caches.match(req).then((cached) => {
         if (cached) return cached;
-        return fetch(req).then(async (response) => {
-          if (response && (response.status === 200 || response.type === 'opaque')) {
-            try {
-              const cache = await caches.open('aura-offline-images');
-              cache.put(req, response.clone()).catch(() => {});
-            } catch {}
-          }
-          return response;
-        }).catch(async () => {
-          // If offline and request fails, fallback to cached placeholder
-          const fallback = await caches.match('/placeholder-song.jpg');
-          if (fallback) return fallback;
-          return new Response('', { status: 404 });
-        });
+        return fetch(req)
+          .then(async (response) => {
+            if (response && (response.status === 200 || response.type === 'opaque')) {
+              try {
+                const cache = await caches.open('aura-offline-images');
+                cache.put(req, response.clone()).catch(() => {});
+              } catch {}
+            }
+            return response;
+          })
+          .catch(async () => {
+            const fallback = await caches.match('/placeholder-song.jpg');
+            if (fallback) return fallback;
+            return new Response('', { status: 404 });
+          });
       })
     );
     return;
-  }
-
-  // 2. Offline HTML navigation
-  if (req.mode === 'navigate') {
-    event.respondWith(
-      fetch(req).catch(async () => {
-        const cached = await caches.match(req);
-        if (cached) return cached;
-        const library = await caches.match('/library');
-        if (library) return library;
-        const offline = (await caches.match('/offline.html')) || (await (await caches.open('aura-offline-core')).match('/offline.html'));
-        if (offline) return offline;
-        const root = await caches.match('/');
-        if (root) return root;
-        return new Response('Offline', { status: 503, headers: { 'Content-Type': 'text/plain' } });
-      })
-    );
   }
 });

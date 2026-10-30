@@ -1284,10 +1284,14 @@
           .replace(/'/g, "&#039;");
       }
 
-      // Initialize on load
-      window.addEventListener("DOMContentLoaded", () => {
+      // Initialize on load immediately or after DOM ready
+      if (document.readyState === "loading") {
+        window.addEventListener("DOMContentLoaded", () => {
+          loadLibrary();
+        });
+      } else {
         loadLibrary();
-      });
+      }
     </script>
     <style>
       @keyframes spin { 100% { transform: rotate(360deg); } }

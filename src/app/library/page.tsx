@@ -1,11 +1,51 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
-import { getAllOfflineSongs, getAllOfflineLyricsMap, deleteOfflineSong, deleteArtist, deleteAlbum, toggleSongHidden, consolidateArtistFolders } from "@/offline/indexedDbCache";
+import { useState, useEffect, useMemo } from "react";
+import {
+  getAllOfflineSongs,
+  getAllOfflineLyricsMap,
+  deleteOfflineSong,
+  deleteArtist,
+  deleteAlbum,
+  toggleSongHidden,
+  consolidateArtistFolders,
+  renameOfflineFolder,
+  moveSongToOfflineFolder,
+  deleteOfflineFolder,
+  seedCurated50Songs,
+  getCustomOfflineFolders,
+  createCustomOfflineFolder,
+} from "@/offline/indexedDbCache";
 import { subscribeDownloads } from "@/state/downloadStore";
 import { usePlayer } from "@/state/playerContext";
 import { motion, AnimatePresence } from "framer-motion";
-import { Play, Trash2, WifiOff, ArrowRight, DownloadCloud, Lock, Unlock, EyeOff, Eye, HardDrive, Music, CheckCircle2, AlertCircle, Image as ImageIcon, Search, X, FileText, Sparkles, RefreshCw, Smartphone } from "lucide-react";
+import {
+  Play,
+  Trash2,
+  WifiOff,
+  ArrowRight,
+  DownloadCloud,
+  Lock,
+  Unlock,
+  EyeOff,
+  Eye,
+  HardDrive,
+  Music,
+  CheckCircle2,
+  AlertCircle,
+  Image as ImageIcon,
+  Search,
+  X,
+  FileText,
+  Sparkles,
+  RefreshCw,
+  Smartphone,
+  Edit2,
+  FolderPlus,
+  FolderInput,
+  Folder,
+  Plus,
+} from "lucide-react";
 import { getProxyUrl } from "@/utils/media";
 import { openBackgroundCustomizer } from "@/services/theme/customBackgroundStorage";
 import { getCanonicalArtistName } from "@/utils/artistNormalizer";
@@ -78,6 +118,19 @@ export default function LibraryPage() {
   const [stats, setStats] = useState(() => cachedLibraryStats);
   const [showBackupModal, setShowBackupModal] = useState(false);
 
+  // ── Folder Management & Move Song State ──
+  const [movingSong, setMovingSong] = useState<Song | null>(null);
+  const [targetFolder, setTargetFolder] = useState("");
+  const [isCreatingFolderInMove, setIsCreatingFolderInMove] = useState(false);
+  const [newFolderNameInMove, setNewFolderNameInMove] = useState("");
+
+  const [renamingFolder, setRenamingFolder] = useState<string | null>(null);
+  const [newFolderName, setNewFolderName] = useState("");
+
+  const [showCreateFolderModal, setShowCreateFolderModal] = useState(false);
+  const [createdFolderName, setCreatedFolderName] = useState("");
+  const [isSeeding50, setIsSeeding50] = useState(false);
+
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 3500); };
 
   const searchResults = useMemo(() => {
@@ -124,6 +177,14 @@ export default function LibraryPage() {
           artistNode.albums.get(song.albumName)!.push(song);
         } else {
           artistNode.singles.push(song);
+        }
+      }
+
+      // Also include user-created custom folders (even if empty)
+      const customFolders = getCustomOfflineFolders();
+      for (const cf of customFolders) {
+        if (!artistMap.has(cf)) {
+          artistMap.set(cf, { albums: new Map(), singles: [] });
         }
       }
 
@@ -355,6 +416,38 @@ export default function LibraryPage() {
         )}
 
         <div className="flex items-center gap-2 sm:gap-3 flex-wrap justify-end">
+          {/* Seed 50 Curated Arabic Songs Button */}
+          <button
+            onClick={async () => {
+              setIsSeeding50(true);
+              try {
+                const count = await seedCurated50Songs();
+                showToast(`تمت إضافة ${count > 0 ? count : 50} أغنية عربية منوعة لمكتبتك! 🎉`);
+                loadLibrary();
+              } finally {
+                setIsSeeding50(false);
+              }
+            }}
+            disabled={isSeeding50}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all bg-gradient-to-r from-amber-500/20 to-pink-500/20 hover:from-amber-500/30 hover:to-pink-500/30 text-amber-200 border border-amber-500/30 active:scale-95 shadow-sm"
+            title="إضافة 50 أغنية عربية حزينة ورومانسية مشهورة لأشهر النجوم"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+            <span>{isSeeding50 ? "جاري الإضافة..." : "✨ تشكيلة 50 أغنية"}</span>
+          </button>
+
+          {/* Create New Folder Button */}
+          <button
+            onClick={() => {
+              setShowCreateFolderModal(true);
+              setCreatedFolderName("");
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 border border-indigo-500/30 active:scale-95 shadow-sm"
+            title="إنشاء مجلد جديد لتنظيم الأغاني"
+          >
+            <FolderPlus className="w-3.5 h-3.5 text-indigo-400" />
+            <span>+ مجلد جديد 📁</span>
+          </button>
 
           {/* Transfer to Native App Button */}
           <button
@@ -524,6 +617,12 @@ export default function LibraryPage() {
                     }}
                     onDelete={(e: any) => handleDeleteSong(e, result.item.songId)}
                     onToggleHide={(e: any) => handleToggleHide(e, result.item)}
+                    onMove={() => {
+                      setMovingSong(result.item);
+                      setTargetFolder(result.item.folderName || result.item.artist || "أخرى");
+                      setIsCreatingFolderInMove(false);
+                      setNewFolderNameInMove("");
+                    }}
                     vaultUnlocked={vaultUnlocked}
                     badge={
                       result.matchedField === "lyrics" ? (
@@ -555,12 +654,31 @@ export default function LibraryPage() {
           ))}
         </div>
       ) : artists.length === 0 ? (
-        <div className="flex flex-col items-center justify-center h-[60vh] text-center gap-4">
+        <div className="flex flex-col items-center justify-center min-h-[50vh] text-center gap-4 p-6 rounded-3xl bg-white/[0.02] border border-white/5">
           <div className="w-20 h-20 rounded-full glass flex items-center justify-center">
             <DownloadCloud className="w-10 h-10 text-indigo-400 opacity-60" />
           </div>
           <h2 className="text-2xl font-bold">مكتبتك فارغة</h2>
-          <p className="text-gray-500 max-w-xs">اضغط على أيقونة التحميل على أي أغنية لحفظها هنا للاستماع بدون إنترنت</p>
+          <p className="text-gray-400 max-w-sm text-sm">
+            يمكنك تحميل أغانيك المفضلة، أو إضافة تشكيلة الـ 50 أغنية العربية الأكثر شهرة (حزين ورومانسي) بنقرة واحدة!
+          </p>
+          <button
+            onClick={async () => {
+              setIsSeeding50(true);
+              try {
+                await seedCurated50Songs();
+                showToast("تمت إضافة 50 أغنية إلى مكتبتك الأوفلاين! 🎉");
+                loadLibrary();
+              } finally {
+                setIsSeeding50(false);
+              }
+            }}
+            disabled={isSeeding50}
+            className="px-6 py-3 bg-gradient-to-r from-indigo-500 via-purple-600 to-pink-600 hover:from-indigo-600 hover:to-pink-700 text-white rounded-2xl font-black flex items-center gap-2.5 shadow-xl hover:shadow-indigo-500/25 active:scale-95 transition-all text-sm mt-2"
+          >
+            <Sparkles className="w-5 h-5 text-amber-300" />
+            <span>{isSeeding50 ? "جاري تجهيز الأغاني..." : "✨ إضافة 50 أغنية مشهورة ورومانسية فوراً 🎵"}</span>
+          </button>
         </div>
       ) : openAlbum && currentAlbumData ? (
         /* Album View (Level 3) */
@@ -608,22 +726,64 @@ export default function LibraryPage() {
                 }}
                 onDelete={(e: any) => handleDeleteSong(e, song.songId)}
                 onToggleHide={(e: any) => handleToggleHide(e, song)}
+                onMove={() => {
+                  setMovingSong(song);
+                  setTargetFolder(song.folderName || song.artist || "أخرى");
+                  setIsCreatingFolderInMove(false);
+                  setNewFolderNameInMove("");
+                }}
                 vaultUnlocked={vaultUnlocked}
               />
             ))}
           </div>
         </div>
       ) : openArtist && currentArtistData ? (
-        /* Artist View (Level 2) */
+        /* Artist / Folder View (Level 2) */
         <div className="space-y-8">
            <div className="flex items-center justify-between p-4 rounded-2xl bg-black/30 backdrop-blur-xl border border-white/10 shadow-lg">
-              <h2 className="text-3xl font-black">{currentArtistData.name}</h2>
-              <div className="flex gap-2 items-center flex-wrap">
-
-                <button onClick={() => playList([...currentArtistData.albums.flatMap(a=>a.songs), ...currentArtistData.singles])} className="px-4 py-2 bg-indigo-500 rounded-xl font-bold flex items-center gap-2">
-                  <Play className="w-4 h-4 fill-current" /> تشغيل الكل
+              <div className="flex items-center gap-3">
+                <h2 className="text-2xl sm:text-3xl font-black">{currentArtistData.name}</h2>
+                <button
+                  onClick={() => {
+                    setRenamingFolder(currentArtistData.name);
+                    setNewFolderName(currentArtistData.name);
+                  }}
+                  className="px-2.5 py-1.5 rounded-xl bg-white/5 hover:bg-white/15 text-gray-300 hover:text-white transition-all text-xs flex items-center gap-1.5 font-bold border border-white/10"
+                  title="إعادة تسمية هذا المجلد"
+                >
+                  <Edit2 className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>تسمية المجلد</span>
                 </button>
-                <button onClick={(e: any) => handleDeleteArtist(e, currentArtistData.name)} className="p-2 bg-red-500/10 text-red-400 rounded-xl">
+              </div>
+
+              <div className="flex gap-2 items-center flex-wrap">
+                {currentArtistData.albums.flatMap(a => a.songs).length + currentArtistData.singles.length > 0 ? (
+                  <button onClick={() => playList([...currentArtistData.albums.flatMap(a=>a.songs), ...currentArtistData.singles])} className="px-4 py-2 bg-indigo-500 rounded-xl font-bold flex items-center gap-2">
+                    <Play className="w-4 h-4 fill-current" /> تشغيل الكل
+                  </button>
+                ) : (
+                  <span className="text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 px-3 py-1.5 rounded-xl font-bold">
+                    مجلد فارغ
+                  </span>
+                )}
+                <button
+                  onClick={async (e: any) => {
+                    e.stopPropagation();
+                    const total = currentArtistData.albums.flatMap(a => a.songs).length + currentArtistData.singles.length;
+                    if (total === 0) {
+                      if (confirm(`هل أنت متأكد من حذف المجلد الفارغ "${currentArtistData.name}"؟`)) {
+                        await deleteOfflineFolder(currentArtistData.name, false);
+                        showToast("تم حذف المجلد الفارغ بنجاح");
+                        setOpenArtist(null);
+                        loadLibrary();
+                      }
+                    } else {
+                      handleDeleteArtist(e, currentArtistData.name);
+                    }
+                  }}
+                  className="p-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-xl transition-all"
+                  title={currentArtistData.albums.flatMap(a => a.songs).length + currentArtistData.singles.length === 0 ? "حذف المجلد الفارغ" : "حذف المجلد"}
+                >
                   <Trash2 className="w-5 h-5" />
                 </button>
               </div>
@@ -678,6 +838,12 @@ export default function LibraryPage() {
                      }}
                      onDelete={(e: any) => handleDeleteSong(e, song.songId)}
                      onToggleHide={(e: any) => handleToggleHide(e, song)}
+                     onMove={() => {
+                       setMovingSong(song);
+                       setTargetFolder(song.folderName || song.artist || "أخرى");
+                       setIsCreatingFolderInMove(false);
+                       setNewFolderNameInMove("");
+                     }}
                      vaultUnlocked={vaultUnlocked}
                    />
                  ))}
@@ -686,37 +852,300 @@ export default function LibraryPage() {
            )}
         </div>
       ) : (
-        /* Artists View (Level 1) */
+        /* Artists / Folders View (Level 1) */
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-5">
-          {artists.map((artist) => (
-            <div key={artist.name}
-              onClick={() => setOpenArtist(artist.name)}
-              className="group cursor-pointer hover:-translate-y-1 transition-transform duration-300">
-              <div className="relative aspect-square mb-3">
-                <div className="absolute inset-0 rounded-full overflow-hidden bg-white/5 translate-x-1 translate-y-1 opacity-40 scale-95 transition-all duration-300" />
-                <div className="absolute inset-0 rounded-full overflow-hidden shadow-lg border-2 border-white/10 group-hover:border-indigo-400/50 transition-all duration-300">
-                  <ArtistAvatar artistName={artist.name} fallbackCover={artist.cover} />
-                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                    <button onClick={(e: any) => { e.stopPropagation(); playList([...artist.albums.flatMap(a=>a.songs), ...artist.singles]) }} 
-                      className="w-14 h-14 bg-indigo-500 rounded-full flex items-center justify-center shadow-2xl scale-0 group-hover:scale-100 transition-transform duration-300 delay-75">
-                      <Play className="w-6 h-6 text-white fill-current translate-x-0.5" />
+          {artists.map((artist) => {
+            const totalSongs = artist.albums.flatMap(a => a.songs).length + artist.singles.length;
+            const isEmpty = totalSongs === 0;
+
+            return (
+              <div
+                key={artist.name}
+                onClick={() => setOpenArtist(artist.name)}
+                className="group cursor-pointer hover:-translate-y-1 transition-transform duration-300 relative"
+              >
+                {/* Empty folder badge & delete button */}
+                {isEmpty && (
+                  <div className="absolute top-2 left-2 z-10 flex items-center gap-1">
+                    <button
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        if (confirm(`حذف المجلد الفارغ "${artist.name}"؟`)) {
+                          await deleteOfflineFolder(artist.name, false);
+                          showToast("تم حذف المجلد الفارغ بنجاح");
+                          loadLibrary();
+                        }
+                      }}
+                      className="p-1.5 bg-rose-500/90 hover:bg-rose-600 text-white rounded-full shadow-lg transition-all"
+                      title="حذف المجلد الفارغ"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
+                )}
+
+                <div className="relative aspect-square mb-3">
+                  <div className="absolute inset-0 rounded-full overflow-hidden bg-white/5 translate-x-1 translate-y-1 opacity-40 scale-95 transition-all duration-300" />
+                  <div className="absolute inset-0 rounded-full overflow-hidden shadow-lg border-2 border-white/10 group-hover:border-indigo-400/50 transition-all duration-300">
+                    <ArtistAvatar artistName={artist.name} fallbackCover={artist.cover} />
+                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                      {!isEmpty && (
+                        <button
+                          onClick={(e: any) => {
+                            e.stopPropagation();
+                            playList([...artist.albums.flatMap((a) => a.songs), ...artist.singles]);
+                          }}
+                          className="w-14 h-14 bg-indigo-500 rounded-full flex items-center justify-center shadow-2xl scale-0 group-hover:scale-100 transition-transform duration-300 delay-75"
+                        >
+                          <Play className="w-6 h-6 text-white fill-current translate-x-0.5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 </div>
+                <div className="flex items-center justify-center gap-1">
+                  <h3 className="font-black text-lg text-center truncate text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.95)]">
+                    {artist.name}
+                  </h3>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setRenamingFolder(artist.name);
+                      setNewFolderName(artist.name);
+                    }}
+                    className="opacity-0 group-hover:opacity-100 p-1 hover:text-indigo-400 transition-opacity"
+                    title="تسمية المجلد"
+                  >
+                    <Edit2 className="w-3 h-3" />
+                  </button>
+                </div>
+                <p className="text-xs text-gray-300 font-bold text-center drop-shadow-[0_1px_2px_rgba(0,0,0,0.95)]">
+                  {isEmpty ? (
+                    <span className="text-amber-400 font-bold">مجلد فارغ</span>
+                  ) : (
+                    `${artist.albums.length} ألبومات · ${artist.singles.length} منفردة`
+                  )}
+                </p>
               </div>
-              <h3 className="font-black text-lg text-center truncate text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.95)]">{artist.name}</h3>
-              <p className="text-xs text-gray-300 font-bold text-center drop-shadow-[0_1px_2px_rgba(0,0,0,0.95)]">
-                {artist.albums.length} ألبومات · {artist.singles.length} منفردة
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── Move Song to Folder Modal ── */}
+      {movingSong && (
+        <div className="fixed inset-0 z-[110] bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-white/10 p-6 rounded-3xl w-full max-w-md space-y-4 shadow-2xl text-right" dir="rtl">
+            <div className="flex items-center justify-between pb-2 border-b border-white/10">
+              <h3 className="text-lg font-black flex items-center gap-2">
+                <FolderInput className="w-5 h-5 text-indigo-400" />
+                <span>نقل الأغنية إلى مجلد</span>
+              </h3>
+              <button
+                onClick={() => setMovingSong(null)}
+                className="p-1 rounded-lg text-gray-400 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div>
+              <p className="text-sm font-bold text-gray-300 truncate">
+                الأغنية: <span className="text-white font-black">{movingSong.title}</span> ({movingSong.artist})
+              </p>
+              <p className="text-xs text-gray-400 mt-1">
+                المجلد الحالي: <span className="text-indigo-300 font-bold">{movingSong.folderName || movingSong.artist || "أخرى"}</span>
               </p>
             </div>
-          ))}
+
+            <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+              <p className="text-xs font-bold text-gray-400">اختر المجلد الهدف:</p>
+              {artists.map((a) => (
+                <button
+                  key={a.name}
+                  type="button"
+                  onClick={() => {
+                    setTargetFolder(a.name);
+                    setIsCreatingFolderInMove(false);
+                  }}
+                  className={`w-full flex items-center justify-between p-2.5 rounded-xl border text-sm font-bold transition-all ${
+                    !isCreatingFolderInMove && targetFolder === a.name
+                      ? "bg-indigo-500/25 border-indigo-400 text-white shadow-sm"
+                      : "bg-white/[0.03] border-white/5 text-gray-300 hover:bg-white/[0.08]"
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    <Folder className="w-4 h-4 text-indigo-400" />
+                    <span>{a.name}</span>
+                  </span>
+                  <span className="text-xs text-gray-500 font-normal">
+                    {a.albums.flatMap((al) => al.songs).length + a.singles.length} أغنية
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            {/* Option to create a new folder */}
+            <div className="pt-2 border-t border-white/10 space-y-2">
+              <button
+                type="button"
+                onClick={() => setIsCreatingFolderInMove(!isCreatingFolderInMove)}
+                className="text-xs font-bold text-indigo-400 hover:text-indigo-300 flex items-center gap-1.5"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>إنشاء مجلد جديد ونقل الأغنية إليه</span>
+              </button>
+
+              {isCreatingFolderInMove && (
+                <input
+                  type="text"
+                  value={newFolderNameInMove}
+                  onChange={(e) => setNewFolderNameInMove(e.target.value)}
+                  placeholder="اسم المجلد الجديد..."
+                  className="w-full bg-black/60 border border-indigo-500/40 rounded-xl p-2.5 text-sm font-bold text-white outline-none focus:border-indigo-400"
+                />
+              )}
+            </div>
+
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setMovingSong(null)}
+                className="flex-1 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 font-bold text-sm"
+              >
+                إلغاء
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  const finalFolder = isCreatingFolderInMove
+                    ? newFolderNameInMove.trim()
+                    : targetFolder.trim();
+                  if (!finalFolder) {
+                    showToast("يرجى اختيار أو كتابة اسم المجلد");
+                    return;
+                  }
+                  await moveSongToOfflineFolder(movingSong.songId, finalFolder);
+                  showToast(`تم نقل "${movingSong.title}" إلى مجلد "${finalFolder}" بنجاح ✅`);
+                  setMovingSong(null);
+                  loadLibrary();
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-indigo-500 hover:bg-indigo-600 font-bold text-sm text-white shadow-lg"
+              >
+                تأكيد النقل
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Rename Folder Modal ── */}
+      {renamingFolder && (
+        <div className="fixed inset-0 z-[110] bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-white/10 p-6 rounded-3xl w-full max-w-sm space-y-4 shadow-2xl text-right" dir="rtl">
+            <h3 className="text-lg font-black flex items-center gap-2">
+              <Edit2 className="w-5 h-5 text-indigo-400" />
+              <span>إعادة تسمية المجلد</span>
+            </h3>
+            <p className="text-xs text-gray-400">
+              الاسم الحالي: <span className="text-white font-bold">{renamingFolder}</span>
+            </p>
+            <input
+              type="text"
+              value={newFolderName}
+              onChange={(e) => setNewFolderName(e.target.value)}
+              placeholder="الاسم الجديد للمجلد..."
+              className="w-full bg-black/60 border border-indigo-500/40 rounded-xl p-3 text-sm font-bold text-white outline-none focus:border-indigo-400"
+            />
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setRenamingFolder(null)}
+                className="flex-1 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 font-bold text-sm"
+              >
+                إلغاء
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  const cleanNew = newFolderName.trim();
+                  if (!cleanNew) {
+                    showToast("يرجى كتابة اسم للمجلد");
+                    return;
+                  }
+                  await renameOfflineFolder(renamingFolder, cleanNew);
+                  showToast(`تمت إعادة تسمية المجلد إلى "${cleanNew}" بنجاح ✅`);
+                  if (openArtist === renamingFolder) {
+                    setOpenArtist(cleanNew);
+                  }
+                  setRenamingFolder(null);
+                  loadLibrary();
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-indigo-500 hover:bg-indigo-600 font-bold text-sm text-white shadow-lg"
+              >
+                حفظ التسمية
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Create New Folder Modal ── */}
+      {showCreateFolderModal && (
+        <div className="fixed inset-0 z-[110] bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-white/10 p-6 rounded-3xl w-full max-w-sm space-y-4 shadow-2xl text-right" dir="rtl">
+            <h3 className="text-lg font-black flex items-center gap-2">
+              <FolderPlus className="w-5 h-5 text-indigo-400" />
+              <span>إنشاء مجلد جديد</span>
+            </h3>
+            <p className="text-xs text-gray-400">
+              أدخل اسم المجلد الجديد الذي ترغب في تنظيم أغانيك بداخله:
+            </p>
+            <input
+              type="text"
+              value={createdFolderName}
+              onChange={(e) => setCreatedFolderName(e.target.value)}
+              placeholder="مثال: حزين، كلاسيكيات، رومانسيات..."
+              className="w-full bg-black/60 border border-indigo-500/40 rounded-xl p-3 text-sm font-bold text-white outline-none focus:border-indigo-400"
+            />
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setShowCreateFolderModal(false)}
+                className="flex-1 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 font-bold text-sm"
+              >
+                إلغاء
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const clean = createdFolderName.trim();
+                  if (!clean) {
+                    showToast("يرجى كتابة اسم المجلد");
+                    return;
+                  }
+                  const ok = createCustomOfflineFolder(clean);
+                  if (ok) {
+                    showToast(`تم إنشاء المجلد "${clean}" بنجاح ✅`);
+                    setShowCreateFolderModal(false);
+                    loadLibrary();
+                  } else {
+                    showToast("هذا المجلد موجود بالفعل");
+                  }
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-indigo-500 hover:bg-indigo-600 font-bold text-sm text-white shadow-lg"
+              >
+                إنشاء المجلد
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
   );
 }
 
-function SongRow({ song, index, play, onDelete, onToggleHide, vaultUnlocked, badge }: any) {
+function SongRow({ song, index, play, onDelete, onToggleHide, onMove, vaultUnlocked, badge }: any) {
   const isReady = song.audioReady ?? false;
   return (
     <div 
@@ -776,6 +1205,16 @@ function SongRow({ song, index, play, onDelete, onToggleHide, vaultUnlocked, bad
 
       {/* Action Buttons: Always visible on mobile, hover on desktop */}
       <div className="flex items-center gap-0.5 sm:gap-1 shrink-0 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity z-10">
+        {onMove && (
+          <button 
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onMove(e); }} 
+            className="p-1.5 rounded-lg sm:rounded-xl bg-blue-500/15 md:bg-transparent hover:bg-blue-500/25 text-blue-400 active:scale-90 transition-all" 
+            title="نقل الأغنية إلى مجلد آخر"
+          >
+            <FolderInput className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+          </button>
+        )}
         <button 
           type="button"
           onClick={(e) => { e.stopPropagation(); onToggleHide(e); }} 

@@ -92,6 +92,13 @@ export default function HomePage() {
   const router = useRouter();
   const { playNow } = usePlayer();
   const [greeting, setGreeting] = useState("مساء الخير");
+
+  // If user opens the PWA while offline (cold start in Airplane mode), navigate immediately to offline library!
+  useEffect(() => {
+    if (typeof window !== "undefined" && typeof navigator !== "undefined" && !navigator.onLine) {
+      router.replace("/library");
+    }
+  }, [router]);
   
   // Clean initial state matching SSR HTML to prevent React hydration mismatch #418
   const [trending, setTrending] = useState<any[]>([]);

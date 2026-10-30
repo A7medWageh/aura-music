@@ -845,4 +845,235 @@ export async function repairCorruptedJannatTracks(
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// FOLDER MANAGEMENT & CURATED SONGS SEEDING (Solution for Parts 1 & 2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Renames an entire folder in the offline library.
+ * Updates all songs belonging to oldFolderName to newFolderName.
+ */
+export async function renameOfflineFolder(oldFolderName: string, newFolderName: string): Promise<number> {
+  const cleanOld = oldFolderName.trim();
+  const cleanNew = newFolderName.trim();
+  if (!cleanOld || !cleanNew || cleanOld === cleanNew) return 0;
+
+  try {
+    const db = await openOfflineDb();
+    const songs: any[] = await new Promise((resolve) => {
+      const tx = db.transaction(META_STORE, "readonly");
+      const req = tx.objectStore(META_STORE).getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => resolve([]);
+    });
+
+    let updatedCount = 0;
+    const db2 = await openOfflineDb();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db2.transaction(META_STORE, "readwrite");
+      const store = tx.objectStore(META_STORE);
+
+      for (const s of songs) {
+        const currentFolder = s.folderName || s.artist || "أخرى";
+        if (currentFolder === cleanOld || s.artist === cleanOld) {
+          store.put({
+            ...s,
+            folderName: cleanNew,
+          });
+          updatedCount++;
+        }
+      }
+
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+
+    // Update custom empty folders in localStorage if present
+    try {
+      const saved = localStorage.getItem("aura-custom-folders");
+      if (saved) {
+        let list: string[] = JSON.parse(saved);
+        list = list.map((f) => (f === cleanOld ? cleanNew : f));
+        localStorage.setItem("aura-custom-folders", JSON.stringify([...new Set(list)]));
+      }
+    } catch {}
+
+    notifyLibraryUpdated({ type: "folder-renamed", oldFolderName: cleanOld, newFolderName: cleanNew });
+    return updatedCount;
+  } catch (err) {
+    console.error("[IndexedDB] Error renaming folder:", err);
+    return 0;
+  }
+}
+
+/**
+ * Moves a single song into a target folder.
+ */
+export async function moveSongToOfflineFolder(songId: string, targetFolderName: string): Promise<boolean> {
+  const cleanTarget = targetFolderName.trim();
+  if (!songId || !cleanTarget) return false;
+
+  try {
+    const db = await openOfflineDb();
+    const song: any = await new Promise((resolve) => {
+      const tx = db.transaction(META_STORE, "readonly");
+      const req = tx.objectStore(META_STORE).get(songId);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => resolve(null);
+    });
+
+    if (!song) return false;
+
+    const db2 = await openOfflineDb();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db2.transaction(META_STORE, "readwrite");
+      tx.objectStore(META_STORE).put({
+        ...song,
+        folderName: cleanTarget,
+      });
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+
+    // Ensure the target folder exists in custom folders list
+    try {
+      const saved = localStorage.getItem("aura-custom-folders");
+      const list: string[] = saved ? JSON.parse(saved) : [];
+      if (!list.includes(cleanTarget)) {
+        list.push(cleanTarget);
+        localStorage.setItem("aura-custom-folders", JSON.stringify(list));
+      }
+    } catch {}
+
+    notifyLibraryUpdated({ type: "song-moved", songId, targetFolderName: cleanTarget });
+    return true;
+  } catch (err) {
+    console.error("[IndexedDB] Error moving song to folder:", err);
+    return false;
+  }
+}
+
+/**
+ * Deletes a folder and all references to it.
+ * If there are songs in it, optionally moves them to "أخرى" or deletes them.
+ */
+export async function deleteOfflineFolder(folderName: string, deleteSongsToo = false): Promise<void> {
+  const cleanFolder = folderName.trim();
+  if (!cleanFolder) return;
+
+  try {
+    const db = await openOfflineDb();
+    const songs: any[] = await new Promise((resolve) => {
+      const tx = db.transaction(META_STORE, "readonly");
+      const req = tx.objectStore(META_STORE).getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => resolve([]);
+    });
+
+    const matching = songs.filter((s) => (s.folderName || s.artist || "أخرى") === cleanFolder);
+
+    if (deleteSongsToo) {
+      for (const s of matching) {
+        await deleteOfflineSong(s.songId);
+      }
+    } else if (matching.length > 0) {
+      // Move orphaned songs to default
+      const db2 = await openOfflineDb();
+      await new Promise<void>((resolve, reject) => {
+        const tx = db2.transaction(META_STORE, "readwrite");
+        const store = tx.objectStore(META_STORE);
+        for (const s of matching) {
+          store.put({ ...s, folderName: "أخرى" });
+        }
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+    }
+
+    // Remove from custom folders list in localStorage
+    try {
+      const saved = localStorage.getItem("aura-custom-folders");
+      if (saved) {
+        const list: string[] = JSON.parse(saved);
+        const filtered = list.filter((f) => f !== cleanFolder);
+        localStorage.setItem("aura-custom-folders", JSON.stringify(filtered));
+      }
+    } catch {}
+
+    notifyLibraryUpdated({ type: "folder-deleted", folderName: cleanFolder });
+  } catch (err) {
+    console.error("[IndexedDB] Error deleting folder:", err);
+  }
+}
+
+/**
+ * Gets custom folders list from localStorage (including empty folders created by user).
+ */
+export function getCustomOfflineFolders(): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const saved = localStorage.getItem("aura-custom-folders");
+    return saved ? JSON.parse(saved) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Creates a new custom folder (even if initially empty).
+ */
+export function createCustomOfflineFolder(folderName: string): boolean {
+  if (typeof window === "undefined") return false;
+  const clean = folderName.trim();
+  if (!clean) return false;
+  try {
+    const current = getCustomOfflineFolders();
+    if (!current.includes(clean)) {
+      current.push(clean);
+      localStorage.setItem("aura-custom-folders", JSON.stringify(current));
+      notifyLibraryUpdated({ type: "custom-folder-created", folderName: clean });
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Seeds the 50 iconic Arabic hits into IndexedDB if not already present.
+ */
+export async function seedCurated50Songs(): Promise<number> {
+  try {
+    const { CURATED_50_ARABIC_HITS } = await import("@/services/offline/curatedOfflineCatalog");
+    const existing = await getAllOfflineSongs();
+    const existingIds = new Set(existing.map((s) => s.songId));
+
+    let seededCount = 0;
+    for (const song of CURATED_50_ARABIC_HITS) {
+      if (!existingIds.has(song.songId)) {
+        await saveSongMeta({
+          songId: song.songId,
+          title: song.title,
+          artist: song.artist,
+          albumName: song.albumName,
+          folderName: song.folderName,
+          youtubeVideoId: song.youtubeVideoId,
+          thumbnailUrl: song.thumbnailUrl,
+          originalThumbnailUrl: song.thumbnailUrl,
+        });
+        seededCount++;
+      }
+    }
+
+    if (seededCount > 0) {
+      notifyLibraryUpdated({ type: "seeded-50-songs", count: seededCount });
+    }
+    return seededCount;
+  } catch (err) {
+    console.error("[IndexedDB] Error seeding 50 curated songs:", err);
+    return 0;
+  }
+}
+
 
