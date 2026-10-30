@@ -1,8 +1,9 @@
-import { saveSongMeta, storeAudioBlob, storeLyrics, getAudioBlob, getAllOfflineSongs, fetchImageAsDataUrl, detectAudioMimeType } from "@/offline/indexedDbCache";
+import { saveSongMeta, storeAudioBlob, storeLyrics, getAudioBlob, getAllOfflineSongs, fetchImageAsDataUrl, detectAudioMimeType, getCustomOfflineFolders, notifyLibraryUpdated } from "@/offline/indexedDbCache";
 import { startJob, updateJob, finishJob, setJobController, isJobPaused } from "@/state/downloadStore";
 import { toAbsoluteApiUrl } from "@/utils/apiBase";
 import { JANNAT_OLD_CLASSICS } from "@/data/jannatClassics";
 import { ANGHAM_OLD_CLASSICS } from "@/data/anghamClassics";
+import { getCanonicalArtistName } from "@/utils/artistNormalizer";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type SongMeta = {
@@ -516,4 +517,164 @@ export async function downloadAlbum(
     finishJob(albumId, failedCount === 0);
   }
   return failedCount === 0;
+}
+
+// ─── Smart Folder Resolver for Curated Songs ────────────────────────────────
+/**
+ * Resolves the target folder for a curated song:
+ * If an existing folder matching this artist exists in user's offline library,
+ * the song is placed into that existing folder.
+ */
+export function resolveArtistTargetFolder(rawArtist: string, allSongs: any[], customFolders: string[]): string {
+  const cleanArtist = (rawArtist || "").trim();
+  if (!cleanArtist) return "أخرى";
+
+  // Gather all existing folder names in user's library
+  const existingFolderSet = new Set<string>();
+  for (const s of allSongs) {
+    const f = (s.folderName || s.artist || "").trim();
+    if (f) existingFolderSet.add(f);
+  }
+  for (const cf of customFolders) {
+    if (cf && cf.trim()) existingFolderSet.add(cf.trim());
+  }
+
+  const existingFolders = Array.from(existingFolderSet);
+
+  // 1. Direct case-insensitive match
+  const exact = existingFolders.find(
+    (f) => f.toLowerCase() === cleanArtist.toLowerCase()
+  );
+  if (exact) return exact;
+
+  // 2. Canonical artist match
+  const canonicalArtist = getCanonicalArtistName(cleanArtist);
+  const canonMatch = existingFolders.find(
+    (f) => getCanonicalArtistName(f).toLowerCase() === canonicalArtist.toLowerCase()
+  );
+  if (canonMatch) return canonMatch;
+
+  // 3. Substring / inclusion match (e.g. "شيرين عبد الوهاب" vs "شيرين", "عمرو دياب" vs "عمرو دياب قديم")
+  const subMatch = existingFolders.find(
+    (f) => f.includes(cleanArtist) || cleanArtist.includes(f)
+  );
+  if (subMatch) return subMatch;
+
+  // 4. Default fallback to canonical artist name
+  return canonicalArtist || cleanArtist;
+}
+
+// ─── Public API: downloadCurated50Songs ──────────────────────────────────────
+/**
+ * Real offline downloader for the curated 50 iconic Arabic hits.
+ * 1. Resolves artist folders matching existing user folders.
+ * 2. Saves metadata.
+ * 3. Downloads real audio blobs sequentially and saves them into IndexedDB.
+ * 4. Displays live progress in DownloadProgressPanel.
+ */
+export async function downloadCurated50Songs(): Promise<number> {
+  const { CURATED_50_ARABIC_HITS } = await import("@/services/offline/curatedOfflineCatalog");
+  const allSongs = await getAllOfflineSongs();
+  const customFolders = getCustomOfflineFolders();
+
+  const total = CURATED_50_ARABIC_HITS.length;
+  const jobId = "curated-50-arabic-hits";
+  const estimatedSongBytes = 3.5 * 1024 * 1024;
+  const estimatedTotal = total * estimatedSongBytes;
+
+  startJob(jobId, "تشكيلة 50 أغنية عربية (حزين ورومانسي)", "album", total);
+  updateJob(jobId, {
+    totalBytes: estimatedTotal,
+    progressBytes: 0,
+    currentSong: `جاري بدء تجهيز وتحميل الأغاني (1/${total})...`
+  });
+
+  const ctrl = new AbortController();
+  setJobController(jobId, ctrl);
+
+  let doneCount = 0;
+  let failedCount = 0;
+  let accumulatedBytes = 0;
+
+  for (let i = 0; i < CURATED_50_ARABIC_HITS.length; i++) {
+    if (ctrl.signal.aborted) break;
+    const song = CURATED_50_ARABIC_HITS[i];
+    const targetFolder = resolveArtistTargetFolder(song.artist, allSongs, customFolders);
+
+    updateJob(jobId, {
+      currentSong: `(${i + 1}/${total}) ${song.artist} - ${song.title}`
+    });
+
+    // 1. Save metadata with the matched artist folder
+    try {
+      await saveSongMeta({
+        songId: song.songId,
+        title: song.title,
+        artist: song.artist,
+        albumName: song.albumName,
+        folderName: targetFolder,
+        youtubeVideoId: song.youtubeVideoId,
+        thumbnailUrl: song.thumbnailUrl,
+        originalThumbnailUrl: song.thumbnailUrl,
+      });
+    } catch {}
+
+    // 2. Check if already has audio downloaded
+    const existingBlob = await getAudioBlob(song.songId);
+    if (existingBlob && existingBlob.size > 500000) {
+      accumulatedBytes += existingBlob.size;
+      doneCount++;
+      updateJob(jobId, {
+        done: doneCount,
+        progressBytes: accumulatedBytes,
+      });
+      continue;
+    }
+
+    // 3. Download the actual audio blob
+    let songReceived = 0;
+    const ok = await downloadAudioBlob(
+      jobId,
+      song.songId,
+      song.youtubeVideoId && !song.youtubeVideoId.includes("83719203") && /^[a-zA-Z0-9_-]{11}$/.test(song.youtubeVideoId) ? song.youtubeVideoId : "",
+      song.title,
+      song.artist,
+      (received, _total, delta) => {
+        accumulatedBytes += delta;
+        songReceived = received;
+        const remaining = Math.max(0, total - (i + 1));
+        const dynamicTotal = Math.max(estimatedTotal, accumulatedBytes + remaining * estimatedSongBytes);
+        updateJob(jobId, {
+          progressBytes: accumulatedBytes,
+          totalBytes: dynamicTotal,
+          currentSong: `(${i + 1}/${total}) ${song.artist} - ${song.title} (${(songReceived / (1024 * 1024)).toFixed(1)} MB)`
+        });
+      },
+      ctrl.signal
+    );
+
+    if (ctrl.signal.aborted) break;
+    if (ok) {
+      doneCount++;
+      // Pre-cache lyrics for offline view
+      fetch(`/api/lyrics?trackName=${encodeURIComponent(song.title)}&artistName=${encodeURIComponent(song.artist)}`)
+        .then(r => r.json())
+        .then(async (d) => {
+          if (d.lyrics || d.syncedLyrics) {
+            await storeLyrics(song.songId, { lyrics: d.lyrics, syncedLyrics: d.syncedLyrics });
+          }
+        }).catch(() => {});
+    } else {
+      failedCount++;
+    }
+
+    updateJob(jobId, { done: doneCount, failed: failedCount, progressBytes: accumulatedBytes });
+    await new Promise(r => setTimeout(r, 60));
+  }
+
+  if (!ctrl.signal.aborted) {
+    finishJob(jobId, failedCount === 0);
+  }
+  notifyLibraryUpdated({ type: "curated-50-completed", count: doneCount });
+  return doneCount;
 }

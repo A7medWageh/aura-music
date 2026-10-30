@@ -80,9 +80,10 @@ if (typeof window !== "undefined") {
 }
 
 /**
- * Activates silent carrier when real music is paused on iOS Safari / PWA.
- * Keeps the iOS WebKit audio session alive while screen is locked with power button,
- * so the lock screen Now Playing widget remains active and responsive to Play/Pause.
+ * Handles audio session when real music is paused on iOS Safari / PWA.
+ * We avoid playing an audible or secondary silent audio loop during pause,
+ * ensuring iOS Bluetooth headphone pause clicks cleanly stop audio output
+ * and allow instantaneous resume without A2DP route collisions.
  */
 export function holdAudioSessionOnPause() {
   if (typeof window === "undefined") return;
@@ -92,29 +93,16 @@ export function holdAudioSessionOnPause() {
     idleTimeout = null;
   }
 
-  const carrier = getSilentCarrier();
-  if (!carrier) return;
-
-  try {
-    carrier.muted = false;
-    const p = carrier.play();
-    if (p !== undefined) {
-      p.catch((err) => {
-        console.warn("[AudioSessionKeepAlive] Silent carrier play caught:", err);
-      });
-    }
-  } catch {}
-
-  // Auto-release after 30 minutes of pause to conserve iPhone battery
-  idleTimeout = setTimeout(() => {
-    releaseAudioSession();
-  }, MAX_IDLE_MINUTES * 60 * 1000);
+  // Ensure silent carrier is completely paused so iOS audio session is quiet
+  if (silentCarrierAudio && !silentCarrierAudio.paused) {
+    try {
+      silentCarrierAudio.pause();
+    } catch {}
+  }
 }
 
 /**
  * Deactivates silent carrier when real music resumes or stops.
- * Uses a 350ms delay so real audio plays first, preventing the Bluetooth A2DP
- * audio route interruption stall on iOS WebKit.
  */
 export function releaseAudioSession() {
   if (idleTimeout) {
@@ -122,12 +110,8 @@ export function releaseAudioSession() {
     idleTimeout = null;
   }
   if (silentCarrierAudio && !silentCarrierAudio.paused) {
-    setTimeout(() => {
-      try {
-        if (silentCarrierAudio && !silentCarrierAudio.paused) {
-          silentCarrierAudio.pause();
-        }
-      } catch {}
-    }, 350);
+    try {
+      silentCarrierAudio.pause();
+    } catch {}
   }
 }

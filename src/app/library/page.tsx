@@ -420,12 +420,15 @@ export default function LibraryPage() {
           <button
             onClick={async () => {
               setIsSeeding50(true);
+              showToast("جاري بدء تحميل تشكيلة الـ 50 أغنية للأوفلاين... 🚀");
               try {
-                const count = await seedCurated50Songs();
-                showToast(`تمت إضافة ${count > 0 ? count : 50} أغنية عربية منوعة لمكتبتك! 🎉`);
                 loadLibrary();
+                seedCurated50Songs().then(() => {
+                  showToast("اكتمل تحميل تشكيلة الـ 50 أغنية للأوفلاين بنجاح! 🎉");
+                  loadLibrary();
+                });
               } finally {
-                setIsSeeding50(false);
+                setTimeout(() => setIsSeeding50(false), 2000);
               }
             }}
             disabled={isSeeding50}
@@ -665,12 +668,15 @@ export default function LibraryPage() {
           <button
             onClick={async () => {
               setIsSeeding50(true);
+              showToast("جاري بدء تحميل تشكيلة الـ 50 أغنية للأوفلاين... 🚀");
               try {
-                await seedCurated50Songs();
-                showToast("تمت إضافة 50 أغنية إلى مكتبتك الأوفلاين! 🎉");
                 loadLibrary();
+                seedCurated50Songs().then(() => {
+                  showToast("اكتمل تحميل تشكيلة الـ 50 أغنية للأوفلاين بنجاح! 🎉");
+                  loadLibrary();
+                });
               } finally {
-                setIsSeeding50(false);
+                setTimeout(() => setIsSeeding50(false), 2000);
               }
             }}
             disabled={isSeeding50}

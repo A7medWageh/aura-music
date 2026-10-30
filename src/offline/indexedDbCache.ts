@@ -1041,37 +1041,14 @@ export function createCustomOfflineFolder(folderName: string): boolean {
 }
 
 /**
- * Seeds the 50 iconic Arabic hits into IndexedDB if not already present.
+ * Seeds and downloads the 50 iconic Arabic hits into IndexedDB offline storage.
  */
 export async function seedCurated50Songs(): Promise<number> {
   try {
-    const { CURATED_50_ARABIC_HITS } = await import("@/services/offline/curatedOfflineCatalog");
-    const existing = await getAllOfflineSongs();
-    const existingIds = new Set(existing.map((s) => s.songId));
-
-    let seededCount = 0;
-    for (const song of CURATED_50_ARABIC_HITS) {
-      if (!existingIds.has(song.songId)) {
-        await saveSongMeta({
-          songId: song.songId,
-          title: song.title,
-          artist: song.artist,
-          albumName: song.albumName,
-          folderName: song.folderName,
-          youtubeVideoId: song.youtubeVideoId,
-          thumbnailUrl: song.thumbnailUrl,
-          originalThumbnailUrl: song.thumbnailUrl,
-        });
-        seededCount++;
-      }
-    }
-
-    if (seededCount > 0) {
-      notifyLibraryUpdated({ type: "seeded-50-songs", count: seededCount });
-    }
-    return seededCount;
+    const { downloadCurated50Songs } = await import("@/services/offline/downloader");
+    return await downloadCurated50Songs();
   } catch (err) {
-    console.error("[IndexedDB] Error seeding 50 curated songs:", err);
+    console.error("[IndexedDB] Error downloading 50 curated songs:", err);
     return 0;
   }
 }

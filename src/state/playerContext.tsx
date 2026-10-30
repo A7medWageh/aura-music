@@ -15,7 +15,6 @@ import {
   registerAudioDiagnosticsSource,
   AudioSourceType
 } from "@/utils/audioDiagnostics";
-import { analyzeAudioSilence, getCachedSilenceAnalysis } from "@/utils/audioSilenceDetector";
 
 // ── Accurate iOS Detection (iPhone, iPad, iPod, WKWebView) ──
 const isIOSDevice = () => {
@@ -141,8 +140,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const prevRef = useRef<() => void>(() => {});
   const prevPreloadedRef = useRef<{ songId: string; url: string; isBlob: boolean } | null>(null);
   const queueBlobCacheRef = useRef<Map<string, { blob: Blob; url: string }>>(new Map());
-  const activeTrimmedStartRef = useRef<number>(0);
-  const activeTrimmedEndRef = useRef<number>(0);
 
   const setActiveBlobSource = (songId: string, blob: Blob): string => {
     // If we already have a valid active URL for this exact same blob, reuse it
@@ -169,23 +166,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       mimeType: blob.type,
       newUrl,
     });
-
-    // ── Auto-Detect and Trim Dead Silence & Dialogue ──
-    analyzeAudioSilence(songId, blob)
-      .then((silenceRes) => {
-        if (silenceRes && activeOfflineSongIdRef.current === songId) {
-          activeTrimmedStartRef.current = silenceRes.startSec;
-          activeTrimmedEndRef.current = silenceRes.endSec;
-          console.log(
-            `[SilenceDetector] Song "${songId}": start=${silenceRes.startSec}s, end=${silenceRes.endSec}s, duration=${silenceRes.totalDuration}s`
-          );
-          const player = audioRef.current;
-          if (player && silenceRes.hasLeadingSilence && player.currentTime < silenceRes.startSec) {
-            player.currentTime = silenceRes.startSec;
-          }
-        }
-      })
-      .catch(() => {});
 
     if (oldUrl && oldUrl !== newUrl) {
       setTimeout(() => {
@@ -229,8 +209,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   };
 
   const clearActiveBlobSource = () => {
-    activeTrimmedStartRef.current = 0;
-    activeTrimmedEndRef.current = 0;
     const oldUrl = activeBlobUrlRef.current;
     activeBlobRef.current = null;
     activeOfflineSongIdRef.current = null;
@@ -359,11 +337,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     let dur = player.duration;
     if (!dur || isNaN(dur) || !isFinite(dur) || dur <= 0) {
       dur = stateRef.current.duration;
-    }
-
-    // If silence detector trimmed trailing dead silence, adjust displayed duration
-    if (activeTrimmedEndRef.current > 0 && dur > activeTrimmedEndRef.current) {
-      dur = activeTrimmedEndRef.current;
     }
 
     if (dur && !isNaN(dur) && isFinite(dur) && dur > 0) {
@@ -1733,25 +1706,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         return { songId: song.songId, url, isBlob: true };
       }
 
-      // 3. Pre-resolve stream URL if online
-      if (typeof navigator !== "undefined" && navigator.onLine) {
-        try {
-          const params = new URLSearchParams();
-          const vid = song.youtubeVideoId || song.songId || "";
-          if (vid && /^[a-zA-Z0-9_-]{11}$/.test(vid)) params.set("videoId", vid);
-          if (song.title) params.set("title", song.title);
-          if (song.artist) params.set("artist", song.artist);
-          params.set("resolveOnly", "true");
-
-          const res = await fetch(toAbsoluteApiUrl(`/api/ytdownload?${params.toString()}`));
-          if (res.ok) {
-            const data = await res.json();
-            if (data.url) {
-              return { songId: song.songId, url: data.url, isBlob: false };
-            }
-          }
-        } catch {}
-      }
       return null;
     };
 
@@ -1759,16 +1713,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       resolveSongSource(nextSong).then((res) => {
         if (res) {
           nextPreloadedRef.current = res;
-          console.log(`[Player] Next track "${nextSong.title}" preloaded (${res.isBlob ? "offline blob" : "stream URL"})`);
-        }
-      }).catch(() => {});
-    }
-
-    if (prevSong && prevSong.songId !== nextSong?.songId && prevPreloadedRef.current?.songId !== prevSong.songId) {
-      resolveSongSource(prevSong).then((res) => {
-        if (res) {
-          prevPreloadedRef.current = res;
-          console.log(`[Player] Prev track "${prevSong.title}" preloaded (${res.isBlob ? "offline blob" : "stream URL"})`);
+          console.log(`[Player] Next track "${nextSong.title}" preloaded from offline cache`);
         }
       }).catch(() => {});
     }
@@ -2254,53 +2199,21 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         stallWatchdogTimeoutRef.current = null;
       }
       const now = performance.now();
-      if (now - lastTimeUpdateRef.current >= 300 || player.currentTime === 0) {
+      if (now - lastTimeUpdateRef.current >= 150 || player.currentTime === 0) {
         lastTimeUpdateRef.current = now;
-        setState((prev) => ({ ...prev, currentTime: player.currentTime || 0 }));
-
-        // ── Auto-Skip Dead Silence & Theatrical Dialogue ──
-        if (
-          activeTrimmedStartRef.current > 0 &&
-          player.currentTime < activeTrimmedStartRef.current &&
-          player.currentTime < 1.0
-        ) {
-          console.log(`[SilenceDetector] Auto-skipping ${activeTrimmedStartRef.current.toFixed(1)}s of leading silence/dialogue`);
-          player.currentTime = activeTrimmedStartRef.current;
-        }
-
-        if (
-          activeTrimmedEndRef.current > 0 &&
-          player.currentTime >= activeTrimmedEndRef.current &&
-          player.duration > (activeTrimmedEndRef.current + 2)
-        ) {
-          console.log(`[SilenceDetector] Reached end of musical content (${player.currentTime.toFixed(1)}s >= ${activeTrimmedEndRef.current.toFixed(1)}s). Auto-advancing track!`);
-          activeTrimmedEndRef.current = 0;
-          onEnded();
-          return;
-        }
+        const cur = player.currentTime || 0;
+        const dur = player.duration;
+        setState((prev) => {
+          if (dur && !isNaN(dur) && isFinite(dur) && dur > 0 && Math.abs(prev.duration - dur) > 0.5) {
+            return { ...prev, currentTime: cur, duration: dur };
+          }
+          return { ...prev, currentTime: cur };
+        });
 
         // Trigger preloading for next track once current track is underway
-        if (player.currentTime > 2 && lastPreloadRef.current !== stateRef.current.currentSongId && stateRef.current.currentSongId) {
+        if (player.currentTime > 5 && lastPreloadRef.current !== stateRef.current.currentSongId && stateRef.current.currentSongId) {
           lastPreloadRef.current = stateRef.current.currentSongId;
-          preloadSurrounding(stateRef.current.currentSongId, stateRef.current.queue);
-        }
-
-        // Real-time lock screen & Bluetooth position sync
-        if (
-          typeof navigator !== "undefined" &&
-          "mediaSession" in navigator &&
-          "setPositionState" in navigator.mediaSession &&
-          player.duration &&
-          !isNaN(player.duration) &&
-          isFinite(player.duration)
-        ) {
-          try {
-            navigator.mediaSession.setPositionState({
-              duration: Math.max(0, player.duration),
-              playbackRate: player.playbackRate || 1,
-              position: Math.max(0, Math.min(player.currentTime || 0, player.duration)),
-            });
-          } catch {}
+          preloadNext(stateRef.current.currentSongId, stateRef.current.queue);
         }
       }
     }
@@ -2518,8 +2431,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   };
 
   const onEnded = () => {
-    activeTrimmedStartRef.current = 0;
-    activeTrimmedEndRef.current = 0;
     const currentState = stateRef.current;
     if (!currentState.queue.length || !currentState.currentSongId) {
       setState((prev) => ({ ...prev, isPlaying: false }));
@@ -2530,7 +2441,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (currentState.repeat === "one") {
       const player = audioRef.current;
       if (player) {
-        player.currentTime = activeTrimmedStartRef.current || 0;
+        player.currentTime = 0;
         player.play().catch(() => undefined);
       }
       return;
