@@ -4,8 +4,9 @@ import { useEffect, useState, useMemo } from "react";
 import { getAllOfflineSongs, getAllOfflineLyricsMap, deleteOfflineSong, deleteArtist, deleteAlbum, toggleSongHidden, consolidateArtistFolders } from "@/offline/indexedDbCache";
 import { subscribeDownloads } from "@/state/downloadStore";
 import { usePlayer } from "@/state/playerContext";
+import { useOfflinePlayer } from "@/state/offlinePlayerContext";
 import { motion, AnimatePresence } from "framer-motion";
-import { Play, Trash2, WifiOff, ArrowRight, DownloadCloud, Lock, Unlock, EyeOff, Eye, HardDrive, Music, CheckCircle2, AlertCircle, Image as ImageIcon, Search, X, FileText, Sparkles, RefreshCw, Smartphone } from "lucide-react";
+import { Play, Trash2, WifiOff, ArrowRight, DownloadCloud, Lock, Unlock, EyeOff, Eye, HardDrive, Music, CheckCircle2, AlertCircle, Image as ImageIcon, Search, X, FileText, Sparkles, RefreshCw, Smartphone, Car } from "lucide-react";
 import { getProxyUrl } from "@/utils/media";
 import { openBackgroundCustomizer } from "@/services/theme/customBackgroundStorage";
 import { getCanonicalArtistName } from "@/utils/artistNormalizer";
@@ -83,6 +84,7 @@ let cachedLibraryStats = { sizeMB: 0, count: 0 };
 
 export default function LibraryPage() {
   const { playNow, enqueueSongs, setQueue } = usePlayer();
+  const { playSongList: playOfflineList, setIsExpanded: expandOfflinePlayer, setIsCarMode: openCarMode } = useOfflinePlayer();
   const [artists, setArtists] = useState<ArtistFolder[]>(() => cachedLibraryArtists);
   const [allVisibleSongs, setAllVisibleSongs] = useState<Song[]>([]);
   const [lyricsMap, setLyricsMap] = useState<Map<string, string>>(new Map());
@@ -310,7 +312,7 @@ export default function LibraryPage() {
       return;
     }
     const idx = Math.max(0, Math.min(startIndex, ready.length - 1));
-    setQueue(ready as any, idx);
+    playOfflineList(ready as any, idx);
   };
 
   const currentArtistData = artists.find(a => a.name === openArtist);
@@ -378,6 +380,16 @@ export default function LibraryPage() {
         )}
 
         <div className="flex items-center gap-2 sm:gap-3 flex-wrap justify-end">
+          {/* Car Mode Quick Access */}
+          <button
+            onClick={() => openCarMode(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all bg-gradient-to-r from-cyan-500/20 to-teal-500/20 hover:from-cyan-500/35 hover:to-teal-500/35 text-cyan-300 border border-cyan-500/30 hover:border-cyan-400 active:scale-95 shadow-sm"
+            title="فتح وضع القيادة للمشغل الأوفلاين"
+          >
+            <Car className="w-3.5 h-3.5 text-cyan-400" />
+            <span>وضع القيادة 🚗</span>
+          </button>
+
           {/* Transfer to Native App Button */}
           <button
             onClick={() => setShowBackupModal(true)}
@@ -542,7 +554,7 @@ export default function LibraryPage() {
                         showToast("لم يكتمل تنزيل هذه الأغنية بعد. اتصل بالإنترنت لتحميلها للاستماع أوفلاين.");
                         return;
                       }
-                      setQueue(searchResults.map((r) => r.item) as any, i);
+                      playOfflineList(searchResults.map((r) => r.item) as any, i);
                     }}
                     onDelete={(e: any) => handleDeleteSong(e, result.item.songId)}
                     onToggleHide={(e: any) => handleToggleHide(e, result.item)}
@@ -626,7 +638,7 @@ export default function LibraryPage() {
                     return;
                   }
                   // Set full album queue starting from this track so it advances automatically
-                  setQueue(currentAlbumData.songs as any, i);
+                  playOfflineList(currentAlbumData.songs as any, i);
                 }}
                 onDelete={(e: any) => handleDeleteSong(e, song.songId)}
                 onToggleHide={(e: any) => handleToggleHide(e, song)}
@@ -696,7 +708,7 @@ export default function LibraryPage() {
                          showToast("لم يكتمل تنزيل هذه الأغنية بعد. اتصل بالإنترنت لتحميلها للاستماع أوفلاين.");
                          return;
                        }
-                       setQueue(currentArtistData.singles as any, i);
+                       playOfflineList(currentArtistData.singles as any, i);
                      }}
                      onDelete={(e: any) => handleDeleteSong(e, song.songId)}
                      onToggleHide={(e: any) => handleToggleHide(e, song)}

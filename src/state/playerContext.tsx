@@ -113,6 +113,16 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // Ensure audio session category on mount
   useEffect(() => {
     configureAudioSession();
+    const handleOfflineStarted = () => {
+      const a = audioRef.current;
+      if (a && !a.paused) {
+        a.pause();
+      }
+      isPlayingRef.current = false;
+      setState((prev) => ({ ...prev, isPlaying: false }));
+    };
+    window.addEventListener("aura-offline-player-started", handleOfflineStarted);
+    return () => window.removeEventListener("aura-offline-player-started", handleOfflineStarted);
   }, []);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -2172,6 +2182,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       navigator.mediaSession.playbackState = "playing";
     }
     syncPositionState();
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("aura-online-player-started"));
+    }
     setState((prev) => ({ ...prev, isPlaying: true }));
   };
 
