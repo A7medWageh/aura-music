@@ -5,7 +5,7 @@ import {
   Repeat, Volume2, VolumeX, Heart, DownloadCloud,
   ChevronDown, ListMusic, Share2, Crown,
   Settings, Music2, FileText, Sparkles, Sliders, Waves, Zap, Shield, Headphones,
-  RotateCcw, RotateCw, Maximize2, Minimize2
+  RotateCcw, RotateCw, Maximize2, Minimize2, X
 } from "lucide-react";
 import { usePlayer } from "@/state/playerContext";
 import { useOfflinePlayer } from "@/state/offlinePlayerContext";
@@ -446,7 +446,7 @@ function FullPlayer({
   isPremium: boolean; setIsPremiumModalOpen: (v: boolean) => void; setPremiumFeatureName: (v: string) => void;
   showToast: (msg: string, type?: "normal" | "hq") => void;
 }) {
-  const { state, currentSong, togglePlay, next, prev, seekTo, setVolume, cycleRepeat, setShuffle, setHighQuality, setIsAiMix, soundPreset, setSoundPreset, soundBoost, setSoundBoost, is8dActive, setIs8dActive, test8dSound, getAnalyser } = usePlayer();
+  const { state, currentSong, togglePlay, next, prev, seekTo, setVolume, cycleRepeat, setShuffle, setHighQuality, setIsAiMix, soundPreset, setSoundPreset, soundBoost, setSoundBoost, is8dActive, setIs8dActive, test8dSound, getAnalyser, closePlayer } = usePlayer();
   const art = currentSong?.thumbnailUrl || currentSong?.metadata?.thumbnailUrl;
   const proxyArt = getProxyUrl(art);
 
@@ -824,9 +824,21 @@ function FullPlayer({
             paddingRight: "max(14px, env(safe-area-inset-right, 0px))",
           }}
         >
-          <button onClick={onClose} className="p-2 rounded-full bg-white/[0.06] border border-white/10 hover:bg-white/10 transition active:scale-90">
+          <div className="flex items-center gap-2">
+            <button onClick={onClose} className="p-2 rounded-full bg-white/[0.06] border border-white/10 hover:bg-white/10 transition active:scale-90" title="تصغير">
             <ChevronDown className="w-6 h-6 text-white" />
           </button>
+          <button
+            onClick={() => {
+              onClose();
+              closePlayer();
+            }}
+            className="p-2 rounded-full bg-white/[0.06] border border-white/10 hover:bg-rose-500/20 text-neutral-400 hover:text-rose-400 transition active:scale-90"
+            title="إغلاق المشغل نهائياً"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
           <div className="flex items-center gap-2">
             <button
               onClick={cycleBgMode}
@@ -1424,10 +1436,21 @@ function FullPlayer({
 
 // ─── Mini Player Bar ──────────────────────────────────────────────────
 export function PlayerBar() {
-  const { state, currentSong, next, prev, togglePlay, setVolume, seekTo, hasUserTriggeredPlay } = usePlayer();
+  const { state, currentSong, next, prev, togglePlay, setVolume, seekTo, hasUserTriggeredPlay, closePlayer } = usePlayer();
   const { hasActiveSong: isOfflineActive } = useOfflinePlayer();
   const [isLiked, setIsLiked] = useState(false);
-  const [fullOpen, setFullOpen] = useState(false);
+  const [fullOpen, setFullOpen] = useState(() => {
+    if (typeof document !== "undefined") {
+      return document.body.classList.contains("player-full-open");
+    }
+    return false;
+  });
+
+  useEffect(() => {
+    if (typeof document !== "undefined" && document.body.classList.contains("player-full-open")) {
+      setFullOpen(true);
+    }
+  }, [currentSong?.songId]);
   const [isPremiumModalOpen, setIsPremiumModalOpen] = useState(false);
   const [premiumFeatureName, setPremiumFeatureName] = useState("");
   const { addToast } = useToastStore();
@@ -1623,6 +1646,17 @@ export function PlayerBar() {
                 onChange={e => setVolume(parseFloat(e.target.value))}
                 className="w-20 accent-cyan-400 h-1 cursor-pointer" />
             </div>
+            {/* Complete Close (X) button */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                closePlayer();
+              }}
+              className="p-1.5 text-neutral-400 hover:text-white hover:bg-white/10 rounded-full transition-all active:scale-90"
+              title="إغلاق المشغل"
+            >
+              <X className="w-4 h-4" />
+            </button>
           </div>
 
           {/* Scrub line at the bottom edge (premium-gated like before) */}

@@ -85,26 +85,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<PlayerState>(initialPlayerState);
   const [hasUserTriggeredPlay, setHasUserTriggeredPlay] = useState(false);
 
-  // Restore saved player session on client mount only (guarantees SSR hydration consistency)
+  // Do NOT auto-open player on app open (user must explicitly click a song to open player)
   useEffect(() => {
     try {
       const saved = localStorage.getItem("aura-player-session");
       if (saved) {
         const parsed = JSON.parse(saved);
-        const hasMowgou3 = parsed.queue?.some((s: any) => s.title && s.title.includes("موجوع"));
-        if (hasMowgou3) {
-          localStorage.removeItem("aura-player-session");
-          localStorage.removeItem("aura-player-state");
-        } else if (parsed.queue && parsed.queue.length > 0 && parsed.currentSongId) {
-          setHasUserTriggeredPlay(true);
-          setState((prev) => ({
-            ...prev,
-            queue: parsed.queue,
-            currentSongId: parsed.currentSongId,
-            currentTime: parsed.currentTime || 0,
-            volume: parsed.volume ?? initialPlayerState.volume,
-            isPlaying: !!parsed.wasPlaying,
-          }));
+        if (parsed.volume !== undefined) {
+          setState((prev) => ({ ...prev, volume: parsed.volume }));
         }
       }
     } catch {}
@@ -115,11 +103,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     configureAudioSession();
     const handleOfflineStarted = () => {
       const a = audioRef.current;
-      if (a && !a.paused) {
+      if (a) {
         a.pause();
+        a.removeAttribute("src");
+        a.load();
       }
       isPlayingRef.current = false;
-      setState((prev) => ({ ...prev, isPlaying: false }));
+      setHasUserTriggeredPlay(false);
+      setState(initialPlayerState);
     };
     window.addEventListener("aura-offline-player-started", handleOfflineStarted);
     return () => window.removeEventListener("aura-offline-player-started", handleOfflineStarted);
