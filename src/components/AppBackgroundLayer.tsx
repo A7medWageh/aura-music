@@ -115,9 +115,9 @@ export function AppBackgroundLayer() {
               <div
                 className="absolute inset-0 w-full h-full opacity-45 overflow-hidden"
                 style={{
-                  transform: `translate3d(0, ${-parallaxY * 0.5}px, 0) scale(1.15)`,
-                  filter: "blur(40px) saturate(1.4) brightness(0.65)",
-                  WebkitFilter: "blur(40px) saturate(1.4) brightness(0.65)",
+                  transform: `translate3d(0, ${-parallaxY * 0.5}px, 0) scale(1.1)`,
+                  filter: "blur(20px) saturate(1.3) brightness(0.7)",
+                  WebkitFilter: "blur(20px) saturate(1.3) brightness(0.7)",
                 }}
               >
                 <img

@@ -4,6 +4,7 @@ import WebKit
 
 class MainViewController: CAPBridgeViewController {
     private var isFallbackLoaded = false
+    private var hasInitialPageLoaded = false
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -13,27 +14,23 @@ class MainViewController: CAPBridgeViewController {
         self.webView?.scrollView.backgroundColor = UIColor(red: 8/255, green: 9/255, blue: 13/255, alpha: 1.0)
     }
 
+    override func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        super.webView(webView, didFinish: navigation)
+        hasInitialPageLoaded = true
+    }
+
     override func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         super.webView(webView, didFailProvisionalNavigation: navigation, withError: error)
-        handleOfflineNavigation(webView: webView, error: error)
-    }
 
-    override func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        super.webView(webView, didFail: navigation, withError: error)
-        handleOfflineNavigation(webView: webView, error: error)
-    }
+        // ONLY intercept if the initial app load failed because of no internet connection
+        guard !hasInitialPageLoaded && !isFallbackLoaded else { return }
 
-    private func handleOfflineNavigation(webView: WKWebView, error: Error) {
         let nsError = error as NSError
-        print("[AuraMusic iOS] Navigation failed: domain=\(nsError.domain), code=\(nsError.code): \(nsError.localizedDescription)")
+        print("[AuraMusic iOS] Cold launch navigation failed: domain=\(nsError.domain), code=\(nsError.code): \(nsError.localizedDescription)")
 
         let offlineCodes = [
             NSURLErrorNotConnectedToInternet, // -1009
-            NSURLErrorCannotFindHost,         // -1003
-            NSURLErrorTimedOut,               // -1001
-            NSURLErrorCannotConnectToHost,    // -1004
-            NSURLErrorNetworkConnectionLost,  // -1005
-            NSURLErrorDNSLookupFailed         // -1006
+            NSURLErrorCannotFindHost          // -1003
         ]
 
         if nsError.domain == NSURLErrorDomain && offlineCodes.contains(nsError.code) {

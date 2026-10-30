@@ -32,43 +32,14 @@ type ArtistFolder = {
 };
 
 function ArtistAvatar({ artistName, fallbackCover }: { artistName: string, fallbackCover: string }) {
-  const [imgUrl, setImgUrl] = useState<string | null>(null);
-
-  useEffect(() => {
-    const cacheKey = `artist_img_${artistName}`;
-    const cached = localStorage.getItem(cacheKey);
-    if (cached) {
-      if (cached !== "null") setImgUrl(cached);
-    } else {
-      fetch(`/api/artist-image?artist=${encodeURIComponent(artistName)}`)
-        .then(res => res.json())
-        .then(async data => {
-           if (data.imageUrl) {
-             try {
-               const { fetchImageAsDataUrl } = await import("@/offline/indexedDbCache");
-               const dataUrl = await fetchImageAsDataUrl(data.imageUrl);
-               const toStore = dataUrl || data.imageUrl;
-               localStorage.setItem(cacheKey, toStore);
-               setImgUrl(toStore);
-             } catch {
-               localStorage.setItem(cacheKey, data.imageUrl);
-               setImgUrl(data.imageUrl);
-             }
-           } else {
-             localStorage.setItem(cacheKey, "null");
-           }
-        }).catch(() => {});
-    }
-  }, [artistName]);
-
-  const finalImage = imgUrl || fallbackCover;
-
-  if (finalImage) {
+  if (fallbackCover) {
     return (
       <img
-        src={getProxyUrl(finalImage)}
+        src={getProxyUrl(fallbackCover)}
         alt={artistName}
-        className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"
+        loading="lazy"
+        decoding="async"
+        className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
         onError={(e) => {
           (e.target as HTMLImageElement).src = "/placeholder-artist.jpg";
         }}
@@ -80,6 +51,7 @@ function ArtistAvatar({ artistName, fallbackCover }: { artistName: string, fallb
 
 let cachedLibraryArtists: ArtistFolder[] = [];
 let cachedLibraryStats = { sizeMB: 0, count: 0 };
+let jannatAutoHealChecked = false;
 
 export default function LibraryPage() {
   const { playNow, enqueueSongs, setQueue } = usePlayer();
@@ -113,14 +85,17 @@ export default function LibraryPage() {
     return searchOfflineSongs(allVisibleSongs, lyricsMap, searchQuery, filterMode);
   }, [allVisibleSongs, lyricsMap, searchQuery, filterMode]);
 
+  // Lazy-load lyrics only when user actually types a search query
+  useEffect(() => {
+    if (searchQuery.trim().length > 0 && filterMode !== "meta" && lyricsMap.size === 0) {
+      getAllOfflineLyricsMap().then(setLyricsMap).catch(() => {});
+    }
+  }, [searchQuery, filterMode, lyricsMap.size]);
+
   const loadLibrary = async () => {
     try {
       if (cachedLibraryArtists.length === 0) setLoading(true);
-      const [songs, lyrMap] = await Promise.all([
-        getAllOfflineSongs(),
-        getAllOfflineLyricsMap(),
-      ]);
-      setLyricsMap(lyrMap);
+      const songs = await getAllOfflineSongs();
       
       // Filter hidden songs unless vault is unlocked
       const visibleSongs: Song[] = songs.filter(s => vaultUnlocked ? true : !s.isHidden);
@@ -214,8 +189,10 @@ export default function LibraryPage() {
     };
   }, [vaultUnlocked]);
 
-  // Silent background auto-heal for Jannat corrupted tracks (zero buttons, completely automatic)
+  // Silent background auto-heal for Jannat corrupted tracks (runs once per session to prevent lag)
   useEffect(() => {
+    if (jannatAutoHealChecked) return;
+    jannatAutoHealChecked = true;
     let cancel = false;
     const silentCheck = setTimeout(async () => {
       if (cancel) return;
@@ -230,7 +207,7 @@ export default function LibraryPage() {
           }
         }
       } catch {}
-    }, 2000);
+    }, 4000);
 
     return () => {
       cancel = true;
@@ -712,12 +689,12 @@ export default function LibraryPage() {
         /* Artists View (Level 1) */
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-5">
           {artists.map((artist) => (
-            <motion.div key={artist.name} whileHover={{ y: -5, scale: 1.02 }}
+            <div key={artist.name}
               onClick={() => setOpenArtist(artist.name)}
-              className="group cursor-pointer">
+              className="group cursor-pointer hover:-translate-y-1 transition-transform duration-300">
               <div className="relative aspect-square mb-3">
-                <div className="absolute inset-0 rounded-full overflow-hidden bg-white/5 translate-x-2 translate-y-2 opacity-50 scale-95 group-hover:translate-x-4 group-hover:translate-y-4 transition-all duration-500" />
-                <div className="absolute inset-0 rounded-full overflow-hidden shadow-xl border-4 border-transparent group-hover:border-indigo-400/50 transition-all duration-500">
+                <div className="absolute inset-0 rounded-full overflow-hidden bg-white/5 translate-x-1 translate-y-1 opacity-40 scale-95 transition-all duration-300" />
+                <div className="absolute inset-0 rounded-full overflow-hidden shadow-lg border-2 border-white/10 group-hover:border-indigo-400/50 transition-all duration-300">
                   <ArtistAvatar artistName={artist.name} fallbackCover={artist.cover} />
                   <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                     <button onClick={(e: any) => { e.stopPropagation(); playList([...artist.albums.flatMap(a=>a.songs), ...artist.singles]) }} 
@@ -731,7 +708,7 @@ export default function LibraryPage() {
               <p className="text-xs text-gray-300 font-bold text-center drop-shadow-[0_1px_2px_rgba(0,0,0,0.95)]">
                 {artist.albums.length} ألبومات · {artist.singles.length} منفردة
               </p>
-            </motion.div>
+            </div>
           ))}
         </div>
       )}
@@ -744,7 +721,7 @@ function SongRow({ song, index, play, onDelete, onToggleHide, vaultUnlocked, bad
   return (
     <div 
       onClick={play} 
-      className="group flex items-center gap-2 sm:gap-3 p-2 sm:p-2.5 rounded-2xl bg-black/30 hover:bg-black/50 backdrop-blur-md transition-all cursor-pointer border border-white/5 hover:border-indigo-500/30 shadow-sm w-full max-w-full overflow-hidden min-w-0"
+      className="group flex items-center gap-2 sm:gap-3 p-2 sm:p-2.5 rounded-2xl bg-white/[0.04] hover:bg-white/[0.08] active:bg-white/[0.12] transition-colors cursor-pointer border border-white/5 hover:border-indigo-500/30 shadow-sm w-full max-w-full overflow-hidden min-w-0"
     >
       {/* Number */}
       <div className="w-4 sm:w-6 text-center text-gray-500 font-black text-xs shrink-0">
@@ -752,11 +729,13 @@ function SongRow({ song, index, play, onDelete, onToggleHide, vaultUnlocked, bad
       </div>
 
       {/* Thumbnail */}
-      <div className="relative w-10 h-10 sm:w-12 sm:h-12 rounded-xl overflow-hidden shrink-0 shadow-md">
+      <div className="relative w-10 h-10 sm:w-12 sm:h-12 rounded-xl overflow-hidden shrink-0 shadow-md bg-white/5">
         {song.thumbnailUrl ? (
           <img
             src={getProxyUrl(song.thumbnailUrl)}
             alt={song.title}
+            loading="lazy"
+            decoding="async"
             className="w-full h-full object-cover"
             onError={(e) => { (e.target as HTMLImageElement).src = "/placeholder-song.jpg"; }}
           />

@@ -63,42 +63,22 @@ export function PwaRegistration() {
   const [isUpdating, setIsUpdating] = useState(false);
 
   useEffect(() => {
-    // ── Register service worker with aggressive auto-update for iOS ──
+    // ── Register service worker without disruptive auto-reload ──
     if ("serviceWorker" in navigator) {
-      let refreshing = false;
-
-      // When the service worker updates and takes control, reload to activate new code
-      const onControllerChange = () => {
-        if (!refreshing) {
-          refreshing = true;
-          window.location.reload();
-        }
-      };
-      navigator.serviceWorker.addEventListener("controllerchange", onControllerChange);
-
       navigator.serviceWorker.register("/sw.js", { scope: "/" })
         .then((reg) => {
-          console.log("[SW] Registered with scope:", reg.scope);
-
-          // If a new worker is already waiting in the wings, prompt update
+          // If a new worker is waiting, show update banner (do NOT auto-reload without user action)
           if (reg.waiting) {
             setShowUpdateBanner(true);
-            reg.waiting.postMessage({ type: "SKIP_WAITING" });
           }
-
-          // Check for fresh code on server immediately
-          reg.update().catch(() => {});
 
           reg.addEventListener("updatefound", () => {
             const newWorker = reg.installing;
             if (newWorker) {
               newWorker.addEventListener("statechange", () => {
-                if (newWorker.state === "installed") {
-                  if (navigator.serviceWorker.controller) {
-                    // New version available!
-                    setShowUpdateBanner(true);
-                    newWorker.postMessage({ type: "SKIP_WAITING" });
-                  }
+                if (newWorker.state === "installed" && navigator.serviceWorker.controller) {
+                  // Prompt user politely with banner; do NOT force-reload unexpectedly
+                  setShowUpdateBanner(true);
                 }
               });
             }
@@ -117,7 +97,6 @@ export function PwaRegistration() {
       document.addEventListener("visibilitychange", onVisibilityChange);
 
       return () => {
-        navigator.serviceWorker.removeEventListener("controllerchange", onControllerChange);
         document.removeEventListener("visibilitychange", onVisibilityChange);
       };
     }
