@@ -200,9 +200,31 @@ export async function getCachedTelegramTrack(params: {
           continue;
         }
 
-        // 2. Strict artist check: if artist is provided, row must match requested artist!
-        if (artist && !isStrictArtistMatch(artist, row.artist || "")) {
-          continue;
+        // 2. Strict artist check: if artist is provided, row must match requested artist,
+        // or row.title must contain the artist, or row.artist must be a distributor channel!
+        if (artist && artist !== "فنان غير معروف" && artist !== "Aura Music") {
+          const normArtist = normalizeText(artist);
+          const normRowArtist = normalizeText(row.artist || "");
+          const normRowTitle = normalizeText(row.title || "");
+
+          const artistMatches =
+            isStrictArtistMatch(artist, row.artist || "") ||
+            (normRowArtist && normArtist.includes(normRowArtist)) ||
+            (normRowArtist && normRowArtist.includes(normArtist));
+
+          const titleContainsArtist =
+            normRowTitle.includes(normArtist) ||
+            normArtist.split(/\s+/).filter((w) => w.length > 2).every((w) => normRowTitle.includes(w));
+
+          const isGenericUploader =
+            !normRowArtist ||
+            normRowArtist === "aura music" ||
+            normRowArtist === "naghmaty" ||
+            /naghmaty|نغماتي|weci|shaabeyat|mazzika|rotana|nogoum|channel|music|records/i.test(row.artist || "");
+
+          if (!artistMatches && !titleContainsArtist && !isGenericUploader) {
+            continue;
+          }
         }
 
         return {
@@ -274,12 +296,14 @@ export async function saveTelegramCacheRecord(params: {
   try {
     await query(
       `INSERT INTO telegram_audio_cache (video_id, song_id, title, artist, tg_file_id, tg_message_id, duration_sec, file_size, mime_type)
-       SELECT $1::varchar, $2::varchar, $3::varchar, $4::varchar, $5::varchar, $6::bigint, $7::int, $8::bigint, $9::varchar
-       WHERE NOT EXISTS (
-         SELECT 1 FROM telegram_audio_cache
-         WHERE video_id = $1::varchar AND $1::varchar IS NOT NULL AND tg_file_id IS NOT NULL
-       )
-       ON CONFLICT (tg_file_id) DO NOTHING`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       ON CONFLICT (tg_file_id) DO UPDATE SET
+         video_id = COALESCE(EXCLUDED.video_id, telegram_audio_cache.video_id),
+         song_id = COALESCE(EXCLUDED.song_id, telegram_audio_cache.song_id),
+         title = CASE WHEN EXCLUDED.title IS NOT NULL AND EXCLUDED.title != '' THEN EXCLUDED.title ELSE telegram_audio_cache.title END,
+         artist = CASE WHEN EXCLUDED.artist IS NOT NULL AND EXCLUDED.artist != 'Aura Music' AND EXCLUDED.artist NOT ILIKE '%naghmat%' THEN EXCLUDED.artist ELSE telegram_audio_cache.artist END,
+         duration_sec = COALESCE(EXCLUDED.duration_sec, telegram_audio_cache.duration_sec),
+         file_size = COALESCE(EXCLUDED.file_size, telegram_audio_cache.file_size)`,
       [
         videoId || null,
         songId || null,

@@ -120,7 +120,11 @@ export async function POST(req: NextRequest) {
         await query(
           `INSERT INTO moonbot_pending (tg_file_id, tg_message_id, reply_to_message_id, title, artist, duration_sec, file_size, mime_type, received_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
-           ON CONFLICT (tg_file_id) DO NOTHING`,
+           ON CONFLICT (tg_file_id) DO UPDATE SET
+             title = EXCLUDED.title,
+             artist = EXCLUDED.artist,
+             tg_message_id = EXCLUDED.tg_message_id,
+             reply_to_message_id = COALESCE(EXCLUDED.reply_to_message_id, moonbot_pending.reply_to_message_id)`,
           [fileId, msgId, replyToMsgId, title, artist, durationSec, fileSize, mimeType]
         );
       } catch (dbErr: any) {
@@ -143,7 +147,11 @@ export async function POST(req: NextRequest) {
           await query(
             `INSERT INTO moonbot_pending (tg_file_id, tg_message_id, reply_to_message_id, title, artist, duration_sec, file_size, mime_type)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-             ON CONFLICT (tg_file_id) DO NOTHING`,
+             ON CONFLICT (tg_file_id) DO UPDATE SET
+               title = EXCLUDED.title,
+               artist = EXCLUDED.artist,
+               tg_message_id = EXCLUDED.tg_message_id,
+               reply_to_message_id = COALESCE(EXCLUDED.reply_to_message_id, moonbot_pending.reply_to_message_id)`,
             [fileId, msgId, replyToMsgId, title, artist, durationSec, fileSize, mimeType]
           );
         } else {

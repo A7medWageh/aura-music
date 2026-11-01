@@ -197,11 +197,12 @@ async function tryMoonBot(
   title: string,
   artist: string | undefined,
   videoId: string | undefined,
-  timeoutMs = 45000
+  timeoutMs = 25000,
+  forDownload = false
 ): Promise<UniversalAudioResult | null> {
   try {
     const moonResult = await withTimeout(
-      resolveViaMoonBot({ title, artist, videoId }),
+      resolveViaMoonBot({ title, artist, videoId, forDownload }),
       timeoutMs
     );
     if (moonResult?.streamUrl) {
@@ -598,15 +599,31 @@ export async function resolveUniversalAudio(params: {
   if (hasSearchTitle && !params.skipBot) {
     if (params.forDownload) {
       console.log(`[AudioResolver] 📥 Download request: using @wecibot as PRIMARY source for "${targetTitle}" by "${targetArtist}"...`);
-      winner = await tryMoonBot(targetTitle, targetArtist, videoId, 25000);
+      winner = await tryMoonBot(targetTitle, targetArtist, videoId, 25000, true);
       if (winner) {
         console.log(`[AudioResolver] ✅ @wecibot delivered download audio successfully for "${targetTitle}"!`);
         return winner;
       }
       console.warn(`[AudioResolver] ⚠️ @wecibot was unable to provide audio for "${targetTitle}". Switching to backup sources...`);
     } else {
-      // For streaming: Try bot first (8s), fallback to scrapers
-      winner = await tryMoonBot(targetTitle, targetArtist, videoId, 8000);
+      // For streaming (listening in player):
+      // 1. Fast race between direct scrapers (Albumaty / JioSaavn) in 2.5s for instant playback
+      if (isArabicSong) {
+        winner = await raceFirst([
+          tryAlbumaty(targetTitle, targetArtist, videoId, 2500),
+          tryJioSaavn(title, effectiveArtist, videoId, 2500),
+        ]);
+      } else {
+        winner = await raceFirst([
+          tryJioSaavn(title, effectiveArtist, videoId, 2500),
+          tryAlbumaty(title, effectiveArtist, videoId, 2500),
+        ]);
+      }
+
+      // 2. If fast scrapers missed or had no result: use @wecibot (deduplicated & non-blocking)
+      if (!winner) {
+        winner = await tryMoonBot(targetTitle, targetArtist, videoId, 18000, false);
+      }
       if (winner) return winner;
     }
   }

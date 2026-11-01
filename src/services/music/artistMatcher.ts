@@ -407,7 +407,7 @@ export function findBestOfficialVideo(
 }
 
 const GENERIC_CHANNELS_REGEX =
-  /shaabeyat|شعبيات|mazzika|مزيكا|rotana|روتانا|nogoum|نجوم|modern\s*music|مودرن|free\s*music|فري\s*ميوزيك|craft\s*media|كرافت|watary|وتري|elsobky|sobky|السبكي|haz\s*shaby|حظ\s*شعب|عالم\s*الفن|alam\s*el\s*phan|replay\s*music|sony\s*music|universal\s*music|warner\s*music|melody|ميلودي|قناة|channel|records|music|official|vevo|فنان|unknown|غير\s*معروف/i;
+  /shaabeyat|شعبيات|mazzika|مزيكا|rotana|روتانا|nogoum|نجوم|naghmaty|نغماتي|noghmati|weci|wecibot|modern\s*music|مودرن|free\s*music|فري\s*ميوزيك|craft\s*media|كرافت|watary|وتري|elsobky|sobky|السبكي|haz\s*shaby|حظ\s*شعب|عالم\s*الفن|alam\s*el\s*phan|replay\s*music|sony\s*music|universal\s*music|warner\s*music|melody|ميلودي|قناة|channel|records|music|official|vevo|فنان|unknown|غير\s*معروف/i;
 
 function cleanVideoClutter(s: string): string {
   return (s || "")
@@ -515,9 +515,24 @@ export function extractSmartArtistAndTitle(
       } else if (p1MatchesArtist) {
         title = p0;
       } else if (!artist || GENERIC_CHANNELS_REGEX.test(artist)) {
-        // If artist is generic, p0 is almost certainly the artist (e.g. 'عمرو دياب - مكانك')
-        artist = p0;
-        title = p1;
+        if (candForms0.latin) {
+          artist = p0;
+          title = p1;
+        } else if (candForms1.latin) {
+          artist = p1;
+          title = p0;
+        } else {
+          // In Arabic songs, both "Artist - Title" and "Title - Artist" occur.
+          // If p1 looks like a 2-3 word singer name (e.g. 'مصطفي محفوظ'):
+          const p1Words = p1.split(/\s+/).filter(Boolean);
+          if (p1Words.length >= 2 && p1Words.length <= 4 && !/اغنية|كليب|فيديو|حصريا|جديد|audio|video|lyrics/i.test(p1)) {
+            artist = p1;
+            title = p0;
+          } else {
+            artist = p0;
+            title = p1;
+          }
+        }
       }
     }
   }
@@ -554,4 +569,63 @@ export function extractSmartArtistAndTitle(
     title: title || "أغنية محفوظة",
     artist: artist.trim(),
   };
+}
+
+/**
+ * Validates whether candidate audio from a bot or scraper is a mismatch
+ * (e.g. wrong singer, unwanted cover, or Khaleeji remake).
+ */
+export function isStrictArtistMismatch(
+  expectedArtist: string | undefined,
+  rowArtist: string | undefined,
+  rowTitle: string | undefined
+): boolean {
+  if (!expectedArtist || expectedArtist === "فنان غير معروف" || expectedArtist === "Aura Music") {
+    return false;
+  }
+
+  const cleanExp = expectedArtist.toLowerCase().trim();
+  const rowArt = (rowArtist || "").toLowerCase().trim();
+  const rowTit = (rowTitle || "").toLowerCase().trim();
+  const fullRow = `${rowArt} ${rowTit}`;
+
+  // If expected artist is present in full row, it's definitely NOT a mismatch
+  if (fullRow.includes(cleanExp)) {
+    return false;
+  }
+  const expWords = cleanExp.split(/\s+/).filter((w) => w.length > 2);
+  if (expWords.length >= 2 && expWords.every((w) => fullRow.includes(w))) {
+    return false;
+  }
+
+  // Reject non-Jannat
+  if (cleanExp.includes("جنات") && !fullRow.includes("جنات") && !rowArt.includes("rotana") && !rowArt.includes("aura")) {
+    return true;
+  }
+  // Reject non-Angham
+  if (cleanExp.includes("أنغام") && !fullRow.includes("أنغام") && !rowArt.includes("rotana") && !rowArt.includes("aura")) {
+    return true;
+  }
+
+  // Cross-cover mismatch:
+  if (cleanExp.includes("احمد حسين") && (fullRow.includes("دنيا") || fullRow.includes("ليثي") || fullRow.includes("الليثي"))) {
+    return true;
+  }
+  if (cleanExp.includes("دنيا") && fullRow.includes("احمد حسين") && !fullRow.includes("دنيا")) {
+    return true;
+  }
+  if (cleanExp.includes("ليثي") && !fullRow.includes("ليثي")) {
+    return true;
+  }
+
+  // If candidate title explicitly marks a cover by a different singer
+  const coverSingerMatch = rowTit.match(/(?:بصوت|غناء|اداء|كفر|cover by)\s+([\u0621-\u064A\s]{3,20})/);
+  if (coverSingerMatch) {
+    const foundCoverSinger = coverSingerMatch[1].trim();
+    if (!foundCoverSinger.includes(cleanExp) && !cleanExp.includes(foundCoverSinger)) {
+      return true;
+    }
+  }
+
+  return false;
 }

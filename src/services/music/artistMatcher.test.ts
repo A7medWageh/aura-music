@@ -84,5 +84,10 @@ describe("artistMatcher", () => {
     const t4 = extractSmartArtistAndTitle("عمرو دياب - مكانك", "Mazzika - مزيكا");
     expect(t4.artist).toBe("عمرو دياب");
     expect(t4.title).toBe("مكانك");
+
+    // 5. Title - Artist with generic channel Naghmaty
+    const t5 = extractSmartArtistAndTitle("مغلطش في حاجه - مصطفي محفوظ", "Naghmaty");
+    expect(t5.artist).toBe("مصطفي محفوظ");
+    expect(t5.title).toBe("مغلطش في حاجه");
   });
 });

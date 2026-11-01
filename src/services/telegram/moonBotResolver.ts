@@ -26,7 +26,7 @@ import { saveTelegramCacheRecord, getTelegramDirectUrl } from "./telegramStorage
 import { query } from "@apis/neon";
 import { JANNAT_OLD_CLASSICS } from "@/data/jannatClassics";
 import { ANGHAM_OLD_CLASSICS } from "@/data/anghamClassics";
-import { BILINGUAL_ARTIST_MAP, extractSmartArtistAndTitle } from "@/services/music/artistMatcher";
+import { BILINGUAL_ARTIST_MAP, extractSmartArtistAndTitle, isStrictArtistMismatch } from "@/services/music/artistMatcher";
 
 const BOT_TOKEN =
   process.env.TELEGRAM_BOT_TOKEN || "8831422517:AAEXQFzQxzcyIKWI1WtfVh2XGzguGXAnCak";
@@ -99,89 +99,118 @@ async function ensurePendingTable(): Promise<void> {
 }
 
 /**
- * Poll Neon DB for an audio entry that arrived AFTER our command message.
- * Validates that the audio is not a snippet (<45s) and not a Khaleeji mismatch.
+ * Validates whether candidate audio from moonbot_pending matches requirements:
+ * not a snippet (<45s), not Khaleeji mismatch, not a different singer/cover.
+ */
+function isValidPendingAudioRow(row: any, expectedTitle?: string, expectedArtist?: string): boolean {
+  if (!row?.tg_file_id) return false;
+
+  // 1. Check for bad duration (snippets < 45s)
+  if (row.duration_sec && row.duration_sec > 0 && row.duration_sec < 45) {
+    console.warn(`[WeciBot] Ignoring snippet (<45s): "${row.title}" (${row.duration_sec}s)`);
+    return false;
+  }
+
+  // 2. Filter out known Khaleeji / mismatched singers
+  const rowArtist = (row.artist || "").toLowerCase();
+  const rowTitle = (row.title || "").toLowerCase();
+  const isKhaleejiMismatch =
+    rowArtist.includes("حماده") ||
+    rowArtist.includes("مجرشي") ||
+    rowArtist.includes("majra") ||
+    rowTitle.includes("مجرشي") ||
+    rowTitle.includes("حماده مجرشي") ||
+    rowTitle.includes("شيلة") ||
+    rowTitle.includes("شيلات") ||
+    rowTitle.includes("جلسة عود") ||
+    row.file_size === 8419726 ||
+    row.file_size === 5634752;
+
+  if (isKhaleejiMismatch) {
+    console.warn(`[WeciBot] ❌ Rejected Khaleeji / bad audio: "${row.title}" by "${row.artist}"`);
+    query(`DELETE FROM moonbot_pending WHERE tg_file_id = $1`, [row.tg_file_id]).catch(() => {});
+    return false;
+  }
+
+  // 3. Artist check: reject mismatched covers or different singers
+  if (isStrictArtistMismatch(expectedArtist, row.artist, row.title)) {
+    console.warn(`[WeciBot] ❌ Rejected artist mismatch: "${row.artist}" - "${row.title}" for expected "${expectedArtist}"`);
+    return false;
+  }
+
+  // 4. Title check: candidate title must match expectedTitle
+  if (expectedTitle) {
+    const cleanExpT = expectedTitle.toLowerCase().replace(/[^\u0621-\u064A0-9a-z\s]/gi, "").trim();
+    const cleanRowT = rowTitle.toLowerCase().replace(/[^\u0621-\u064A0-9a-z\s]/gi, "").trim();
+    const wordsExp = cleanExpT.split(/\s+/).filter((w) => w.length > 2);
+
+    const hasMatch =
+      cleanRowT.includes(cleanExpT) ||
+      cleanExpT.includes(cleanRowT) ||
+      (wordsExp.length > 0 && wordsExp.some((w) => cleanRowT.includes(w)));
+
+    if (!hasMatch) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/**
+ * Check if a matching audio was already delivered in the last 15 minutes to moonbot_pending.
+ * If found, returns it immediately without sending any new command to Telegram.
+ */
+async function findRecentPendingAudio(cleanTitle: string, cleanArtist?: string): Promise<any | null> {
+  try {
+    const res = await query<any>(
+      `SELECT tg_file_id, tg_message_id, reply_to_message_id, title, artist, duration_sec, file_size, mime_type
+       FROM moonbot_pending
+       WHERE received_at > NOW() - INTERVAL '15 minutes'
+       ORDER BY id DESC
+       LIMIT 20`
+    );
+
+    for (const row of res.rows) {
+      if (isValidPendingAudioRow(row, cleanTitle, cleanArtist)) {
+        return row;
+      }
+    }
+  } catch (err: any) {
+    console.warn("[WeciBot] findRecentPendingAudio error:", err.message);
+  }
+  return null;
+}
+
+/**
+ * Poll Neon DB for an audio entry that arrived AFTER our command message (or replied to it).
  */
 async function pollDbForAudio(
   afterMsgId: number,
   expectedTitle?: string,
   expectedArtist?: string,
-  maxWaitMs = 28000
+  maxWaitMs = 18000
 ): Promise<any | null> {
   const start = Date.now();
-  const pollIntervalMs = 800;
+  const pollIntervalMs = 700;
 
   while (Date.now() - start < maxWaitMs) {
     try {
-      // Fetch up to 5 pending items after our command message
       const res = await query<any>(
         `SELECT tg_file_id, tg_message_id, reply_to_message_id, title, artist, duration_sec, file_size, mime_type
          FROM moonbot_pending
-         WHERE tg_message_id > $1
-         ORDER BY (reply_to_message_id = $1) DESC NULLS LAST, tg_message_id ASC
-         LIMIT 5`,
+         WHERE (tg_message_id > $1 OR reply_to_message_id = $1 OR received_at > NOW() - INTERVAL '3 minutes')
+         ORDER BY (reply_to_message_id = $1) DESC NULLS LAST, (tg_message_id > $1) DESC, id DESC
+         LIMIT 10`,
         [afterMsgId]
       );
 
       for (const row of res.rows) {
-        // 1. Check for bad duration (snippets < 45s)
-        if (row.duration_sec && row.duration_sec > 0 && row.duration_sec < 45) {
-          console.warn(`[WeciBot] Ignoring snippet (<45s): "${row.title}" (${row.duration_sec}s)`);
-          continue;
+        if (isValidPendingAudioRow(row, expectedTitle, expectedArtist)) {
+          const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+          console.log(`[WeciBot] ✅ Audio validated hit in ${elapsed}s: "${row.title}" by "${row.artist}"`);
+          return row;
         }
-
-        // 2. Filter out known Khaleeji / mismatched singers
-        const rowArtist = (row.artist || "").toLowerCase();
-        const rowTitle = (row.title || "").toLowerCase();
-        const isKhaleejiMismatch =
-          rowArtist.includes("حماده") ||
-          rowArtist.includes("مجرشي") ||
-          rowArtist.includes("majra") ||
-          rowTitle.includes("مجرشي") ||
-          rowTitle.includes("حماده مجرشي") ||
-          rowTitle.includes("شيلة") ||
-          rowTitle.includes("شيلات") ||
-          rowTitle.includes("جلسة عود") ||
-          row.file_size === 8419726 ||
-          row.file_size === 5634752;
-
-        if (isKhaleejiMismatch) {
-          console.warn(`[WeciBot] ❌ Rejected Khaleeji / bad audio: "${row.title}" by "${row.artist}"`);
-          query(`DELETE FROM moonbot_pending WHERE tg_file_id = $1`, [row.tg_file_id]).catch(() => {});
-          continue;
-        }
-
-        // 3. Artist check: reject mismatched covers or different singers
-        if (expectedArtist && expectedArtist !== "فنان غير معروف" && expectedArtist !== "Aura Music") {
-          const fullRow = `${rowArtist} ${rowTitle}`.toLowerCase();
-          const cleanExp = expectedArtist.toLowerCase().trim();
-
-          // Reject non-Jannat
-          if ((cleanExp.includes("جنات") || cleanExp.includes("jannat")) &&
-              rowArtist && !rowArtist.includes("جنات") && !rowArtist.includes("jannat") && !rowArtist.includes("rotana") && !rowArtist.includes("aura")) {
-            console.warn(`[WeciBot] ❌ Rejected non-Jannat artist: "${row.artist}" for expected "${expectedTitle}"`);
-            continue;
-          }
-          // Reject non-Angham
-          if ((cleanExp.includes("أنغام") || cleanExp.includes("angham")) &&
-              rowArtist && !rowArtist.includes("أنغام") && !rowArtist.includes("angham") && !rowArtist.includes("rotana") && !rowArtist.includes("aura")) {
-            console.warn(`[WeciBot] ❌ Rejected non-Angham artist: "${row.artist}" for expected "${expectedTitle}"`);
-            continue;
-          }
-          // Reject cross-cover mismatch (e.g. expected Ahmed Hussein but got Donia El Alfy or vice-versa)
-          if (cleanExp.includes("احمد حسين") && (fullRow.includes("دنيا") || fullRow.includes("ليثي") || fullRow.includes("الليثي"))) {
-            console.warn(`[WeciBot] ❌ Rejected cover artist "${row.artist}" for expected original "${expectedArtist}"`);
-            continue;
-          }
-          if (cleanExp.includes("دنيا") && fullRow.includes("احمد حسين") && !fullRow.includes("دنيا")) {
-            console.warn(`[WeciBot] ❌ Rejected original artist "${row.artist}" for expected cover "${expectedArtist}"`);
-            continue;
-          }
-        }
-
-        const elapsed = ((Date.now() - start) / 1000).toFixed(1);
-        console.log(`[WeciBot] ✅ Audio validated hit in ${elapsed}s: "${row.title}" by "${row.artist}"`);
-        return row;
       }
     } catch (err: any) {
       if (err.message?.includes("does not exist")) {
@@ -360,12 +389,16 @@ export function cleanQueryForWeciBot(rawTitle: string, rawArtist?: string): {
   return { primaryQuery, invertedQuery, cleanTitle: title, cleanArtist: artist, isArabic };
 }
 
+// In-flight request deduplication map to prevent multiple Telegram messages for concurrent requests
+const botFlightMap = new Map<string, Promise<MoonBotResult | null>>();
+
 export async function resolveViaMoonBot(params: {
   title: string;
   artist?: string;
   videoId?: string;
+  forDownload?: boolean;
 }): Promise<MoonBotResult | null> {
-  let { title, artist = "", videoId } = params;
+  let { title, artist = "", videoId, forDownload = false } = params;
 
   // Resolve classic artist if missing
   const jannat = JANNAT_OLD_CLASSICS.find(c =>
@@ -399,63 +432,71 @@ export async function resolveViaMoonBot(params: {
   // Ensure DB tables exist
   await ensurePendingTable();
 
-  const { primaryQuery, invertedQuery, cleanTitle, cleanArtist } = cleanQueryForWeciBot(title, artist);
+  const { primaryQuery, cleanTitle, cleanArtist } = cleanQueryForWeciBot(title, artist);
 
-  // ══════════════════════════════════════════════════════════════════
-  // TIER 1: Primary Bot (@wecibot) — Command: "نزل {title} {artist}"
-  // ══════════════════════════════════════════════════════════════════
-  const weciCommand = `نزل ${primaryQuery}`;
-  console.log(`[BotResolver] 🤖 [Tier 1 @wecibot] Sending: "${weciCommand}" for "${cleanTitle}" by "${cleanArtist}"...`);
-  const weciMsgId = await sendMsg(weciCommand);
-  if (weciMsgId) {
-    console.log(`[BotResolver] Sent Tier 1 "${weciCommand}" (msgId=${weciMsgId}) — waiting up to 8s...`);
-    let pending = await pollDbForAudio(weciMsgId, cleanTitle, cleanArtist, 8000);
+  // In-flight deduplication: if an identical request is already running, await that exact promise!
+  const flightKey = `${cleanTitle}___${cleanArtist || ""}`.toLowerCase().trim();
+  const existingFlight = botFlightMap.get(flightKey);
+  if (existingFlight) {
+    console.log(`[BotResolver] ⚡ Deduplicating concurrent request for "${cleanTitle}" — reusing active bot request!`);
+    return existingFlight;
+  }
 
-    // Clean up primary command message
-    deleteMsg(weciMsgId).catch(() => {});
-
-    if (pending) {
-      console.log(`[BotResolver] ✅ Audio received successfully from Tier 1 (@wecibot) for "${cleanTitle}"!`);
-      return await processPendingAudio(pending, videoId, cleanTitle, cleanArtist);
+  const runPromise = (async (): Promise<MoonBotResult | null> => {
+    // 0. Check if matching audio is ALREADY available in moonbot_pending (from recent bot reply or previous run)
+    const existingPending = await findRecentPendingAudio(cleanTitle, cleanArtist);
+    if (existingPending) {
+      console.log(`[BotResolver] ⚡ Found existing pending audio for "${cleanTitle}" — instant pickup!`);
+      return await processPendingAudio(existingPending, videoId, cleanTitle, cleanArtist);
     }
 
-    // Try inverted query if available (e.g. "نزل دنيا الالفي الدمعه صعبه")
-    if (invertedQuery && invertedQuery !== primaryQuery) {
-      const weciInvCommand = `نزل ${invertedQuery}`;
-      console.log(`[BotResolver] 🤖 [Tier 1 @wecibot inverted retry] Sending: "${weciInvCommand}"...`);
-      const weciInvMsgId = await sendMsg(weciInvCommand);
-      if (weciInvMsgId) {
-        pending = await pollDbForAudio(weciInvMsgId, cleanTitle, cleanArtist, 7000);
-        deleteMsg(weciInvMsgId).catch(() => {});
-        if (pending) {
-          console.log(`[BotResolver] ✅ Audio received from Tier 1 inverted retry for "${cleanTitle}"!`);
-          return await processPendingAudio(pending, videoId, cleanTitle, cleanArtist);
-        }
+    // ══════════════════════════════════════════════════════════════════
+    // TIER 1: Primary Bot (@wecibot) — Command: "نزل {title} {artist}"
+    // ══════════════════════════════════════════════════════════════════
+    const weciCommand = `نزل ${primaryQuery}`;
+    console.log(`[BotResolver] 🤖 [Tier 1 @wecibot] Sending: "${weciCommand}" for "${cleanTitle}" by "${cleanArtist}"...`);
+    const weciMsgId = await sendMsg(weciCommand);
+    if (weciMsgId) {
+      const waitTime = forDownload ? 25000 : 18000;
+      console.log(`[BotResolver] Sent Tier 1 "${weciCommand}" (msgId=${weciMsgId}) — waiting up to ${waitTime / 1000}s...`);
+      const pending = await pollDbForAudio(weciMsgId, cleanTitle, cleanArtist, waitTime);
+
+      // Clean up primary command message
+      deleteMsg(weciMsgId).catch(() => {});
+
+      if (pending) {
+        console.log(`[BotResolver] ✅ Audio received successfully from Tier 1 (@wecibot) for "${cleanTitle}"!`);
+        return await processPendingAudio(pending, videoId, cleanTitle, cleanArtist);
       }
+      console.warn(`[BotResolver] ⚠️ @wecibot did not deliver audio for "${cleanTitle}".`);
     }
-    console.warn(`[BotResolver] ⚠️ @wecibot did not deliver audio for "${cleanTitle}". Falling back to secondary bot (@L_10_BOT)...`);
-  }
 
-  // ══════════════════════════════════════════════════════════════════
-  // TIER 2: Secondary / Fallback Bot (@L_10_BOT) — Command: "تنزيل {title} {artist}"
-  // ══════════════════════════════════════════════════════════════════
-  const oldBotCommand = `تنزيل ${primaryQuery}`;
-  console.log(`[BotResolver] 🤖 [Tier 2 @L_10_BOT] Sending fallback: "${oldBotCommand}" for "${cleanTitle}"...`);
-  const oldBotMsgId = await sendMsg(oldBotCommand);
-  if (oldBotMsgId) {
-    console.log(`[BotResolver] Sent Tier 2 "${oldBotCommand}" (msgId=${oldBotMsgId}) — waiting up to 10s...`);
-    const pending = await pollDbForAudio(oldBotMsgId, cleanTitle, cleanArtist, 10000);
+    // ══════════════════════════════════════════════════════════════════
+    // TIER 2: Secondary / Fallback Bot (@L_10_BOT) — Command: "تنزيل {title} {artist}"
+    // ══════════════════════════════════════════════════════════════════
+    const oldBotCommand = `تنزيل ${primaryQuery}`;
+    console.log(`[BotResolver] 🤖 [Tier 2 @L_10_BOT] Sending fallback: "${oldBotCommand}" for "${cleanTitle}"...`);
+    const oldBotMsgId = await sendMsg(oldBotCommand);
+    if (oldBotMsgId) {
+      console.log(`[BotResolver] Sent Tier 2 "${oldBotCommand}" (msgId=${oldBotMsgId}) — waiting up to 12s...`);
+      const pending = await pollDbForAudio(oldBotMsgId, cleanTitle, cleanArtist, 12000);
 
-    // Clean up secondary command message
-    deleteMsg(oldBotMsgId).catch(() => {});
+      // Clean up secondary command message
+      deleteMsg(oldBotMsgId).catch(() => {});
 
-    if (pending) {
-      console.log(`[BotResolver] ✅ Audio received successfully from old bot (@L_10_BOT) for "${cleanTitle}"!`);
-      return await processPendingAudio(pending, videoId, cleanTitle, cleanArtist);
+      if (pending) {
+        console.log(`[BotResolver] ✅ Audio received successfully from old bot (@L_10_BOT) for "${cleanTitle}"!`);
+        return await processPendingAudio(pending, videoId, cleanTitle, cleanArtist);
+      }
+      console.warn(`[BotResolver] ❌ Both bots failed to deliver audio for "${cleanTitle}"`);
     }
-    console.warn(`[BotResolver] ❌ Both bots failed to deliver audio for "${cleanTitle}"`);
-  }
 
-  return null;
+    return null;
+  })().finally(() => {
+    botFlightMap.delete(flightKey);
+  });
+
+  botFlightMap.set(flightKey, runPromise);
+  return runPromise;
 }
 
