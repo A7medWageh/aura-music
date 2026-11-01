@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { saveTelegramCacheRecord } from "@/services/telegram/telegramStorage";
+import { extractSmartArtistAndTitle } from "@/services/music/artistMatcher";
 import { query } from "@apis/neon";
 
 export const dynamic = "force-dynamic";
@@ -32,11 +33,14 @@ function parseBotMetadata(audio: any, doc: any, caption: string | undefined): {
   if (cap.includes("@wecibot") || cap.includes("- info :")) {
     const weciInfo = cap.match(/-\s*info\s*:\s*([^\n]+)/i)?.[1]?.trim();
     if (weciInfo) {
-      if (!title || title.length < 5 || !/[\u0600-\u06FF]/.test(title)) {
-        title = weciInfo;
-      }
+      title = weciInfo;
     }
   }
+
+  // Smart extraction: extract true singer and clean title if performer is a record label or YouTube channel
+  const extracted = extractSmartArtistAndTitle(title, artist);
+  if (extracted.title) title = extracted.title;
+  if (extracted.artist) artist = extracted.artist;
 
   if (!title) title = cap || "Aura Track";
   if (!artist) artist = "Aura Music";

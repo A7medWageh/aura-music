@@ -98,6 +98,14 @@ function isValidCacheRow(row: any, requestedArtist?: string): boolean {
     if (isReqAngham && rowArtist && !rowArtist.includes("أنغام") && !rowArtist.includes("angham") && !rowArtist.includes("rotana") && !rowArtist.includes("aura")) {
       return false;
     }
+    // Specific artist mismatch guard (e.g. Ahmed Hussein vs Donia El Alfy cover)
+    const cleanReq = requestedArtist.toLowerCase().trim();
+    if (cleanReq.includes("احمد حسين") && (rowArtist.includes("دنيا") || rowTitle.includes("دنيا"))) {
+      return false;
+    }
+    if (cleanReq.includes("دنيا") && (rowArtist.includes("احمد حسين") || (rowTitle.includes("احمد حسين") && !rowTitle.includes("دنيا")))) {
+      return false;
+    }
   }
   return true;
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isStrictArtistMatch, hasUnwantedTags, findBestOfficialVideo, getArtistForms } from "./artistMatcher";
+import { isStrictArtistMatch, hasUnwantedTags, findBestOfficialVideo, getArtistForms, extractSmartArtistAndTitle } from "./artistMatcher";
 
 describe("artistMatcher", () => {
   it("accurately matches bilingual Arabic and Latin artist names", () => {
@@ -62,5 +62,27 @@ describe("artistMatcher", () => {
 
     const bestVid = findBestOfficialVideo(candidates, "تملي معاك", "عمرو دياب");
     expect(bestVid).toBe("EgmXTmj62ic");
+  });
+
+  it("extracts real singer and clean title accurately across different track types", () => {
+    // 1. Ahmed Hussein - original
+    const t1 = extractSmartArtistAndTitle("احمد حسين كليب الدمعه صعبة AHMED HUSSEN - ELDAM3A SA3BA", "Shaabeyat Channel");
+    expect(t1.artist).toBe("احمد حسين");
+    expect(t1.title).toBe("الدمعه صعبة");
+
+    // 2. Donia El Alfy - trend version
+    const t2 = extractSmartArtistAndTitle('ترند دنيا الالفي 2026 " الدمعه صعبه ـ انا مش خايفه من حاجة " سلامات حظ شعبي جديد 2026', "حظ شعبى - Haz Shaby");
+    expect(t2.artist).toBe("دنيا الالفي");
+    expect(t2.title).toBe("الدمعه صعبه");
+
+    // 3. Foreign / English song
+    const t3 = extractSmartArtistAndTitle("Adele - Hello (Official Music Video)", "Adele");
+    expect(t3.artist).toBe("Adele");
+    expect(t3.title).toBe("Hello");
+
+    // 4. Amr Diab with channel Mazzika
+    const t4 = extractSmartArtistAndTitle("عمرو دياب - مكانك", "Mazzika - مزيكا");
+    expect(t4.artist).toBe("عمرو دياب");
+    expect(t4.title).toBe("مكانك");
   });
 });

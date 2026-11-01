@@ -405,3 +405,153 @@ export function findBestOfficialVideo(
 
   return bestVid;
 }
+
+const GENERIC_CHANNELS_REGEX =
+  /shaabeyat|شعبيات|mazzika|مزيكا|rotana|روتانا|nogoum|نجوم|modern\s*music|مودرن|free\s*music|فري\s*ميوزيك|craft\s*media|كرافت|watary|وتري|elsobky|sobky|السبكي|haz\s*shaby|حظ\s*شعب|عالم\s*الفن|alam\s*el\s*phan|replay\s*music|sony\s*music|universal\s*music|warner\s*music|melody|ميلودي|قناة|channel|records|music|official|vevo|فنان|unknown|غير\s*معروف/i;
+
+function cleanVideoClutter(s: string): string {
+  return (s || "")
+    .replace(/\(Official.*?\)/gi, "")
+    .replace(/\[Official.*?\]/gi, "")
+    .replace(/\(Audio.*?\)/gi, "")
+    .replace(/\[Audio.*?\]/gi, "")
+    .replace(/\(Lyric.*?\)/gi, "")
+    .replace(/\[Lyric.*?\]/gi, "")
+    .replace(/\(Video.*?\)/gi, "")
+    .replace(/\[Video.*?\]/gi, "")
+    .replace(/\|\s*Official.*$/gi, "")
+    .replace(/فيديو كليب/g, "")
+    .replace(/كليب رسمي/g, "")
+    .replace(/الأغنية الرسمية/g, "")
+    .replace(/النسخة الأصلية|النسخة الاصلية/g, "")
+    .replace(/HD Version/gi, "")
+    .replace(/\b(202[0-9]|201[0-9])\b/g, "")
+    .trim();
+}
+
+/**
+ * Accurately extracts the real singing artist and clean track title
+ * from YouTube video titles and channel metadata.
+ */
+export function extractSmartArtistAndTitle(
+  rawTitle?: string,
+  rawArtist?: string
+): { title: string; artist: string } {
+  let title = cleanVideoClutter(rawTitle || "");
+  let artist = (rawArtist || "").trim();
+
+  // If artist is generic or empty, strip it
+  if (
+    !artist ||
+    artist === "فنان" ||
+    artist === "فنان غير معروف" ||
+    artist === "غير معروف" ||
+    artist.toLowerCase().includes("unknown") ||
+    artist === "Aura Music"
+  ) {
+    artist = "";
+  }
+
+  // If title has pipe '|', check if one side has the primary title
+  if (title.includes("|")) {
+    const parts = title.split("|").map((p) => p.trim()).filter(Boolean);
+    const arPart = parts.find((p) => /[\u0600-\u06FF]/.test(p));
+    if (arPart) title = arPart;
+    else title = parts[0] || title;
+  }
+
+  // Check 'كليب' pattern: 'احمد حسين كليب الدمعه صعبة'
+  const clipMatch = title.match(/^([\u0621-\u064A\s]{2,25})\s+كليب\s+(.+)$/);
+  if (clipMatch) {
+    artist = clipMatch[1].trim();
+    title = clipMatch[2].trim();
+  }
+
+  // Check 'ترند' pattern: 'ترند دنيا الالفي " الدمعه صعبه ... "'
+  const trendMatch = title.match(/^ترند\s+([\u0621-\u064A\s]{2,25})\s+["“]?\s*([^"”\-\–\—\ـ]+)/);
+  if (trendMatch) {
+    artist = trendMatch[1].trim();
+    title = trendMatch[2].trim();
+  }
+
+  // Check 'موال' pattern: 'موال الدمعه صعبه اسماعيل الليثي'
+  const mawalMatch = title.match(/^موال\s+(.+)$/);
+  if (mawalMatch) {
+    const rest = mawalMatch[1].trim();
+    const words = rest.split(/\s+/);
+    if (words.length >= 3) {
+      artist = words.slice(-2).join(" ");
+      title = words.slice(0, -2).join(" ");
+    } else {
+      title = rest;
+    }
+  }
+
+  // Check 'Artist - Title' or 'Title - Artist'
+  if (title.includes("-") || title.includes("–") || title.includes("—")) {
+    const parts = title.split(/[-–—]/).map((p) => p.trim()).filter(Boolean);
+    if (parts.length === 2) {
+      const p0 = parts[0];
+      const p1 = parts[1];
+
+      const forms = artist ? getArtistForms(artist) : { arabic: "", latin: "" };
+      const candForms0 = getArtistForms(p0);
+      const candForms1 = getArtistForms(p1);
+
+      const p0MatchesArtist =
+        artist &&
+        (isStrictArtistMatch(artist, p0) ||
+          (forms.arabic && candForms0.arabic && forms.arabic === candForms0.arabic) ||
+          (forms.latin && candForms0.latin && forms.latin === candForms0.latin));
+
+      const p1MatchesArtist =
+        artist &&
+        (isStrictArtistMatch(artist, p1) ||
+          (forms.arabic && candForms1.arabic && forms.arabic === candForms1.arabic) ||
+          (forms.latin && candForms1.latin && forms.latin === candForms1.latin));
+
+      if (p0MatchesArtist) {
+        title = p1;
+      } else if (p1MatchesArtist) {
+        title = p0;
+      } else if (!artist || GENERIC_CHANNELS_REGEX.test(artist)) {
+        // If artist is generic, p0 is almost certainly the artist (e.g. 'عمرو دياب - مكانك')
+        artist = p0;
+        title = p1;
+      }
+    }
+  }
+
+  // If title has a slash separating Arabic and English (e.g. 'اللي بيني وبينك / Elly Bene'), pick Arabic
+  if (title.includes("/")) {
+    const halves = title.split("/");
+    const arabicHalf = halves.find((h) => /[\u0600-\u06FF]/.test(h));
+    if (arabicHalf && arabicHalf.trim().length >= 2) {
+      title = arabicHalf.trim();
+    } else {
+      title = halves[0].trim();
+    }
+  }
+
+  // Clean trailing latin or subtitles in Arabic titles:
+  // e.g. 'الدمعه صعبة AHMED HUSSEN - ELDAM3A SA3BA' -> 'الدمعه صعبة'
+  if (/[\u0600-\u06FF]/.test(title)) {
+    title = title.replace(/\s+[a-zA-Z0-9\s\-_–—]+$/, "").trim();
+  }
+
+  // Clean hashtags and extra quotes
+  title = title
+    .replace(/#([^\s]+)/g, (_, tag) => tag.replace(/_/g, " "))
+    .replace(/^["“'«\s]+|["”'»\s]+$/g, "")
+    .trim();
+
+  // If artist was cleaned or empty, and title has no artist extracted, fallback gracefully
+  if (GENERIC_CHANNELS_REGEX.test(artist) && !clipMatch && !trendMatch && !mawalMatch) {
+    artist = "";
+  }
+
+  return {
+    title: title || "أغنية محفوظة",
+    artist: artist.trim(),
+  };
+}

@@ -21,7 +21,7 @@ import { resolveSaavnSong } from "./jiosaavn";
 import { resolveAlbumatyStream } from "../scrapers/albumaty";
 import { getCachedTelegramTrack, getTelegramDirectUrl, uploadAudioUrlToTelegram } from "../telegram/telegramStorage";
 import { resolveViaMoonBot } from "../telegram/moonBotResolver";
-import { findBestOfficialVideo, isStrictArtistMatch, BILINGUAL_ARTIST_MAP } from "./artistMatcher";
+import { findBestOfficialVideo, isStrictArtistMatch, BILINGUAL_ARTIST_MAP, extractSmartArtistAndTitle } from "./artistMatcher";
 import { JANNAT_OLD_CLASSICS } from "@/data/jannatClassics";
 import { ANGHAM_OLD_CLASSICS } from "@/data/anghamClassics";
 
@@ -583,39 +583,57 @@ export async function resolveUniversalAudio(params: {
     }
   }
 
+  const extracted = extractSmartArtistAndTitle(title, artist);
+  const targetTitle = arabicResolvedTitle || oembedArabicTitle || extracted.title || title;
+  const targetArtist = arabicResolvedArtist || extracted.artist || effectiveArtist;
+
   // ─────────────────────────────────────────────────────────────────
-  // Strategy 0.5+1+2: @L_10_BOT + scrapers in parallel
-  // @L_10_BOT is the primary source (direct Telegram MP3 CDN).
-  // JioSaavn + Albumaty run in parallel so we don't lose time.
-  // First winner is used.
-  // skipBot=true (cache warming) skips the bot entirely so background
-  // prefetching never posts "يوتيوب" menus into the channel.
+  // Tier 1 (PRIMARY SOURCE for downloads & high quality):
+  // @wecibot (with @L_10_BOT secondary) via Telegram Cloud Storage.
+  // When forDownload=true, @wecibot is ALWAYS the primary source,
+  // and other sources act as backups only if the bot fails.
   // ─────────────────────────────────────────────────────────────────
   let winner: UniversalAudioResult | null = null;
 
-  if (hasSearchTitle && isArabicSong) {
-    const albumatyTitle = arabicResolvedTitle || oembedArabicTitle || title;
-    const albumatyArtist = arabicResolvedArtist || effectiveArtist;
-
-    // All three run in parallel — whoever finds the song first wins instantly.
-    // Dual bot resolver (@wecibot primary + @L_10_BOT fallback) runs with high priority into Telegram CDN.
-    winner = await raceFirst([
-      ...(params.skipBot ? [] : [tryMoonBot(albumatyTitle, albumatyArtist, videoId, 30000)]),
-      tryAlbumaty(albumatyTitle, albumatyArtist, videoId, 8000),
-      tryJioSaavn(title, effectiveArtist, videoId, 6000),
-    ]);
-
-    // Retry Albumaty with English title if Arabic one failed
-    if (!winner && albumatyTitle !== title) {
-      winner = await tryAlbumaty(title, effectiveArtist, videoId, 5000);
+  if (hasSearchTitle && !params.skipBot) {
+    if (params.forDownload) {
+      console.log(`[AudioResolver] 📥 Download request: using @wecibot as PRIMARY source for "${targetTitle}" by "${targetArtist}"...`);
+      winner = await tryMoonBot(targetTitle, targetArtist, videoId, 25000);
+      if (winner) {
+        console.log(`[AudioResolver] ✅ @wecibot delivered download audio successfully for "${targetTitle}"!`);
+        return winner;
+      }
+      console.warn(`[AudioResolver] ⚠️ @wecibot was unable to provide audio for "${targetTitle}". Switching to backup sources...`);
+    } else {
+      // For streaming: Try bot first (8s), fallback to scrapers
+      winner = await tryMoonBot(targetTitle, targetArtist, videoId, 8000);
+      if (winner) return winner;
     }
-  } else if (hasSearchTitle) {
-    // Non-Arabic: JioSaavn + Albumaty race, dual bot as parallel backup
-    winner = await raceFirst([
-      tryJioSaavn(title, effectiveArtist, videoId, 6000),
-      tryAlbumaty(title, effectiveArtist, videoId, 8000),
-      ...(params.skipBot ? [] : [tryMoonBot(title, effectiveArtist, videoId, 30000)]),
-    ]);
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  // Tier 2: Backup sources (مصادر احتياطية: Albumaty, JioSaavn, etc.)
+  // ─────────────────────────────────────────────────────────────────
+  if (!winner && hasSearchTitle) {
+    if (isArabicSong) {
+      const albumatyTitle = targetTitle;
+      const albumatyArtist = targetArtist;
+
+      winner = await raceFirst([
+        tryAlbumaty(albumatyTitle, albumatyArtist, videoId, 8000),
+        tryJioSaavn(title, effectiveArtist, videoId, 6000),
+      ]);
+
+      // Retry Albumaty with English title if Arabic one failed
+      if (!winner && albumatyTitle !== title) {
+        winner = await tryAlbumaty(title, effectiveArtist, videoId, 5000);
+      }
+    } else {
+      winner = await raceFirst([
+        tryJioSaavn(title, effectiveArtist, videoId, 6000),
+        tryAlbumaty(title, effectiveArtist, videoId, 8000),
+      ]);
+    }
   }
 
   if (winner) {

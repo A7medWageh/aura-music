@@ -26,7 +26,7 @@ import { saveTelegramCacheRecord, getTelegramDirectUrl } from "./telegramStorage
 import { query } from "@apis/neon";
 import { JANNAT_OLD_CLASSICS } from "@/data/jannatClassics";
 import { ANGHAM_OLD_CLASSICS } from "@/data/anghamClassics";
-import { BILINGUAL_ARTIST_MAP } from "@/services/music/artistMatcher";
+import { BILINGUAL_ARTIST_MAP, extractSmartArtistAndTitle } from "@/services/music/artistMatcher";
 
 const BOT_TOKEN =
   process.env.TELEGRAM_BOT_TOKEN || "8831422517:AAEXQFzQxzcyIKWI1WtfVh2XGzguGXAnCak";
@@ -151,16 +151,30 @@ async function pollDbForAudio(
           continue;
         }
 
-        // 3. Artist check: if expectedArtist is Jannat or Angham, reject other artists
-        if (expectedArtist && (expectedArtist.includes("جنات") || expectedArtist.toLowerCase().includes("jannat"))) {
-          if (rowArtist && !rowArtist.includes("جنات") && !rowArtist.includes("jannat") && !rowArtist.includes("rotana") && !rowArtist.includes("aura") && !rowArtist.includes("music")) {
-            console.warn(`[WeciBot] ❌ Rejected non-Jannat artist: "${row.artist}" for expected Jannat track "${expectedTitle}"`);
+        // 3. Artist check: reject mismatched covers or different singers
+        if (expectedArtist && expectedArtist !== "فنان غير معروف" && expectedArtist !== "Aura Music") {
+          const fullRow = `${rowArtist} ${rowTitle}`.toLowerCase();
+          const cleanExp = expectedArtist.toLowerCase().trim();
+
+          // Reject non-Jannat
+          if ((cleanExp.includes("جنات") || cleanExp.includes("jannat")) &&
+              rowArtist && !rowArtist.includes("جنات") && !rowArtist.includes("jannat") && !rowArtist.includes("rotana") && !rowArtist.includes("aura")) {
+            console.warn(`[WeciBot] ❌ Rejected non-Jannat artist: "${row.artist}" for expected "${expectedTitle}"`);
             continue;
           }
-        }
-        if (expectedArtist && (expectedArtist.includes("أنغام") || expectedArtist.toLowerCase().includes("angham"))) {
-          if (rowArtist && !rowArtist.includes("أنغام") && !rowArtist.includes("angham") && !rowArtist.includes("rotana") && !rowArtist.includes("aura") && !rowArtist.includes("music")) {
-            console.warn(`[WeciBot] ❌ Rejected non-Angham artist: "${row.artist}" for expected Angham track "${expectedTitle}"`);
+          // Reject non-Angham
+          if ((cleanExp.includes("أنغام") || cleanExp.includes("angham")) &&
+              rowArtist && !rowArtist.includes("أنغام") && !rowArtist.includes("angham") && !rowArtist.includes("rotana") && !rowArtist.includes("aura")) {
+            console.warn(`[WeciBot] ❌ Rejected non-Angham artist: "${row.artist}" for expected "${expectedTitle}"`);
+            continue;
+          }
+          // Reject cross-cover mismatch (e.g. expected Ahmed Hussein but got Donia El Alfy or vice-versa)
+          if (cleanExp.includes("احمد حسين") && (fullRow.includes("دنيا") || fullRow.includes("ليثي") || fullRow.includes("الليثي"))) {
+            console.warn(`[WeciBot] ❌ Rejected cover artist "${row.artist}" for expected original "${expectedArtist}"`);
+            continue;
+          }
+          if (cleanExp.includes("دنيا") && fullRow.includes("احمد حسين") && !fullRow.includes("دنيا")) {
+            console.warn(`[WeciBot] ❌ Rejected original artist "${row.artist}" for expected cover "${expectedArtist}"`);
             continue;
           }
         }
@@ -294,9 +308,16 @@ async function processPendingAudio(
   };
 }
 
-export function cleanQueryForWeciBot(rawTitle: string, rawArtist?: string): string {
-  let title = (rawTitle || "").trim();
-  let artist = (rawArtist || "").trim();
+export function cleanQueryForWeciBot(rawTitle: string, rawArtist?: string): {
+  primaryQuery: string;
+  invertedQuery?: string;
+  cleanTitle: string;
+  cleanArtist: string;
+  isArabic: boolean;
+} {
+  const extracted = extractSmartArtistAndTitle(rawTitle, rawArtist);
+  let title = extracted.title;
+  let artist = extracted.artist;
 
   // If title matches Jannat or Angham classics, enforce the canonical title and artist
   const jannat = JANNAT_OLD_CLASSICS.find(c =>
@@ -317,88 +338,11 @@ export function cleanQueryForWeciBot(rawTitle: string, rawArtist?: string): stri
     }
   }
 
-  // Map Latin artist to Arabic if known (e.g. Hossam Habib -> حسام حبيب)
-  if (artist && BILINGUAL_ARTIST_MAP[artist.toLowerCase().trim()]) {
+  const isArabic = /[\u0600-\u06FF]/.test(`${title} ${artist}`);
+
+  // Only map Latin artist to Arabic IF it's an Arabic song / artist
+  if (isArabic && artist && BILINGUAL_ARTIST_MAP[artist.toLowerCase().trim()]) {
     artist = BILINGUAL_ARTIST_MAP[artist.toLowerCase().trim()];
-  }
-
-  // Strip hashtags (#انصاص_مشاوير -> انصاص مشاوير)
-  title = title.replace(/#([^\s]+)/g, (_, tag) => tag.replace(/_/g, " "));
-
-  // Strip film/series tags
-  title = title
-    .replace(/من\s+فيلم.*$/gi, "")
-    .replace(/من\s+مسلسل.*$/gi, "")
-    .replace(/فيلم\s+[^\s]+/gi, "")
-    .replace(/مسلسل\s+[^\s]+/gi, "")
-    .replace(/غناء\s+/gi, "")
-    .replace(/أغنية\s+|اغنية\s+/gi, "")
-    .replace(/كلمات\s+.*$/gi, "")
-    .replace(/حصرياً|حصريا/gi, "");
-
-  // Strip video suffixes and tags
-  title = title
-    .replace(/\(Official.*?\)/gi, "")
-    .replace(/\[Official.*?\]/gi, "")
-    .replace(/\(Audio.*?\)/gi, "")
-    .replace(/\[Audio.*?\]/gi, "")
-    .replace(/\(Lyric.*?\)/gi, "")
-    .replace(/\[Lyric.*?\]/gi, "")
-    .replace(/\(Video.*?\)/gi, "")
-    .replace(/\[Video.*?\]/gi, "")
-    .replace(/\|.*$/g, "")
-    .replace(/فيديو كليب/g, "")
-    .replace(/كليب رسمي/g, "")
-    .replace(/الأغنية الرسمية/g, "")
-    .trim();
-
-  // If there's a slash / separating Arabic and English (e.g. "اللي بيني وبينك / Elly Bene"), pick Arabic
-  if (title.includes("/")) {
-    const halves = title.split("/");
-    const arabicHalf = halves.find((h) => /[\u0600-\u06FF]/.test(h));
-    if (arabicHalf && arabicHalf.trim().length >= 2) {
-      title = arabicHalf.trim();
-    } else {
-      title = halves[0].trim();
-    }
-  }
-
-  // If title has "Artist - Title" format (e.g. "جنات - حب امتلاك" or "حسام حبيب - شايف نفسي فيك")
-  if (title.includes("-")) {
-    const parts = title.split("-");
-    if (parts.length === 2) {
-      const p0 = parts[0].trim();
-      const p1 = parts[1].trim();
-      if (artist && (p0.toLowerCase() === artist.toLowerCase() || p0 === artist)) {
-        title = p1;
-      } else if (artist && (p1.toLowerCase() === artist.toLowerCase() || p1 === artist)) {
-        title = p0;
-      } else if (/[\u0600-\u06FF]/.test(p1) && p0.length < 25) {
-        artist = p0;
-        title = p1;
-      }
-    }
-  }
-
-  // Clean generic artist
-  if (
-    !artist ||
-    artist === "فنان" ||
-    artist === "فنان غير معروف" ||
-    artist === "غير معروف" ||
-    artist.toLowerCase().includes("unknown") ||
-    artist === "Aura Music"
-  ) {
-    artist = "";
-  } else {
-    artist = artist
-      .replace(/\s*-\s*topic\b/gi, "")
-      .replace(/\s*vevo\b/gi, "")
-      .replace(/\s*official\b/gi, "")
-      .replace(/\s*channel\b/gi, "")
-      .replace(/\s*records\b/gi, "")
-      .replace(/\s*music\b/gi, "")
-      .trim();
   }
 
   const queryParts = [title];
@@ -406,7 +350,14 @@ export function cleanQueryForWeciBot(rawTitle: string, rawArtist?: string): stri
     queryParts.push(artist);
   }
 
-  return queryParts.join(" ").replace(/\s+/g, " ").trim();
+  const primaryQuery = queryParts.join(" ").replace(/\s+/g, " ").trim();
+
+  let invertedQuery: string | undefined = undefined;
+  if (artist && !title.toLowerCase().includes(artist.toLowerCase())) {
+    invertedQuery = `${artist} ${title}`.replace(/\s+/g, " ").trim();
+  }
+
+  return { primaryQuery, invertedQuery, cleanTitle: title, cleanArtist: artist, isArabic };
 }
 
 export async function resolveViaMoonBot(params: {
@@ -448,46 +399,61 @@ export async function resolveViaMoonBot(params: {
   // Ensure DB tables exist
   await ensurePendingTable();
 
-  const cleanSongQuery = cleanQueryForWeciBot(title, artist);
+  const { primaryQuery, invertedQuery, cleanTitle, cleanArtist } = cleanQueryForWeciBot(title, artist);
 
   // ══════════════════════════════════════════════════════════════════
   // TIER 1: Primary Bot (@wecibot) — Command: "نزل {title} {artist}"
   // ══════════════════════════════════════════════════════════════════
-  const weciCommand = `نزل ${cleanSongQuery}`;
-  console.log(`[BotResolver] 🤖 [Tier 1 @wecibot] Sending: "${weciCommand}" for "${title}" by "${artist}"...`);
+  const weciCommand = `نزل ${primaryQuery}`;
+  console.log(`[BotResolver] 🤖 [Tier 1 @wecibot] Sending: "${weciCommand}" for "${cleanTitle}" by "${cleanArtist}"...`);
   const weciMsgId = await sendMsg(weciCommand);
   if (weciMsgId) {
-    console.log(`[BotResolver] Sent Tier 1 "${weciCommand}" (msgId=${weciMsgId}) — waiting up to 12s...`);
-    const pending = await pollDbForAudio(weciMsgId, title, artist, 12000);
+    console.log(`[BotResolver] Sent Tier 1 "${weciCommand}" (msgId=${weciMsgId}) — waiting up to 8s...`);
+    let pending = await pollDbForAudio(weciMsgId, cleanTitle, cleanArtist, 8000);
 
     // Clean up primary command message
     deleteMsg(weciMsgId).catch(() => {});
 
     if (pending) {
-      console.log(`[BotResolver] ✅ Audio received successfully from Tier 1 (@wecibot) for "${title}"!`);
-      return await processPendingAudio(pending, videoId, title, artist);
+      console.log(`[BotResolver] ✅ Audio received successfully from Tier 1 (@wecibot) for "${cleanTitle}"!`);
+      return await processPendingAudio(pending, videoId, cleanTitle, cleanArtist);
     }
-    console.warn(`[BotResolver] ⚠️ @wecibot did not deliver audio within 12s for "${title}". Falling back to old bot (@L_10_BOT)...`);
+
+    // Try inverted query if available (e.g. "نزل دنيا الالفي الدمعه صعبه")
+    if (invertedQuery && invertedQuery !== primaryQuery) {
+      const weciInvCommand = `نزل ${invertedQuery}`;
+      console.log(`[BotResolver] 🤖 [Tier 1 @wecibot inverted retry] Sending: "${weciInvCommand}"...`);
+      const weciInvMsgId = await sendMsg(weciInvCommand);
+      if (weciInvMsgId) {
+        pending = await pollDbForAudio(weciInvMsgId, cleanTitle, cleanArtist, 7000);
+        deleteMsg(weciInvMsgId).catch(() => {});
+        if (pending) {
+          console.log(`[BotResolver] ✅ Audio received from Tier 1 inverted retry for "${cleanTitle}"!`);
+          return await processPendingAudio(pending, videoId, cleanTitle, cleanArtist);
+        }
+      }
+    }
+    console.warn(`[BotResolver] ⚠️ @wecibot did not deliver audio for "${cleanTitle}". Falling back to secondary bot (@L_10_BOT)...`);
   }
 
   // ══════════════════════════════════════════════════════════════════
   // TIER 2: Secondary / Fallback Bot (@L_10_BOT) — Command: "تنزيل {title} {artist}"
   // ══════════════════════════════════════════════════════════════════
-  const oldBotCommand = `تنزيل ${cleanSongQuery}`;
-  console.log(`[BotResolver] 🤖 [Tier 2 @L_10_BOT] Sending fallback: "${oldBotCommand}" for "${title}"...`);
+  const oldBotCommand = `تنزيل ${primaryQuery}`;
+  console.log(`[BotResolver] 🤖 [Tier 2 @L_10_BOT] Sending fallback: "${oldBotCommand}" for "${cleanTitle}"...`);
   const oldBotMsgId = await sendMsg(oldBotCommand);
   if (oldBotMsgId) {
-    console.log(`[BotResolver] Sent Tier 2 "${oldBotCommand}" (msgId=${oldBotMsgId}) — waiting up to 14s...`);
-    const pending = await pollDbForAudio(oldBotMsgId, title, artist, 14000);
+    console.log(`[BotResolver] Sent Tier 2 "${oldBotCommand}" (msgId=${oldBotMsgId}) — waiting up to 10s...`);
+    const pending = await pollDbForAudio(oldBotMsgId, cleanTitle, cleanArtist, 10000);
 
     // Clean up secondary command message
     deleteMsg(oldBotMsgId).catch(() => {});
 
     if (pending) {
-      console.log(`[BotResolver] ✅ Audio received successfully from old bot (@L_10_BOT) for "${title}"!`);
-      return await processPendingAudio(pending, videoId, title, artist);
+      console.log(`[BotResolver] ✅ Audio received successfully from old bot (@L_10_BOT) for "${cleanTitle}"!`);
+      return await processPendingAudio(pending, videoId, cleanTitle, cleanArtist);
     }
-    console.warn(`[BotResolver] ❌ Both bots failed to deliver audio for "${title}"`);
+    console.warn(`[BotResolver] ❌ Both bots failed to deliver audio for "${cleanTitle}"`);
   }
 
   return null;

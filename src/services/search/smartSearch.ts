@@ -12,7 +12,7 @@ import { searchYouTube, isJunkResult } from "@apis/youtubei.js";
 import { resolveUniversalAudio } from "@/services/music/universalAudioResolver";
 import { getAllSongs, getAllArtists } from "@/services/music/musicApiClient";
 import { enrichSongs } from "@/services/music/songEnricher";
-import { BILINGUAL_ARTIST_MAP, ARABIC_TO_LATIN_MAP } from "@/services/music/artistMatcher";
+import { BILINGUAL_ARTIST_MAP, ARABIC_TO_LATIN_MAP, extractSmartArtistAndTitle } from "@/services/music/artistMatcher";
 
 // ── In-memory cache shared across all requests ────────────────────────────────
 const cache = new Map<string, { data: any; ts: number }>();
@@ -296,17 +296,39 @@ export async function smartSearch(searchTerm: string) {
     }
 
     // 4. Official Record Label / Production Channel boost
-    const isOfficialLabel = /official|records|music|rotana|mazzika|sobky|elsobky|نجوم|مزيكا|روتانا|السبكي|نغم|عالم الفن|free music|craft media|watary|sony music|universal/i.test(item.artist || "");
+    const isOfficialLabel = /official|records|music|rotana|mazzika|sobky|elsobky|shaabeyat|شعبيات|نجوم|مزيكا|روتانا|السبكي|نغم|عالم الفن|free music|craft media|watary|sony music|universal/i.test(item.artist || "");
     if (isOfficialLabel) {
-      score += 85;
+      score += 100;
     }
 
     // 5. Official badges in video title
-    if (/official\s*(audio|lyric|video)|كليب\s*رسمي|فيديو\s*كليب|النسخة\s*الأصلية/i.test(item.title || "")) {
-      score += 40;
+    if (/official\s*(audio|lyric|video)|كليب\s*رسمي|فيديو\s*كليب|النسخة\s*الأصلية|الأغنية\s*الرسمية/i.test(item.title || "")) {
+      score += 80;
+    }
+
+    // 6. Original master track prioritization (boost authentic songs over covers & trends)
+    if (normTitle.includes(nq) && !/ترند|حظ|موال|دي جي|كفر|cover/i.test(normTitle)) {
+      score += 60;
     }
 
     // ─── STRICT NOISE & JUNK PENALTIES (Drop non-original / fan edits) ───
+    // Derivative trends / TikTok cuts (demote derivative versions below the original)
+    if (!q.includes("ترند") && !q.includes("trend") && /ترند|trend\b/i.test(rawTitleLower)) {
+      score -= 130;
+    }
+    if (!q.includes("حظ") && /حظ\s*شعب/i.test(rawTitleLower)) {
+      score -= 100;
+    }
+    if (!q.includes("موال") && /موال/i.test(rawTitleLower)) {
+      score -= 80;
+    }
+    if (!q.includes("دي جي") && !q.includes("dj") && /\bdj\b|دي\s*جي/i.test(rawTitleLower)) {
+      score -= 80;
+    }
+    if (!q.includes("عزف") && /عزف|جلسة\s*عود/i.test(rawTitleLower)) {
+      score -= 100;
+    }
+
     // Foreign translation / subtitles (e.g. [Indonesian Translation])
     if (!q.includes("ترجمة") && !q.includes("translation") &&
         /translation|ترجمة|مترجم|مترجمة|indonesian|spanish|turkish|english sub|subtitles/i.test(rawTitleLower)) {
@@ -342,21 +364,30 @@ export async function smartSearch(searchTerm: string) {
   const scoredYt = ytSongsRaw
     .filter((item: any) => !isJunkResult(item.title, item.artist))
     .filter((item: any) => !item.duration || (item.duration >= 40 && item.duration <= 55 * 60))
-    .map((item: any) => ({
-      song: {
-        songId: item.songId ?? item.videoId,
-        title: item.title,
-        artist: item.artist ?? "فنان غير معروف",
-        artistId: `yt-${item.artist ?? "unknown"}`,
-        albumId: null,
-        albumTitle: null,
-        youtubeVideoId: item.youtubeVideoId ?? item.songId,
-        thumbnailUrl: item.thumbnailUrl ?? null,
-        source: "youtube",
-      },
-      score: computeRelevance(item),
-      cov: Math.max(tokenCoverage(q, item.title ?? "", item.artist ?? ""), tokenCoverage(cleanQ, item.title ?? "", item.artist ?? "")),
-    }));
+    .map((item: any) => {
+      const extracted = extractSmartArtistAndTitle(item.title, item.artist);
+      const songTitle = extracted.title || item.title;
+      const songArtist = extracted.artist || item.artist || "فنان غير معروف";
+
+      return {
+        song: {
+          songId: item.songId ?? item.videoId,
+          title: songTitle,
+          artist: songArtist,
+          artistId: `yt-${songArtist}`,
+          albumId: null,
+          albumTitle: null,
+          youtubeVideoId: item.youtubeVideoId ?? item.songId,
+          thumbnailUrl: item.thumbnailUrl ?? null,
+          source: "youtube",
+        },
+        score: computeRelevance(item),
+        cov: Math.max(
+          tokenCoverage(q, item.title ?? "", item.artist ?? ""),
+          tokenCoverage(cleanQ, item.title ?? "", item.artist ?? "")
+        ),
+      };
+    });
 
   // Score local catalog songs too
   const scoredLocal = localCatalog.map((song: any) => ({

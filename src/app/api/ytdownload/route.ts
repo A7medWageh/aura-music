@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { resolveUniversalAudio, type UniversalAudioResult } from "@/services/music/universalAudioResolver";
 import { streamAudioFromYouTube, isYtDlpAvailable } from "@apis/yt-dlp";
-import { findBestOfficialVideo } from "@/services/music/artistMatcher";
+import { findBestOfficialVideo, extractSmartArtistAndTitle } from "@/services/music/artistMatcher";
 import { uploadAudioBufferToTelegram } from "@/services/telegram/telegramStorage";
 import { JANNAT_OLD_CLASSICS } from "@/data/jannatClassics";
 import { ANGHAM_OLD_CLASSICS } from "@/data/anghamClassics";
@@ -445,13 +445,11 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // If title has "Artist - Song", extract both
-  if (title && title.includes("-")) {
-    const parts = title.split("-");
-    if (parts[0].trim().length > 1 && parts[1].trim().length > 1) {
-      if (!artist) artist = parts[0].trim();
-      title = parts[1].trim();
-    }
+  // Accurately extract true singer and clean track title
+  if (title) {
+    const extracted = extractSmartArtistAndTitle(title, artist);
+    if (extracted.title) title = extracted.title;
+    if (extracted.artist) artist = extracted.artist;
   }
 
   if (!videoId && !title) {

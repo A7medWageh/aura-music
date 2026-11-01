@@ -4,6 +4,7 @@ import { toAbsoluteApiUrl } from "@/utils/apiBase";
 import { JANNAT_OLD_CLASSICS } from "@/data/jannatClassics";
 import { ANGHAM_OLD_CLASSICS } from "@/data/anghamClassics";
 import { getCanonicalArtistName } from "@/utils/artistNormalizer";
+import { extractSmartArtistAndTitle } from "@/services/music/artistMatcher";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type SongMeta = {
@@ -37,34 +38,11 @@ function getSmartFolderName(rawArtist: string, allSongs: any[], title?: string):
 }
 
 export function cleanArtistAndTitle(rawTitle?: string, rawArtist?: string): { title: string; artist: string } {
-  let title = (rawTitle || "").trim();
-  let artist = (rawArtist || "").trim();
-
-  const isGeneric =
-    !artist ||
-    artist === "فنان" ||
-    artist === "فنان غير معروف" ||
-    artist === "غير معروف" ||
-    artist.toLowerCase().includes("unknown");
-
-  if (isGeneric && title.includes("-")) {
-    const parts = title.split("-");
-    if (parts[0].trim().length > 1 && parts[1].trim().length > 1) {
-      artist = parts[0].trim();
-      title = parts[1].trim();
-    }
-  }
-
-  if (
-    artist === "فنان" ||
-    artist === "فنان غير معروف" ||
-    artist === "غير معروف" ||
-    artist.toLowerCase().includes("unknown")
-  ) {
-    artist = "";
-  }
-
-  return { title: title || "أغنية محفوظة", artist };
+  const extracted = extractSmartArtistAndTitle(rawTitle, rawArtist);
+  return {
+    title: extracted.title || "أغنية محفوظة",
+    artist: extracted.artist || "",
+  };
 }
 
 // ─── Check Background Fetch API support ───────────────────────────────────────
