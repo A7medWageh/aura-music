@@ -4,6 +4,12 @@ import { GET as ytdownloadHandler } from "../ytdownload/route";
 
 export const dynamic = "force-dynamic";
 
+const STREAM_CACHE_HEADERS = {
+  "Cache-Control": "public, max-age=3600, s-maxage=3600, stale-while-revalidate=86400",
+  "CDN-Cache-Control": "public, max-age=3600",
+  "Vercel-CDN-Cache-Control": "public, max-age=3600",
+};
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const targetUrl = searchParams.get("url");
@@ -57,8 +63,6 @@ export async function GET(req: NextRequest) {
     // Forward Range header for chunked streaming, unless doing a full offline download
     if (rangeHeader && !isDownload) {
       requestHeaders["Range"] = rangeHeader;
-    } else if (!isDownload) {
-      requestHeaders["Range"] = "bytes=0-";
     }
 
     let fetchUrl = url;
@@ -76,7 +80,7 @@ export async function GET(req: NextRequest) {
       console.warn(`[StreamProxy] Upstream returned ${res.status}, falling back to yt-dlp for ${videoId}...`);
       const { stream, mimeType } = streamAudioFromYouTube(videoId);
       const safeFilename = encodeURIComponent(title.replace(/[\/\\?%*:|"<>]/g, "_")) + ".mp3";
-      const headers = new Headers();
+      const headers = new Headers(STREAM_CACHE_HEADERS);
       headers.set("Content-Type", mimeType || "audio/mp4");
       headers.set("Access-Control-Allow-Origin", "*");
       headers.set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges, Content-Disposition");
@@ -89,7 +93,7 @@ export async function GET(req: NextRequest) {
       return new NextResponse(stream as any, { status: 200, headers });
     }
 
-    const responseHeaders = new Headers();
+    const responseHeaders = new Headers(STREAM_CACHE_HEADERS);
 
     // Copy essential streaming and caching headers
     res.headers.forEach((value, key) => {

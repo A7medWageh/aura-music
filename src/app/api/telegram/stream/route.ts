@@ -32,8 +32,6 @@ export async function GET(req: NextRequest) {
     const clientRange = req.headers.get("Range");
     if (clientRange && !isDownload) {
       upstreamHeaders["Range"] = clientRange;
-    } else if (!isDownload) {
-      upstreamHeaders["Range"] = "bytes=0-";
     }
 
     const upstreamRes = await fetch(directTelegramUrl, {

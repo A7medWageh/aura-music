@@ -105,6 +105,16 @@ const NO_CACHE_HEADERS = {
   "Surrogate-Control": "no-store",
 };
 
+// Allow Vercel CDN & browser/iOS CoreMedia to cache audio segments for 1 hour.
+// CRITICAL: iOS lock-screen (AVPlayer/mediaserverd) forbids non-cacheable (no-store) media
+// from being buffered during screen-off sleep to prevent background battery drain.
+// STREAM_CACHE_HEADERS enables smooth lock-screen audio playback and instant seek.
+const STREAM_CACHE_HEADERS = {
+  "Cache-Control": "public, max-age=3600, s-maxage=3600, stale-while-revalidate=86400",
+  "CDN-Cache-Control": "public, max-age=3600",
+  "Vercel-CDN-Cache-Control": "public, max-age=3600",
+};
+
 const MAX_TELEGRAM_AUDIO_BYTES = 50 * 1024 * 1024;
 
 async function readAudioBuffer(body: ReadableStream<Uint8Array> | null): Promise<Buffer> {
@@ -184,8 +194,6 @@ async function streamTelegramCacheRow(
     const clientRange = req.headers.get("Range");
     if (clientRange && !isDownload) {
       upstreamHeaders["Range"] = clientRange;
-    } else if (!isDownload) {
-      upstreamHeaders["Range"] = "bytes=0-";
     }
 
     const tgRes = await fetch(directTgUrl, {
@@ -199,7 +207,7 @@ async function streamTelegramCacheRow(
 
     const trackName = customTitle || cached.title || "song";
     const safeFilename = encodeURIComponent(trackName.replace(/[\/\\?%*:|"<>]/g, "_")) + ".mp3";
-    const respHeaders = new Headers(NO_CACHE_HEADERS);
+    const respHeaders = new Headers(STREAM_CACHE_HEADERS);
 
     tgRes.headers.forEach((val, key) => {
       const lower = key.toLowerCase();
@@ -455,7 +463,7 @@ export async function GET(req: NextRequest) {
     }
 
     const { stream, mimeType } = streamAudioFromYouTube(videoId);
-    const headers = new Headers(NO_CACHE_HEADERS);
+    const headers = new Headers(STREAM_CACHE_HEADERS);
     headers.set("Content-Type", mimeType || "audio/mp4");
     headers.set("Accept-Ranges", "bytes");
     headers.set("Content-Disposition", "inline");
@@ -492,7 +500,7 @@ export async function GET(req: NextRequest) {
         { status: 502 }
       );
     }
-    const streamHeaders = new Headers(NO_CACHE_HEADERS);
+    const streamHeaders = new Headers(STREAM_CACHE_HEADERS);
     streamHeaders.set("Content-Type", workerRes.headers.get("content-type") || "audio/mp4");
     streamHeaders.set("Content-Disposition", "inline");
     streamHeaders.set("Access-Control-Allow-Origin", "*");
@@ -638,7 +646,7 @@ export async function GET(req: NextRequest) {
           });
           if (workerRes.ok || workerRes.status === 206) {
             console.log(`[ytdownload] 🚀 Live progressive worker stream for "${title || activeVid}"`);
-            const workerHeaders = new Headers(NO_CACHE_HEADERS);
+            const workerHeaders = new Headers(STREAM_CACHE_HEADERS);
             workerHeaders.set("Content-Type", workerRes.headers.get("content-type") || "audio/mp4");
             workerHeaders.set("Access-Control-Allow-Origin", "*");
             workerHeaders.set(
@@ -790,7 +798,7 @@ export async function GET(req: NextRequest) {
             signal: req.signal,
           });
           if (tgRes.ok || tgRes.status === 206) {
-            const respHeaders = new Headers(NO_CACHE_HEADERS);
+            const respHeaders = new Headers(STREAM_CACHE_HEADERS);
             tgRes.headers.forEach((val, key) => {
               const lower = key.toLowerCase();
               if (["content-type", "content-length", "content-range", "accept-ranges"].includes(lower)) {
@@ -852,7 +860,7 @@ export async function GET(req: NextRequest) {
           console.log(`[ytdownload] Direct yt-dlp audio stream for videoId=${activeVid}`);
           const { stream, mimeType } = streamAudioFromYouTube(activeVid);
 
-          const responseHeaders = new Headers(NO_CACHE_HEADERS);
+          const responseHeaders = new Headers(STREAM_CACHE_HEADERS);
           responseHeaders.set("Content-Type", mimeType || "audio/mp4");
           responseHeaders.set("Access-Control-Allow-Origin", "*");
           responseHeaders.set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges, Content-Disposition, X-Original-Content-Length");
@@ -889,7 +897,7 @@ export async function GET(req: NextRequest) {
             signal: req.signal,
           });
           if (workerRes.ok || workerRes.status === 206) {
-            const workerHeaders = new Headers(NO_CACHE_HEADERS);
+            const workerHeaders = new Headers(STREAM_CACHE_HEADERS);
             workerHeaders.set("Content-Type", workerRes.headers.get("content-type") || "audio/mp4");
             workerHeaders.set("Access-Control-Allow-Origin", "*");
             workerHeaders.set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges, Content-Disposition, X-Original-Content-Length");
@@ -983,7 +991,7 @@ export async function GET(req: NextRequest) {
         if (isYtDlpAvailable()) {
           console.warn(`[ytdownload] Upstream failed (${upstreamRes.status}), falling back to local yt-dlp...`);
           const { stream, mimeType } = streamAudioFromYouTube(targetVideoId);
-          const fallbackHeaders = new Headers(NO_CACHE_HEADERS);
+          const fallbackHeaders = new Headers(STREAM_CACHE_HEADERS);
           fallbackHeaders.set("Content-Type", mimeType || "audio/mp4");
           fallbackHeaders.set("Access-Control-Allow-Origin", "*");
           fallbackHeaders.set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges, Content-Disposition, X-Original-Content-Length");
@@ -1007,7 +1015,7 @@ export async function GET(req: NextRequest) {
             signal: req.signal,
           });
           if (workerRes.ok && workerRes.body) {
-            const workerHeaders = new Headers(NO_CACHE_HEADERS);
+            const workerHeaders = new Headers(STREAM_CACHE_HEADERS);
             workerHeaders.set("Content-Type", workerRes.headers.get("content-type") || "audio/mp4");
             workerHeaders.set("Access-Control-Allow-Origin", "*");
             workerHeaders.set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges, Content-Disposition, X-Original-Content-Length");
@@ -1024,7 +1032,7 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const responseHeaders = new Headers();
+    const responseHeaders = new Headers(STREAM_CACHE_HEADERS);
     upstreamRes.headers.forEach((val, key) => {
       const lower = key.toLowerCase();
       if (["content-type", "content-length", "content-range", "accept-ranges"].includes(lower)) {
