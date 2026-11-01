@@ -181,16 +181,41 @@ export async function getCachedTelegramTrack(params: {
     // 1c. Search by title & artist
     if (title) {
       const cleanT = title.trim();
+      const wildcardT = cleanT
+        .replace(/[أإآا]/g, "_")
+        .replace(/[ةه]/g, "_")
+        .replace(/[يى]/g, "_");
+
       const res = await query<any>(
         `SELECT id, video_id, song_id, title, artist, tg_file_id, tg_message_id, duration_sec, file_size, mime_type
          FROM telegram_audio_cache
-         WHERE title = $1 OR title ILIKE $1 OR title ILIKE $2
+         WHERE title = $1 OR title ILIKE $1 OR title ILIKE $2 OR title ILIKE $3
          ORDER BY COALESCE(duration_sec, 0) DESC, id DESC
-         LIMIT 10`,
-        [cleanT, `%${cleanT}%`]
+         LIMIT 25`,
+        [cleanT, `%${cleanT}%`, `%${wildcardT}%`]
       );
 
-      for (const row of res.rows) {
+      // Smart sort:
+      // 1. If artist specified, candidate tracks matching that artist rank highest.
+      // 2. Prioritize official original tracks over live/trend/cover variations.
+      // 3. Shorter, clean track titles rank higher than bloated titles.
+      const sortedRows = [...res.rows].sort((a, b) => {
+        if (artist && artist !== "فنان غير معروف" && artist !== "Aura Music") {
+          const aMatches = isStrictArtistMatch(artist, a.artist || "");
+          const bMatches = isStrictArtistMatch(artist, b.artist || "");
+          if (aMatches && !bMatches) return -1;
+          if (!aMatches && bMatches) return 1;
+        }
+
+        const aFluff = /ترند|حظ|بونبوناية|فرح|فرحة|حفلة|ريمكس|شعبي جديد|مهرجان/i.test(a.title || "");
+        const bFluff = /ترند|حظ|بونبوناية|فرح|فرحة|حفلة|ريمكس|شعبي جديد|مهرجان/i.test(b.title || "");
+        if (!aFluff && bFluff) return -1;
+        if (aFluff && !bFluff) return 1;
+
+        return (a.title?.length || 0) - (b.title?.length || 0);
+      });
+
+      for (const row of sortedRows) {
         if (!isValidCacheRow(row, artist)) {
           continue;
         }

@@ -394,7 +394,7 @@ export async function resolveUniversalAudio(params: {
   // clicked one — re-uploaded "same title, different audio" uploads (e.g. the
   // "Replica | Abyusif" bait video by another channel) otherwise play a
   // completely different song without any warning.
-  const rowIsRightSong = (row: { videoId?: string; artist?: string; durationSec?: number }) => {
+  const rowIsRightSong = (row: { videoId?: string; title?: string; artist?: string; durationSec?: number }) => {
     if (matchingJannat && row) {
       // Validate expected duration for Jannat track (reject obvious snippets)
       if (matchingJannat.duration && row.durationSec) {
@@ -438,7 +438,17 @@ export async function resolveUniversalAudio(params: {
     // 1a rows share the clicked videoId (identity by id); rows found via the
     // title+artist branch already matched on title — so the artist check is
     // the remaining trust gap for polluted uploads.
-    return !artist || isStrictArtistMatch(artist, row.artist || "");
+    if (videoId && row.videoId === videoId) return true;
+    if (!artist) return true;
+    if (isStrictArtistMatch(artist, row.artist || "")) return true;
+
+    const normReq = (artist || "").toLowerCase().replace(/[أإآ]/g, "ا").replace(/[ة]/g, "ه").replace(/[ى]/g, "ي").trim();
+    const normRowArt = (row.artist || "").toLowerCase().replace(/[أإآ]/g, "ا").replace(/[ة]/g, "ه").replace(/[ى]/g, "ي").trim();
+    const normRowTit = (row.title || "").toLowerCase().replace(/[أإآ]/g, "ا").replace(/[ة]/g, "ه").replace(/[ى]/g, "ي").trim();
+
+    if (normRowTit.includes(normReq) || (normRowArt && normReq.includes(normRowArt)) || (normRowArt && normRowArt.includes(normReq))) return true;
+    if (/naghmaty|نغماتي|weci|shaabeyat|mazzika|rotana|nogoum|channel|music|records|aura/i.test(row.artist || "")) return true;
+    return false;
   };
 
   // Strategy 0 (fast path): a known videoId is checked against the Telegram DB
@@ -620,11 +630,12 @@ export async function resolveUniversalAudio(params: {
         ]);
       }
 
-      // 2. If fast scrapers missed or had no result: use @wecibot (deduplicated & non-blocking)
-      if (!winner) {
-        winner = await tryMoonBot(targetTitle, targetArtist, videoId, 18000, false);
-      }
       if (winner) return winner;
+
+      // 2. For streaming, do NOT block the online player waiting 18s for MoonBot.
+      // Fire MoonBot in the background so Telegram cache is filled for future plays,
+      // and continue immediately to backup sources (Albumaty Arabic, JioSaavn, SoundCloud, etc.)
+      void tryMoonBot(targetTitle, targetArtist, videoId, 25000, false).catch(() => {});
     }
   }
 
