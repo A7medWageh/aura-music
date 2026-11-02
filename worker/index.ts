@@ -163,38 +163,115 @@ self.addEventListener('notificationclick', (event) => {
 self.addEventListener('install', (event: any) => {
   self.skipWaiting();
   event.waitUntil(
-    caches.open('aura-offline-core').then(async (cache) => {
-      const coreUrls = [
-        '/',
-        '/library',
-        '/offline.html',
-        '/manifest.json',
-        '/icons/icon-192.png',
-        '/icons/icon-512.png',
-        '/logo-v2.png',
-        '/placeholder-song.jpg',
-        '/placeholder-album.jpg',
-        '/placeholder-artist.jpg',
-      ];
-      // Use Promise.allSettled so one failed asset never aborts precaching the others
-      await Promise.allSettled(
-        coreUrls.map((url) =>
-          cache.add(new Request(url, { cache: 'reload' })).catch((err) => {
-            console.warn(`[SW] Precache skipped for ${url}:`, err.message);
+    (async () => {
+      try {
+        const cache = await caches.open('aura-offline-core');
+        const coreUrls = [
+          '/',
+          '/library',
+          '/offline.html',
+          '/manifest.json',
+          '/icons/icon-192.png',
+          '/icons/icon-512.png',
+          '/logo-v2.png',
+          '/placeholder-song.jpg',
+          '/placeholder-album.jpg',
+          '/placeholder-artist.jpg',
+        ];
+        // Clean, standard fetch without custom Request options (avoids WebKit CacheStorage TypeError)
+        await Promise.allSettled(
+          coreUrls.map(async (url) => {
+            try {
+              const res = await fetch(url);
+              if (res && (res.status === 200 || res.type === 'opaque')) {
+                await cache.put(url, res.clone());
+              }
+            } catch (err) {
+              console.warn(`[SW] Precache skipped for ${url}:`, err);
+            }
           })
-        )
-      );
-    })
+        );
+      } catch (err) {
+        console.warn('[SW] Install error:', err);
+      }
+    })()
   );
 });
 
 self.addEventListener('activate', (event: any) => {
-  event.waitUntil(self.clients.claim());
+  event.waitUntil(
+    (async () => {
+      await self.clients.claim();
+      // Ensure /offline.html is cached and verified
+      try {
+        const offlineMatch = await caches.match('/offline.html', { ignoreSearch: true });
+        if (!offlineMatch) {
+          const res = await fetch('/offline.html');
+          if (res && res.status === 200) {
+            const cache = await caches.open('aura-offline-core');
+            await cache.put('/offline.html', res);
+          }
+        }
+      } catch {}
+    })()
+  );
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  OFFLINE NAVIGATION & ASSET CACHING ENGINE (Instant Cold-Start on iOS PWA)
 // ─────────────────────────────────────────────────────────────────────────────
+
+async function findCachedNavigation(req: Request): Promise<Response | null> {
+  try {
+    // 1. Direct match with ignoreSearch
+    const direct = await caches.match(req, { ignoreSearch: true });
+    if (direct) return direct;
+
+    // 2. Try root '/' or '/library'
+    const root = (await caches.match('/', { ignoreSearch: true })) ||
+                 (await caches.match('/library', { ignoreSearch: true }));
+    if (root) return root;
+
+    // 3. Check aura-offline-core specifically
+    const core = await caches.open('aura-offline-core');
+    const coreRoot = (await core.match(req)) || (await core.match('/')) || (await core.match('/library'));
+    if (coreRoot) return coreRoot;
+  } catch {}
+  return null;
+}
+
+async function getOfflineFallback(): Promise<Response> {
+  // 1. Try /offline.html across all caches with ignoreSearch
+  try {
+    const offlineDoc = await caches.match('/offline.html', { ignoreSearch: true });
+    if (offlineDoc) return offlineDoc;
+
+    const core = await caches.open('aura-offline-core');
+    const coreMatch = await core.match('/offline.html');
+    if (coreMatch) return coreMatch;
+  } catch {}
+
+  // 2. Try root or library
+  try {
+    const root = (await caches.match('/', { ignoreSearch: true })) ||
+                 (await caches.match('/library', { ignoreSearch: true }));
+    if (root) return root;
+  } catch {}
+
+  // 3. Fallback: Emergency 200 HTML response — NEVER 503!
+  // A 503 causes iOS to show "Safari cannot open the page because your iPhone is not connected to the internet".
+  return new Response(
+    `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Aura Music</title><style>body{background:#08090d;color:#fff;font-family:-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center;padding:24px;box-sizing:border-box}h2{font-size:22px;margin:16px 0 8px;background:linear-gradient(to right,#818cf8,#22d3ee);-webkit-background-clip:text;-webkit-text-fill-color:transparent}p{color:#94a3b8;font-size:14px;line-height:1.6}a{color:#fff;background:linear-gradient(135deg,#6366f1,#06b6d4);text-decoration:none;padding:12px 28px;border-radius:12px;font-weight:bold;display:inline-block;margin-top:20px;box-shadow:0 4px 16px rgba(99,102,241,0.35)}</style></head><body><div><div style="font-size:56px">🎵</div><h2>Aura Music — وضع الأوفلاين</h2><p>أنت غير متصل بالإنترنت حالياً. افتح مكتبة الأوفلاين لتشغيل أغانيك المحمّلة.</p><a href="/offline.html">فتح مكتبة الأوفلاين ⚡</a><script>if(window.location.pathname!=="/offline.html"){window.location.replace("/offline.html");}</script></div></body></html>`,
+    {
+      status: 200,
+      headers: {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-cache',
+      },
+    }
+  );
+}
+
 self.addEventListener('fetch', (event: any) => {
   const req = event.request;
   const url = new URL(req.url);
@@ -203,25 +280,17 @@ self.addEventListener('fetch', (event: any) => {
   if (req.mode === 'navigate') {
     event.respondWith(
       (async () => {
-        // Fast offline path: If device is in Airplane Mode or offline, DO NOT call fetch!
-        // Calling fetch while offline on iOS WebKit hangs for 30s causing a black screen!
+        // Fast offline path: if device is in Airplane Mode or offline, DO NOT wait for fetch!
         if (!self.navigator.onLine) {
-          const cached =
-            (await caches.match(req)) ||
-            (await caches.match('/library')) ||
-            (await caches.match('/'));
+          const cached = await findCachedNavigation(req);
           if (cached) return cached;
-
-          const offlineDoc =
-            (await caches.match('/offline.html')) ||
-            (await (await caches.open('aura-offline-core')).match('/offline.html'));
-          if (offlineDoc) return offlineDoc;
+          return await getOfflineFallback();
         }
 
-        // Online path with strict 1200ms timeout
+        // Online path: race network with fast timeout (1500ms)
         try {
           const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), 1200);
+          const timer = setTimeout(() => controller.abort(), 1500);
           const netRes = await fetch(req, { signal: controller.signal });
           clearTimeout(timer);
           if (netRes && (netRes.status === 200 || netRes.type === 'opaque')) {
@@ -231,41 +300,44 @@ self.addEventListener('fetch', (event: any) => {
           }
         } catch {}
 
-        // Fallback to cached pages
-        const cachedFallback =
-          (await caches.match(req)) ||
-          (await caches.match('/library')) ||
-          (await caches.match('/'));
+        // Network failed or timed out: serve cached page or guaranteed offline.html
+        const cachedFallback = await findCachedNavigation(req);
         if (cachedFallback) return cachedFallback;
 
-        const offlineFallback =
-          (await caches.match('/offline.html')) ||
-          (await (await caches.open('aura-offline-core')).match('/offline.html'));
-        if (offlineFallback) return offlineFallback;
-
-        return new Response('Offline', { status: 503, headers: { 'Content-Type': 'text/plain' } });
+        return await getOfflineFallback();
       })()
     );
     return;
   }
 
-  // 2. Next.js Static Chunks & CSS (Cache-First to ensure React mounts offline)
+  // 2. Next.js Static Chunks & CSS (Cache-First with ignoreSearch to match Workbox precache)
   if (url.pathname.startsWith('/_next/static/') || /\.(?:js|css)$/i.test(url.pathname)) {
     event.respondWith(
-      caches.match(req).then((cached) => {
+      (async () => {
+        // CRITICAL: ignoreSearch: true matches Workbox precached assets!
+        const cached = await caches.match(req, { ignoreSearch: true });
         if (cached) return cached;
-        return fetch(req)
-          .then(async (response) => {
-            if (response && response.status === 200) {
-              const cache = await caches.open('aura-static-chunks-v3');
-              cache.put(req, response.clone()).catch(() => {});
-            }
+
+        try {
+          const response = await fetch(req);
+          if (response && response.status === 200) {
+            const cache = await caches.open('aura-static-chunks-v3');
+            cache.put(req, response.clone()).catch(() => {});
             return response;
-          })
-          .catch(() => {
-            return new Response('', { status: 404 });
-          });
-      })
+          }
+        } catch {}
+
+        // Fallback: match by pathname alone
+        const fallback = await caches.match(url.pathname, { ignoreSearch: true });
+        if (fallback) return fallback;
+
+        // NEVER return 404! Return empty 200 response so React script tags don't throw ChunkLoadError
+        const isCss = /\.css$/i.test(url.pathname);
+        return new Response(isCss ? '/* offline */' : '/* offline chunk */', {
+          status: 200,
+          headers: { 'Content-Type': isCss ? 'text/css' : 'application/javascript' }
+        });
+      })()
     );
     return;
   }
@@ -279,24 +351,34 @@ self.addEventListener('fetch', (event: any) => {
 
   if (isImage) {
     event.respondWith(
-      caches.match(req).then((cached) => {
+      (async () => {
+        const cached = await caches.match(req, { ignoreSearch: true });
         if (cached) return cached;
-        return fetch(req)
-          .then(async (response) => {
-            if (response && (response.status === 200 || response.type === 'opaque')) {
-              try {
-                const cache = await caches.open('aura-offline-images');
-                cache.put(req, response.clone()).catch(() => {});
-              } catch {}
-            }
+
+        try {
+          const response = await fetch(req);
+          if (response && (response.status === 200 || response.type === 'opaque')) {
+            const cache = await caches.open('aura-offline-images');
+            cache.put(req, response.clone()).catch(() => {});
             return response;
-          })
-          .catch(async () => {
-            const fallback = await caches.match('/placeholder-song.jpg');
-            if (fallback) return fallback;
-            return new Response('', { status: 404 });
-          });
-      })
+          }
+        } catch {}
+
+        const fallback = await caches.match('/placeholder-song.jpg', { ignoreSearch: true });
+        if (fallback) return fallback;
+
+        // 1x1 transparent GIF with 200 OK
+        const TRANSPARENT_GIF = new Uint8Array([
+          0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x80, 0x00,
+          0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0x21, 0xf9, 0x04, 0x01, 0x00,
+          0x00, 0x00, 0x00, 0x2c, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00,
+          0x00, 0x02, 0x02, 0x44, 0x01, 0x00, 0x3b
+        ]);
+        return new Response(TRANSPARENT_GIF, {
+          status: 200,
+          headers: { 'Content-Type': 'image/gif' }
+        });
+      })()
     );
     return;
   }

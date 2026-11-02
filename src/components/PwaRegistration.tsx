@@ -79,7 +79,6 @@ export function PwaRegistration() {
   }, []);
 
   useEffect(() => {
-    if (isNativeApp()) return;
     // ── Register service worker without disruptive auto-reload ──
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("/sw.js", { scope: "/" })
@@ -118,8 +117,8 @@ export function PwaRegistration() {
       };
     }
 
-    // Don't show install banner if already installed
-    if (isStandalone()) return;
+    // Don't show install banner if already installed (standalone or native app)
+    if (isStandalone() || isNativeApp()) return;
 
     // iOS: show custom install guide after 3s (if not dismissed before)
     if (isIOS()) {

@@ -130,25 +130,37 @@ class MainViewController: CAPBridgeViewController {
     override func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         super.webView(webView, didFinish: navigation)
         hasInitialPageLoaded = true
+        if let url = webView.url?.absoluteString, url.contains("aura-musiic.vercel.app") && !url.contains("offline") {
+            isFallbackLoaded = false
+        }
     }
 
     override func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        super.webView(webView, didFailProvisionalNavigation: navigation, withError: error)
-
-        // ONLY intercept if the initial app load failed because of no internet connection
-        guard !hasInitialPageLoaded && !isFallbackLoaded else { return }
-
         let nsError = error as NSError
-        print("[AuraMusic iOS] Cold launch navigation failed: domain=\(nsError.domain), code=\(nsError.code): \(nsError.localizedDescription)")
+        print("[AuraMusic iOS] Navigation failed: domain=\(nsError.domain), code=\(nsError.code): \(nsError.localizedDescription)")
 
-        let offlineCodes = [
-            NSURLErrorNotConnectedToInternet, // -1009
-            NSURLErrorCannotFindHost          // -1003
-        ]
-
-        if nsError.domain == NSURLErrorDomain && offlineCodes.contains(nsError.code) {
-            loadOfflineFallback(webView: webView)
+        // Ignore user cancellation
+        if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled {
+            super.webView(webView, didFailProvisionalNavigation: navigation, withError: error)
+            return
         }
+
+        // Any network error in NSURLErrorDomain triggers the offline fallback
+        if nsError.domain == NSURLErrorDomain {
+            loadOfflineFallback(webView: webView)
+            return
+        }
+
+        super.webView(webView, didFailProvisionalNavigation: navigation, withError: error)
+    }
+
+    override func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        let nsError = error as NSError
+        if nsError.domain == NSURLErrorDomain && nsError.code != NSURLErrorCancelled {
+            loadOfflineFallback(webView: webView)
+            return
+        }
+        super.webView(webView, didFail: navigation, withError: error)
     }
 
     private func loadOfflineFallback(webView: WKWebView) {
