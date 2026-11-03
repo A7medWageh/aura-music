@@ -38,6 +38,7 @@ import { MusicApi, BASE_API_URL } from "@/services/api/musicApi";
 import { usePlayerStore } from "@/store/usePlayerStore";
 import { useLibraryStore } from "@/store/useLibraryStore";
 import { SongItem } from "@/components/SongItem";
+import { CURATED_50_ARABIC_HITS } from "@/data/curatedOfflineCatalog";
 import { AuraCreativeLoader } from "@/components/AuraCreativeLoader";
 import { resolveArtworkUri } from "@/utils/media";
 import { scrollBus } from "@/utils/scrollBus";
@@ -61,13 +62,22 @@ import {
 
 const RELEASE_W = 132;
 const absFill = StyleSheet.absoluteFill as any;
-const SONG_PREVIEW = 35;
+const COMPACT_SONGS_LIMIT = 8;
 
 // YouTube shelf labels arrive as e.g. "Album • 2009"; keep only the year.
 const yearOf = (value?: string | number) => {
   const match = /(?:19|20)\d{2}/.exec(String(value || ""));
   return match ? Number(match[0]) : 0;
 };
+
+function parseDurationToSec(dur?: string | number): number {
+  if (typeof dur === "number") return dur;
+  if (!dur) return 0;
+  const parts = String(dur).split(":").map(Number);
+  if (parts.length === 2) return (parts[0] || 0) * 60 + (parts[1] || 0);
+  if (parts.length === 3) return (parts[0] || 0) * 3600 + (parts[1] || 0) * 60 + (parts[2] || 0);
+  return Number(dur) || 0;
+}
 
 const formatDuration = (seconds?: number) => {
   if (!seconds || !isFinite(seconds) || seconds <= 0) return null;
@@ -128,28 +138,63 @@ export default function ArtistDetailScreen() {
   useEffect(() => {
     async function loadArtist() {
       if (!id) return;
-      setLoading(true);
-      const startTime = Date.now();
+      const resolvedName = name || id;
+      const normTarget = normalizeArabicName(resolvedName);
+
+      // 1. Instant local catalog lookup (0ms load latency)
+      const localHits: Song[] = (CURATED_50_ARABIC_HITS || [])
+        .filter((s) => {
+          const normA = normalizeArabicName(s.artist);
+          return normA.includes(normTarget) || normTarget.includes(normA);
+        })
+        .map((s) => ({
+          id: s.songId,
+          title: s.title,
+          artist: s.artist,
+          albumName: s.albumName,
+          thumbnailUrl: s.thumbnailUrl,
+          duration: parseDurationToSec(s.duration),
+          youtubeVideoId: s.youtubeVideoId,
+        }));
+
+      if (localHits.length > 0) {
+        setSongs(localHits);
+        setLoading(false);
+      } else {
+        setLoading(true);
+      }
+
+      setArtistDetails((prev: any) => prev || {
+        artistId: id,
+        artistName: resolvedName,
+        thumbnailUrl: imageUrl || (localHits[0]?.thumbnailUrl ?? ""),
+        bio: "أحد ألمع نجوم ومبدعي الموسيقى العربية، يقدم باقة من أروع الأعمال والتسجيلات الغنائية الخالدة.",
+        monthlyListeners: "8.5M مستمع شهرياً",
+      });
+
+      // 2. Background network fetch bounded by 2.2s timeout
       try {
-        const resolvedName = name || id;
-        const [artistData, searchRes] = await Promise.all([
-          MusicApi.getArtist(id).catch(() => null),
-          MusicApi.search(resolvedName).catch(() => ({ songs: [] })),
+        const timeoutPromise = (ms: number) =>
+          new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), ms));
+
+        const [artistData, searchRes]: [any, any] = await Promise.all([
+          Promise.race([MusicApi.getArtist(id), timeoutPromise(2200)]).catch(() => null),
+          Promise.race([MusicApi.search(resolvedName), timeoutPromise(2200)]).catch(() => ({ songs: [] })),
         ]);
 
-        let accumulatedSongs: Song[] = [];
+        let accumulatedSongs: Song[] = localHits.length > 0 ? [...localHits] : [];
         if (artistData && Array.isArray(artistData.songs)) {
           accumulatedSongs.push(...artistData.songs);
         }
 
-        if (searchRes && Array.isArray(searchRes.songs)) {
+        const candidateSongs = searchRes?.songs || [];
+        if (Array.isArray(candidateSongs) && candidateSongs.length > 0) {
           const seenIds = new Set(accumulatedSongs.map((s) => s.id));
           const seenTitles = new Set(accumulatedSongs.map((s) => normalizeArabicName(s.title)));
 
-          for (const s of searchRes.songs) {
+          for (const s of candidateSongs) {
             const normTitle = normalizeArabicName(s.title);
             const normArtist = normalizeArabicName(s.artist);
-            const normTarget = normalizeArabicName(resolvedName);
             const isRelevant =
               normArtist.includes(normTarget) ||
               normTarget.includes(normArtist) ||
@@ -163,26 +208,16 @@ export default function ArtistDetailScreen() {
           }
         }
 
-        if (artistData) {
-          setArtistDetails(artistData);
-        } else {
-          setArtistDetails({
-            artistId: id,
-            artistName: resolvedName,
-            thumbnailUrl: imageUrl || (accumulatedSongs[0]?.thumbnailUrl ?? ""),
-            bio: "أحد ألمع نجوم ومبدعي الموسيقى العربية، يقدم باقة من أروع الأعمال والتسجيلات الغنائية الخالدة.",
-            monthlyListeners: "8.5M مستمع شهرياً",
-          });
+        if (accumulatedSongs.length > 0) {
+          setSongs(accumulatedSongs);
         }
 
-        setSongs(accumulatedSongs);
-      } catch (err) {
-        console.warn("[ArtistDetailScreen] Error:", err);
-      } finally {
-        const elapsed = Date.now() - startTime;
-        if (elapsed < 400) {
-          await new Promise((r) => setTimeout(r, 400 - elapsed));
+        if (artistData) {
+          setArtistDetails(artistData);
         }
+      } catch (err) {
+        console.warn("[ArtistDetailScreen] Network load error:", err);
+      } finally {
         setLoading(false);
       }
     }
@@ -327,7 +362,7 @@ export default function ArtistDetailScreen() {
 
   const visibleSongs = useMemo(() => {
     if (normalizedQuery || showAllSongs) return filteredSongs;
-    return filteredSongs.slice(0, SONG_PREVIEW);
+    return filteredSongs.slice(0, COMPACT_SONGS_LIMIT);
   }, [filteredSongs, normalizedQuery, showAllSongs]);
 
   const discAlbums = useMemo(() => {
@@ -764,70 +799,69 @@ export default function ArtistDetailScreen() {
           </View>
         )}
 
-        {/* ── TOP TRACKS ── */}
-        {topTracks.length > 0 && (
-          <AuraFadeIn delay={180} slideDistance={16}>
+        {/* ── POPULAR SONGS (COMPACT TOP 8) ── */}
+        {!normalizedQuery && (
+          <AuraFadeIn delay={160} slideDistance={14}>
             <AuraSection
               kicker="الأكثر استماعًا"
-              title="أفضل ٥ أغانٍ"
-              actionLabel={songs.length > 5 ? "تشغيل الكل" : undefined}
+              title="أشهر الأغاني"
+              actionLabel={songs.length > 1 ? "تشغيل الكل" : undefined}
               onAction={() => playFrom(songs, false)}
               style={styles.section}
             />
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.rail}
-            >
-              {topTracks.map((song, index) => {
-                const views = formatViews(song.viewCount);
-                const duration = formatDuration(song.duration);
-                return (
+
+            {loading && songs.length === 0 ? (
+              <View style={styles.loadingBox}>
+                <AuraBadge label="جارٍ تجهيز الكتالوج" tone="gold" />
+                <AuraText role="caption" color={Color.text_secondary} style={{ marginTop: 8 }}>
+                  جارٍ جلب روائع أعمال {artistName}…
+                </AuraText>
+              </View>
+            ) : songs.length === 0 ? (
+              <AuraSurface tone="gold" style={styles.emptySurface}>
+                <Disc3 size={24} color={Color.gold500} />
+                <AuraText role="titleSm">لا توجد أعمال متاحة لهذا الفنان حاليًا</AuraText>
+                <AuraText role="caption" align="center">
+                  جرّب البحث باسم آخر، أو عد لاحقًا بعد إضافة أعمال الفنان إلى مكتبة Aura Music.
+                </AuraText>
+              </AuraSurface>
+            ) : (
+              <>
+                <View style={styles.songList}>
+                  {visibleSongs.map((song, index) => (
+                    <SongItem
+                      key={`art-song-${song.id}-${index}`}
+                      song={song}
+                      queue={filteredSongs}
+                      index={index}
+                      rank={index + 1}
+                    />
+                  ))}
+                </View>
+
+                {filteredSongs.length > COMPACT_SONGS_LIMIT && (
                   <AuraTouch
-                    key={`top-${song.id}-${index}`}
                     feedback="selection"
-                    pressedScale={0.965}
-                    onPress={() => playSong(song, songs, index)}
-                    style={[styles.topCard, { width: topCardW }]}
+                    pressedScale={0.98}
+                    onPress={() => setShowAllSongs(!showAllSongs)}
+                    style={styles.moreBtn}
                   >
-                    <View>
-                      <AuraArtwork
-                        uri={resolveArtworkUri(
-                          song.localArtworkPath,
-                          song.thumbnailUrl,
-                          song.youtubeVideoId,
-                          "song",
-                        )}
-                        placeholder={PLACEHOLDER_ALBUM}
-                        size={topCardW}
-                        shape="slab"
-                        ring={index === 0 ? "gold" : "hairline"}
-                      />
-                      <AuraText role="display" style={styles.topRank}>
-                        {String(index + 1).padStart(2, "0")}
-                      </AuraText>
-                      <View style={styles.topPlay}>
-                        <Play size={12} color={Color.text_onBrand} fill={Color.text_onBrand} />
-                      </View>
-                    </View>
-                    <AuraText role="label" lines={1} style={styles.topTitle}>
-                      {song.title}
+                    <AuraText role="label" color={Color.gold300}>
+                      {showAllSongs
+                        ? `عرض أقل (أشهر ${COMPACT_SONGS_LIMIT} أغانٍ)`
+                        : `عرض باقي الأغاني (+${filteredSongs.length - COMPACT_SONGS_LIMIT})`}
                     </AuraText>
-                    {!!(views || duration) && (
-                      <AuraText role="tiny" lines={1} color={Color.text_muted}>
-                        {views || duration}
-                      </AuraText>
-                    )}
+                    <ChevronLeft size={15} color={Color.gold300} />
                   </AuraTouch>
-                );
-              })}
-            </ScrollView>
+                )}
+              </>
+            )}
           </AuraFadeIn>
         )}
 
         {/* ── DISCOGRAPHY ── */}
-        {albumList.length > 0 && (
-          <AuraFadeIn delay={250} slideDistance={16}>
+        {albumList.length > 0 && !normalizedQuery && (
+          <AuraFadeIn delay={220} slideDistance={14}>
             <AuraSection
               kicker="الألبومات"
               title="الإصدارات"
@@ -906,8 +940,8 @@ export default function ArtistDetailScreen() {
         )}
 
         {/* ── FROM YOUR LIBRARY ── */}
-        {librarySongs.length > 0 && (
-          <>
+        {librarySongs.length > 0 && !normalizedQuery && (
+          <AuraFadeIn delay={260} slideDistance={14}>
             <AuraSection kicker="من مكتبتك" title="من استماعك السابق" style={styles.section} />
             <View style={styles.libraryList}>
               {librarySongs.map((song, index) => (
@@ -946,92 +980,8 @@ export default function ArtistDetailScreen() {
                 </AuraTouch>
               ))}
             </View>
-          </>
+          </AuraFadeIn>
         )}
-
-        <AuraHairline intensity="gold" style={styles.divider} />
-
-        {/* ── ALL SONGS ── */}
-        <AuraFadeIn delay={320} slideDistance={18}>
-          <AuraSection kicker="الكتالوج الكامل" title="كل الأغاني" style={styles.section} />
-
-          <View style={styles.searchWrap}>
-            <Search size={16} color={Color.text_muted} strokeWidth={1.8} />
-            <TextInput
-              value={query}
-              onChangeText={setQuery}
-              placeholder="ابحث في كتالوج الفنان"
-              placeholderTextColor={Color.text_muted}
-              style={styles.searchInput}
-              autoCorrect={false}
-              returnKeyType="search"
-              selectionColor={Color.gold500}
-            />
-            {!!query && (
-              <AuraTouch
-                feedback="selection"
-                pressedScale={0.9}
-                onPress={() => setQuery("")}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              >
-                <X size={15} color={Color.text_muted} />
-              </AuraTouch>
-            )}
-          </View>
-
-          {!!normalizedQuery && (
-            <AuraText role="tiny" color={Color.text_muted} style={styles.resultCount}>
-              {filteredSongs.length > 0
-                ? `${filteredSongs.length} نتيجة داخل كتالوج الفنان`
-                : "لا توجد أغنية بهذا الاسم. جرّب كلمة أخرى"}
-            </AuraText>
-          )}
-
-          {loading ? (
-            <View style={styles.loadingBox}>
-              <AuraBadge label="جارٍ تجهيز الكتالوج" tone="gold" />
-              <AuraText role="caption" color={Color.text_secondary}>
-                جارٍ تحميل أعمال الفنان…
-              </AuraText>
-            </View>
-          ) : songs.length === 0 ? (
-            <AuraSurface tone="gold" style={styles.emptySurface}>
-              <Disc3 size={26} color={Color.gold500} />
-              <AuraText role="titleSm">لا توجد أعمال متاحة لهذا الفنان حاليًا</AuraText>
-              <AuraText role="caption" align="center">
-                جرّب البحث باسم آخر، أو عد لاحقًا بعد إضافة أعمال الفنان إلى مكتبة Aura Music.
-              </AuraText>
-            </AuraSurface>
-          ) : (
-            <>
-              <View style={styles.songList}>
-                {visibleSongs.map((song, index) => (
-                  <SongItem
-                    key={`art-song-${song.id}-${index}`}
-                    song={song}
-                    queue={filteredSongs}
-                    index={index}
-                    rank={index + 1}
-                  />
-                ))}
-              </View>
-
-              {!normalizedQuery && !showAllSongs && filteredSongs.length > SONG_PREVIEW && (
-                <AuraTouch
-                  feedback="selection"
-                  pressedScale={0.98}
-                  onPress={() => setShowAllSongs(true)}
-                  style={styles.moreBtn}
-                >
-                  <AuraText role="label" color={Color.gold300}>
-                    عرض جميع الأغاني ({filteredSongs.length})
-                  </AuraText>
-                  <ChevronLeft size={15} color={Color.gold300} />
-                </AuraTouch>
-              )}
-            </>
-          )}
-        </AuraFadeIn>
       </Animated.ScrollView>
 
       {/* ── STICKY BAR ── */}

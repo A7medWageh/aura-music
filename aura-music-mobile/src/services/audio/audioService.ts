@@ -500,8 +500,16 @@ class AudioService {
         return true;
       }
 
-      // Native iOS / Android: progressive streaming, without downloading the whole file first.
-      const player = createAudioPlayer({ uri }, { updateInterval: 300, downloadFirst: false });
+      // Native iOS / Android: progressive streaming with aggressive forward-buffering & lock-screen scrubbing
+      const player = createAudioPlayer(
+        { uri },
+        {
+          updateInterval: 250,
+          downloadFirst: false,
+          keepAudioSessionActive: true,
+          preferredForwardBufferDuration: 30,
+        }
+      );
       this.soundSubscription = player.addListener("playbackStatusUpdate", this.onPlaybackStatusUpdate);
       this.sound = player;
 
@@ -511,12 +519,24 @@ class AudioService {
       player.play();
 
       try {
-        player.setActiveForLockScreen(true, {
-          title: song.title,
-          artist: song.artist,
-          albumTitle: song.albumName,
-          artworkUrl: song.thumbnailUrl ?? undefined,
-        });
+        player.setActiveForLockScreen(
+          true,
+          {
+            title: song.title,
+            artist: song.artist,
+            albumTitle: song.albumName || "Aura Music",
+            artworkUrl: song.thumbnailUrl ?? undefined,
+          },
+          {
+            isLiveStream: false,
+            showSeekForward: true,
+            showSeekBackward: true,
+            showNextTrack: true,
+            showPreviousTrack: true,
+            seekForwardIntervalSeconds: 10,
+            seekBackwardIntervalSeconds: 10,
+          }
+        );
       } catch (err) {
         console.warn("[AudioService] lock screen controls unavailable:", err);
       }
