@@ -477,6 +477,14 @@ export async function GET(req: NextRequest) {
     if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
       return NextResponse.json({ error: "A valid videoId is required for streamNow" }, { status: 400 });
     }
+    if (isYtDlpAvailable()) {
+      const { stream, mimeType } = streamAudioFromYouTube(videoId);
+      const streamHeaders = new Headers(STREAM_CACHE_HEADERS);
+      streamHeaders.set("Content-Type", mimeType || "audio/mp4");
+      streamHeaders.set("Content-Disposition", "inline");
+      streamHeaders.set("Access-Control-Allow-Origin", "*");
+      return new NextResponse(stream, { status: 200, headers: streamHeaders });
+    }
     const workerUrl = await getRemoteWorkerUrl();
     if (!workerUrl) {
       return NextResponse.json(
@@ -602,6 +610,43 @@ export async function GET(req: NextRequest) {
     // The browser receives the first audio chunk (bytes=0-) in 1-2s instead of waiting 40s!
     // Concurrently, queue full-file ingest on the worker so the track is cached permanently in Telegram.
     if (!isDownload && hasValidVid && !prefetch) {
+      // ⚡ Priority A: Local yt-dlp binary (Host/VPS environment — 0ms network delay, instant streaming!)
+      if (isYtDlpAvailable()) {
+        void ingestOnce(activeVid, title || activeVid, artist).catch(() => {});
+
+        if (resolveOnly) {
+          const proxiedParams = new URLSearchParams({ videoId: activeVid, forceYtDlp: "true" });
+          if (title) proxiedParams.set("title", title);
+          if (artist) proxiedParams.set("artist", artist);
+          console.log(`[ytdownload] ⚡ Local direct yt-dlp stream for "${title || activeVid}"`);
+          return NextResponse.json(
+            {
+              url: `/api/ytdownload?${proxiedParams.toString()}`,
+              fallbackUrl: `/api/ytdownload?${proxiedParams.toString()}`,
+              directPlay: true,
+              source: "stream",
+              title,
+              artist,
+            },
+            { headers: { ...NO_CACHE_HEADERS, "Access-Control-Allow-Origin": "*" } }
+          );
+        }
+
+        const { stream, mimeType } = streamAudioFromYouTube(activeVid);
+        console.log(`[ytdownload] 🚀 Live local progressive yt-dlp stream for "${title || activeVid}"`);
+        const streamHeaders = new Headers(STREAM_CACHE_HEADERS);
+        streamHeaders.set("Content-Type", mimeType || "audio/mp4");
+        streamHeaders.set("Access-Control-Allow-Origin", "*");
+        streamHeaders.set(
+          "Access-Control-Expose-Headers",
+          "Content-Length, Content-Range, Accept-Ranges, Content-Disposition, X-Original-Content-Length"
+        );
+        streamHeaders.set("Accept-Ranges", "bytes");
+        streamHeaders.set("Content-Disposition", "inline");
+        return new NextResponse(stream, { status: 200, headers: streamHeaders });
+      }
+
+      // Priority B: Remote extraction worker (Serverless / Vercel cloud environment)
       const workerUrl = await getRemoteWorkerUrl();
       if (workerUrl) {
         void queueWorkerIngest(workerUrl, activeVid, title, artist);

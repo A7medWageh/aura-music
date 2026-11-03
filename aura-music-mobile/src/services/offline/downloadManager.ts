@@ -3,7 +3,7 @@ import * as FileSystem from "expo-file-system/legacy";
 import { Song, DownloadProgress } from "@/types/music";
 import { FileManager } from "@/services/storage/fileManager";
 import { MusicApi } from "@/services/api/musicApi";
-import { upsertSong, markSongDownloaded, removeDownloadedSongRecord } from "@/database/db";
+import { upsertSong, markSongDownloaded, removeDownloadedSongRecord, saveLyrics } from "@/database/db";
 import {
   storeOfflineAudioBlob,
   deleteOfflineAudioBlob,
@@ -122,8 +122,9 @@ class DownloadManagerService {
         // 4. Also fetch and persist lyrics for offline search & display
         try {
           const lyricsRes = await MusicApi.getLyrics(song);
-          if (lyricsRes?.plainLyrics) {
-            await storeOfflineLyrics(songId, lyricsRes.plainLyrics, lyricsRes.syncedLyrics || undefined);
+          if (lyricsRes && (lyricsRes.plainLyrics || lyricsRes.syncedLyrics)) {
+            await storeOfflineLyrics(songId, lyricsRes.plainLyrics || "", lyricsRes.syncedLyrics || undefined);
+            await saveLyrics(lyricsRes);
           }
         } catch {}
 

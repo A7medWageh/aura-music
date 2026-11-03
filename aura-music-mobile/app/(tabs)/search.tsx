@@ -11,6 +11,7 @@ import {
   Platform,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Music, User, Disc, Flame, Radio, Heart, Coffee, Sparkles, X } from "lucide-react-native";
 import { Color, Radius, Size, Space } from "@/theme";
 import {
@@ -62,6 +63,8 @@ type Filter = "all" | "songs" | "albums" | "artists";
 export default function SearchScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ q?: string }>();
+  const insets = useSafeAreaInsets();
+  const topInset = Math.max(insets.top, 16);
 
   const [query, setQuery] = useState(
     typeof params.q === "string" ? params.q : "",
@@ -155,7 +158,7 @@ export default function SearchScreen() {
           behavior={Platform.OS === "ios" ? "padding" : undefined}
           style={styles.shell}
         >
-          <View style={styles.topBar}>
+          <View style={[styles.topBar, { paddingTop: topInset + Space.s1 }]}>
             <View style={styles.field}>
               <AuraText role="title" style={styles.fieldTitle}>
                 البحث

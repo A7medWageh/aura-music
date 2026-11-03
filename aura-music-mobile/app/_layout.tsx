@@ -52,9 +52,30 @@ export default function RootLayout() {
 
   if (!fontsLoaded) return null;
 
+  const initialMetrics =
+    Platform.OS === "web" && typeof window !== "undefined"
+      ? {
+          insets: {
+            top: /iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+            (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)
+              ? 52
+              : 0,
+            bottom: 34,
+            left: 0,
+            right: 0,
+          },
+          frame: {
+            x: 0,
+            y: 0,
+            width: typeof window !== "undefined" ? window.innerWidth : 390,
+            height: typeof window !== "undefined" ? window.innerHeight : 844,
+          },
+        }
+      : undefined;
+
   return (
     <GestureHandlerRootView style={styles.root}>
-      <SafeAreaProvider>
+      <SafeAreaProvider initialMetrics={initialMetrics}>
         <StatusBar style="light" />
         <View style={styles.container}>
           <Stack

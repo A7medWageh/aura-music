@@ -390,6 +390,8 @@ class AudioService {
               isBuffering: false,
               didJustFinish: false,
             });
+
+            this.updateWebPositionState();
           });
 
           this.webAudio.addEventListener("ended", () => {
@@ -420,6 +422,11 @@ class AudioService {
               isBuffering: false,
               didJustFinish: false,
             });
+
+            this.updateWebPositionState();
+            if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+              navigator.mediaSession.playbackState = "playing";
+            }
           });
 
           this.webAudio.addEventListener("error", (e) => {
@@ -489,6 +496,7 @@ class AudioService {
         }
 
         updateSongLastPlayed(song.id).catch(() => {});
+        this.updateWebMediaSession(song);
         return true;
       }
 
@@ -556,6 +564,9 @@ class AudioService {
   public async pause(): Promise<void> {
     if (Platform.OS === "web" && this.webAudio) {
       this.webAudio.pause();
+      if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+        navigator.mediaSession.playbackState = "paused";
+      }
       return;
     }
     if (this.sound) {
@@ -572,6 +583,9 @@ class AudioService {
       try {
         if (this.webCtx?.state === "suspended") await this.webCtx.resume();
         await this.webAudio.play();
+        if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+          navigator.mediaSession.playbackState = "playing";
+        }
       } catch (e) {
         console.warn("[AudioService] web resume error:", e);
       }
@@ -730,6 +744,9 @@ class AudioService {
       try {
         this.webAudio.pause();
         this.webAudio.src = "";
+        if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+          navigator.mediaSession.playbackState = "none";
+        }
       } catch {
         /* ignore */
       }
@@ -757,6 +774,101 @@ class AudioService {
 
   public getDuration(): number {
     return this.lastKnownDuration;
+  }
+
+  private updateWebMediaSession(song: Song): void {
+    if (Platform.OS !== "web" || typeof window === "undefined" || !("mediaSession" in navigator)) return;
+
+    try {
+      const artworkUri = song.thumbnailUrl || (song.youtubeVideoId ? `https://i.ytimg.com/vi/${song.youtubeVideoId}/hqdefault.jpg` : "");
+      navigator.mediaSession.metadata = new (window as any).MediaMetadata({
+        title: song.title,
+        artist: song.artist || "Aura Music",
+        album: song.albumName || "Aura Music",
+        artwork: artworkUri
+          ? [
+              { src: artworkUri, sizes: "96x96", type: "image/jpeg" },
+              { src: artworkUri, sizes: "256x256", type: "image/jpeg" },
+              { src: artworkUri, sizes: "512x512", type: "image/jpeg" },
+            ]
+          : [],
+      });
+
+      navigator.mediaSession.playbackState = "playing";
+
+      const handlers: Record<string, (details: any) => void> = {
+        play: () => this.resume(),
+        pause: () => this.pause(),
+        seekto: (details: any) => {
+          if (details.seekTime !== undefined && isFinite(details.seekTime)) {
+            this.seekTo(details.seekTime * 1000);
+          }
+        },
+        seekbackward: (details: any) => {
+          const skip = (details.seekOffset || 10) * 1000;
+          const curr = (this.webAudio?.currentTime || 0) * 1000;
+          this.seekTo(Math.max(0, curr - skip));
+        },
+        seekforward: (details: any) => {
+          const skip = (details.seekOffset || 10) * 1000;
+          const curr = (this.webAudio?.currentTime || 0) * 1000;
+          const dur = (this.currentSong?.duration || 240) * 1000;
+          this.seekTo(Math.min(dur, curr + skip));
+        },
+        previoustrack: () => {
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const { usePlayerStore } = require("@/store/usePlayerStore");
+            usePlayerStore.getState().playPrevious();
+          } catch {}
+        },
+        nexttrack: () => {
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const { usePlayerStore } = require("@/store/usePlayerStore");
+            usePlayerStore.getState().playNext();
+          } catch {}
+        },
+      };
+
+      for (const [action, fn] of Object.entries(handlers)) {
+        try {
+          navigator.mediaSession.setActionHandler(action as any, fn);
+        } catch {}
+      }
+
+      this.updateWebPositionState();
+    } catch (err) {
+      console.warn("[AudioService] Failed to set MediaSession:", err);
+    }
+  }
+
+  private updateWebPositionState(): void {
+    if (Platform.OS !== "web" || typeof window === "undefined" || !("mediaSession" in navigator)) return;
+    if (!("setPositionState" in navigator.mediaSession)) return;
+
+    try {
+      if (!this.webAudio) return;
+      const audioDur = this.webAudio.duration;
+      // CRUCIAL: Duration MUST be a finite, positive number to disable the "LIVE" badge on iOS lock screen!
+      const validDuration =
+        audioDur && isFinite(audioDur) && audioDur > 0
+          ? audioDur
+          : this.currentSong?.duration && isFinite(this.currentSong.duration) && this.currentSong.duration > 0
+          ? this.currentSong.duration
+          : 210;
+
+      const validPosition = Math.min(
+        validDuration,
+        Math.max(0, isFinite(this.webAudio.currentTime) ? this.webAudio.currentTime : 0)
+      );
+
+      navigator.mediaSession.setPositionState({
+        duration: validDuration,
+        playbackRate: this.webAudio.playbackRate || 1,
+        position: validPosition,
+      });
+    } catch {}
   }
 
   public isPlaying(): boolean {

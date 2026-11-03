@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { View, StyleSheet, ScrollView, ActivityIndicator, Alert } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { Sparkles, Play, Coffee, Flame, CloudRain, Dumbbell, Car, Shuffle } from "lucide-react-native";
 
@@ -43,6 +44,8 @@ export default function AiDjScreen() {
   const [loadingMood, setLoadingMood] = useState<string | null>(null);
   const [mix, setMix] = useState<{ label: string; tracks: Song[] } | null>(null);
 
+  const insets = useSafeAreaInsets();
+  const topInset = Math.max(insets.top, 16);
   const dockClearance = useDockClearance();
 
   const startMix = async (mood: Mood) => {
@@ -84,7 +87,7 @@ export default function AiDjScreen() {
         showsVerticalScrollIndicator={false}
       >
         {/* ── HEADER ── */}
-        <View style={styles.header}>
+        <View style={[styles.header, { paddingTop: topInset + Space.s1 }]}>
           <AuraKicker>AI Mix</AuraKicker>
           <AuraText role="display">اختر المزاج</AuraText>
           <AuraText role="caption" color={Color.text_secondary} style={styles.intro}>

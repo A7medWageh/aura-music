@@ -15,6 +15,10 @@ function getYtDlpBinary(): string {
     if (fs.existsSync(localCmd)) {
       return localCmd;
     }
+    const msysExe = "C:\\msys64\\mingw64\\bin\\yt-dlp.exe";
+    if (fs.existsSync(msysExe)) {
+      return msysExe;
+    }
   }
   return "yt-dlp";
 }
@@ -26,6 +30,8 @@ export function isYtDlpAvailable(): boolean {
     if (fs.existsSync(localExe)) return true;
     const localCmd = path.join(process.cwd(), "yt-dlp-master", "yt-dlp.cmd");
     if (fs.existsSync(localCmd)) return true;
+    const msysExe = "C:\\msys64\\mingw64\\bin\\yt-dlp.exe";
+    if (fs.existsSync(msysExe)) return true;
   }
   return spawnSync(getYtDlpBinary(), ["--version"], { stdio: "ignore" }).status === 0;
 }

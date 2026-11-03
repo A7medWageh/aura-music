@@ -7,6 +7,7 @@ import {
   useWindowDimensions,
 } from "react-native";
 import { useRouter } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   Play,
@@ -105,6 +106,8 @@ export default function HomeScreen() {
   const setAuthModalVisible = useAuthStore((s) => s.setAuthModalVisible);
   const setPremiumModalVisible = useAuthStore((s) => s.setPremiumModalVisible);
 
+  const insets = useSafeAreaInsets();
+  const topInset = Math.max(insets.top, 16);
   const scrollRef = useRef<any>(null);
   const downloadSong = useDownloadStore((s) => s.downloadSong);
   const downloadProgressMap = useDownloadStore((s) => s.progressMap);
@@ -187,7 +190,7 @@ export default function HomeScreen() {
   // If cold loading without any cached data, display creative studio loader
   if (isLoading && featuredArtists.length === 0) {
     return (
-      <View style={styles.root}>
+      <View style={[styles.root, { paddingTop: topInset + Space.s1 }]}>
         <AuraCanvas intensity="ember" />
         {renderHeader()}
         <AuraCreativeLoader fullscreen message="جارٍ استدعاء نجوم الموسيقى العربية وقوائم التشغيل الأكثر رواجاً…" />
@@ -205,7 +208,7 @@ export default function HomeScreen() {
       <ScrollView
         ref={scrollRef}
         style={styles.scroll}
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, { paddingTop: topInset + Space.s1 }]}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl

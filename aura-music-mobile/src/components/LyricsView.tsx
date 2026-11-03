@@ -17,6 +17,7 @@ import { Minus, Plus, AlignLeft } from "lucide-react-native";
 import { Song, SyncedLyricLine } from "@/types/music";
 import { MusicApi } from "@/services/api/musicApi";
 import { getCachedLyrics, saveLyrics } from "@/database/db";
+import { getOfflineLyrics } from "@/database/webOfflineStorage";
 import { usePlayerStore } from "@/store/usePlayerStore";
 import { Color, Radius, Space } from "@/theme";
 import { AuraBadge, AuraKicker, AuraSurface, AuraText, AuraTouch } from "@/ui";
@@ -83,7 +84,7 @@ export const LyricsView: React.FC<LyricsViewProps> = ({ song }) => {
       setSyncedLines([]);
       setPlainLyrics(null);
 
-      // 1. Try persistent database cache
+      // 1. Try persistent SQLite database cache
       const cached = await getCachedLyrics(song.id);
       if (cached && (cached.syncedLyrics || cached.plainLyrics)) {
         if (isMounted) {
@@ -93,7 +94,19 @@ export const LyricsView: React.FC<LyricsViewProps> = ({ song }) => {
         }
       }
 
-      // 2. Fetch from backend API
+      // 2. Try Web IndexedDB offline storage
+      try {
+        const offlineData = await getOfflineLyrics(song.id);
+        if (offlineData && (offlineData.syncedLyrics || offlineData.plainLyrics)) {
+          if (isMounted) {
+            processLyrics(offlineData.syncedLyrics || null, offlineData.plainLyrics || null);
+            setLoading(false);
+            return;
+          }
+        }
+      } catch {}
+
+      // 3. Fetch from backend API
       const remote = await MusicApi.getLyrics(song);
       if (isMounted) {
         processLyrics(remote.syncedLyrics, remote.plainLyrics);
@@ -112,6 +125,30 @@ export const LyricsView: React.FC<LyricsViewProps> = ({ song }) => {
           return;
         }
       }
+
+      if (plain) {
+        // Auto-generate synchronized lines for plain lyrics so every single song gets the karaoke focus effect
+        const rawLines = plain
+          .replace(/<br\s*\/?>/gi, "\n")
+          .replace(/<\/p>/gi, "\n")
+          .replace(/<[^>]+>/g, "")
+          .split("\n")
+          .map((l) => l.trim())
+          .filter((l) => l.length > 0 && !/^\[.*\]$/.test(l));
+
+        if (rawLines.length > 0) {
+          const totalMs = Math.max(30000, (song.duration || 180) * 1000);
+          const startOffset = totalMs * 0.04;
+          const activeSpan = totalMs * 0.92;
+          const syntheticSynced: SyncedLyricLine[] = rawLines.map((text, i) => ({
+            timeMs: Math.round(startOffset + (i / rawLines.length) * activeSpan),
+            text,
+          }));
+          setSyncedLines(syntheticSynced);
+          return;
+        }
+      }
+
       setPlainLyrics(plain);
     }
 

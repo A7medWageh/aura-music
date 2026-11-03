@@ -669,8 +669,8 @@ function cachedResponse(row: CacheRow) {  return NextResponse.json(
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
-  const trackName = searchParams.get("trackName");
-  const artistName = searchParams.get("artistName");
+  const trackName = searchParams.get("trackName") || searchParams.get("title");
+  const artistName = searchParams.get("artistName") || searchParams.get("artist");
   const videoIdParam = searchParams.get("videoId") || "";
   const durationSec = parseInt(searchParams.get("duration") || "0", 10) || 0;
   const refresh = searchParams.get("refresh") === "true";

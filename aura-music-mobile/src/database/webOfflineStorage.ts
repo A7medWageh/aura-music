@@ -106,6 +106,31 @@ export async function storeOfflineLyrics(songId: string, plainLyrics: string, sy
   } catch {}
 }
 
+/** Get stored offline lyrics for a single song */
+export async function getOfflineLyrics(songId: string): Promise<{ plainLyrics?: string; syncedLyrics?: string } | null> {
+  try {
+    const db = await openMobileOfflineDb();
+    return new Promise((resolve) => {
+      const tx = db.transaction([LYRICS_STORE], "readonly");
+      const store = tx.objectStore(LYRICS_STORE);
+      const req = store.get(songId);
+      req.onsuccess = () => {
+        if (req.result) {
+          resolve({
+            plainLyrics: req.result.plainLyrics,
+            syncedLyrics: req.result.syncedLyrics,
+          });
+        } else {
+          resolve(null);
+        }
+      };
+      req.onerror = () => resolve(null);
+    });
+  } catch {
+    return null;
+  }
+}
+
 /** Get all stored offline lyrics as a Map<songId, plainLyrics> */
 export async function getAllOfflineLyricsMap(): Promise<Map<string, string>> {
   const map = new Map<string, string>();

@@ -9,7 +9,8 @@
     "lint": "next lint",
     "test": "vitest run",
     "db:migrate": "node ./src/services/db/migrate.js",
-    "db:seed": "node ./src/services/db/seed.js"
+    "db:seed": "node ./src/services/db/seed.js",
+    "tokens:build": "node scripts/design-tokens/build.mjs"
   },
   "dependencies": {
     "@capacitor/core": "^8.5.3",

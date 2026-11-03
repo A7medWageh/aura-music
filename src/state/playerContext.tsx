@@ -796,36 +796,43 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    // 3. Check if this song is an offline track (either marked audioReady or offline mode)
-    const isDefinitelyOffline =
-      song.audioReady === true ||
-      (typeof navigator !== "undefined" && !navigator.onLine);
-
-    if (isDefinitelyOffline) {
-      // OFFLINE-ONLY PATH: Never touch directStreamUrl or network!
-      currentSourceTypeRef.current = "offline-blob";
-      getAudioBlob(song.songId).then(async (blob) => {
-        let b = blob;
-        if (!b && song.youtubeVideoId && song.youtubeVideoId !== song.songId) {
-          b = await getAudioBlob(song.youtubeVideoId);
-        }
-        if (b && isKhaleejiOrCorruptedJannatBlob(song.artist, b.size, song.songId || song.title)) {
-          await deleteAudioBlobOnly(song.songId);
-          if (song.youtubeVideoId) await deleteAudioBlobOnly(song.youtubeVideoId);
-          b = null;
-        }
+    // 3. Deterministic Non-Racing Playback Pipeline:
+    // Guarantees offline songs play immediately from IndexedDB with zero pauses/aborts,
+    // and online tracks stream smoothly with instant chunk buffering.
+    isLoadingNewSongRef.current = true;
+    (async () => {
+      try {
+        let b: Blob | null = null;
+        try {
+          b = await getAudioBlob(song.songId);
+          if (!b && song.youtubeVideoId && song.youtubeVideoId !== song.songId) {
+            b = await getAudioBlob(song.youtubeVideoId);
+          }
+          if (b && isKhaleejiOrCorruptedJannatBlob(song.artist, b.size, song.songId || song.title)) {
+            await deleteAudioBlobOnly(song.songId);
+            if (song.youtubeVideoId) await deleteAudioBlobOnly(song.youtubeVideoId);
+            b = null;
+          }
+        } catch {}
 
         if (stateRef.current.currentSongId !== song.songId) return;
 
+        // Path A: Offline Blob Found in Local Storage
         if (b) {
           const blobUrl = setActiveBlobSource(song.songId, b);
           queueBlobCacheRef.current.set(song.songId, { blob: b, url: blobUrl });
           player.muted = false;
+          try {
+            player.removeAttribute("crossOrigin");
+            (player as any).crossOrigin = null;
+          } catch {}
           player.src = blobUrl;
           player.preload = "auto";
-          player.play().catch((err) => {
+          try {
+            await player.play();
+          } catch (err: any) {
             if (err.name !== "AbortError") console.warn("[Player] Offline blob play error:", err);
-          });
+          }
           preloadSurrounding(song.songId, stateRef.current.queue);
           setState((prev) => {
             const exists = prev.queue.some((item) => item.songId === song.songId);
@@ -843,7 +850,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
               error: null,
             };
           });
-        } else {
+          return;
+        }
+
+        // Path B: Offline Mode with missing file
+        if (typeof navigator !== "undefined" && !navigator.onLine) {
           recordAudioDiagnosticEvent("ERROR: Offline audio track missing from IndexedDB", { songId: song.songId });
           setState((prev) => ({
             ...prev,
@@ -851,62 +862,24 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
             isBuffering: false,
             error: "هذه الأغنية غير متوفرة في ذاكرة هاتفك الأوفلاين — يرجى الاتصال بالإنترنت أولاً لتنزيلها",
           }));
+          return;
         }
-      }).catch(() => {
-        setState((prev) => ({
-          ...prev,
-          isPlaying: false,
-          isBuffering: false,
-          error: "فشل استرجاع الأغنية من ذاكرة الهاتف الأوفلاين.",
-        }));
-      });
 
-      setState((prev) => {
-        const exists = prev.queue.some((item) => item.songId === song.songId);
-        const nextQueue = exists ? prev.queue : [song, ...prev.queue];
-        return {
-          ...prev,
-          queue: nextQueue,
-          currentSongId: song.songId,
-          isPlaying: true,
-          streamUrl: null,
-          sourceType: "offline-blob",
-          currentTime: 0,
-          duration: 0,
-          isBuffering: true,
-          error: null,
-        };
-      });
-      return;
-    }
-
-    // 4. ONLINE PATH: Check offline cache first, but stream online if not found
-    const targetVid = song.youtubeVideoId || song.songId || "";
-    const directStreamUrl = toAbsoluteApiUrl(
-      `/api/ytdownload?videoId=${encodeURIComponent(targetVid)}&title=${encodeURIComponent(song.title)}&artist=${encodeURIComponent(song.artist || "")}&proxy=true`
-    );
-
-    getAudioBlob(song.songId).then(async (blob) => {
-      let b = blob;
-      if (!b && song.youtubeVideoId && song.youtubeVideoId !== song.songId) {
-        b = await getAudioBlob(song.youtubeVideoId);
-      }
-      if (b && isKhaleejiOrCorruptedJannatBlob(song.artist, b.size, song.songId || song.title)) {
-        await deleteAudioBlobOnly(song.songId);
-        if (song.youtubeVideoId) await deleteAudioBlobOnly(song.youtubeVideoId);
-        b = null;
-      }
-
-      if (stateRef.current.currentSongId !== song.songId) return;
-
-      if (b) {
-        const blobUrl = setActiveBlobSource(song.songId, b);
+        // Path C: Online Streaming Path
+        clearActiveBlobSource();
+        const targetVid = song.youtubeVideoId || song.songId || "";
+        const directStreamUrl = toAbsoluteApiUrl(
+          `/api/ytdownload?videoId=${encodeURIComponent(targetVid)}&title=${encodeURIComponent(song.title)}&artist=${encodeURIComponent(song.artist || "")}&proxy=true`
+        );
         player.muted = false;
-        player.src = blobUrl;
+        player.src = directStreamUrl;
         player.preload = "auto";
-        player.play().catch((err) => {
-          if (err.name !== "AbortError") console.warn("[Player] Offline blob play error:", err);
-        });
+        try {
+          await player.play();
+        } catch (err: any) {
+          if (err.name !== "AbortError") console.warn("[Player] Direct play deferred:", err);
+        }
+
         setState((prev) => {
           const exists = prev.queue.some((item) => item.songId === song.songId);
           const nextQueue = exists ? prev.queue : [song, ...prev.queue];
@@ -915,45 +888,18 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
             queue: nextQueue,
             currentSongId: song.songId,
             isPlaying: true,
-            streamUrl: blobUrl,
-            sourceType: "offline-blob",
+            streamUrl: directStreamUrl,
+            sourceType: "remote-url",
             currentTime: 0,
             duration: 0,
             isBuffering: false,
             error: null,
           };
         });
+      } finally {
+        isLoadingNewSongRef.current = false;
       }
-    }).catch(() => {});
-
-    // Start stream URL immediately for online tracks
-    clearActiveBlobSource();
-    player.muted = false;
-    player.src = directStreamUrl;
-    player.preload = "auto";
-    const p = player.play();
-    if (p !== undefined) {
-      p.catch((err) => {
-        if (err.name !== "AbortError") console.warn("[Player] Direct play deferred:", err);
-      });
-    }
-
-    setState((prev) => {
-      const exists = prev.queue.some((item) => item.songId === song.songId);
-      const nextQueue = exists ? prev.queue : [song, ...prev.queue];
-      return {
-        ...prev,
-        queue: nextQueue,
-        currentSongId: song.songId,
-        isPlaying: true,
-        streamUrl: directStreamUrl,
-        sourceType: "remote-url",
-        currentTime: 0,
-        duration: 0,
-        isBuffering: true,
-        error: null,
-      };
-    });
+    })();
   };
 
 
@@ -2554,7 +2500,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       <audio
         ref={audioRef}
         data-main-player="true"
-        crossOrigin={isMobileDevice() ? undefined : "anonymous"}
+        crossOrigin={
+          state.sourceType === "offline-blob" || state.streamUrl?.startsWith("blob:") || isMobileDevice()
+            ? undefined
+            : "anonymous"
+        }
         playsInline
         preload="auto"
         onTimeUpdate={onTimeUpdate}

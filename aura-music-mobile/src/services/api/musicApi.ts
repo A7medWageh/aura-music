@@ -292,9 +292,12 @@ export const MusicApi = {
   async getLyrics(song: Song): Promise<LyricsData> {
     try {
       const params = new URLSearchParams({
+        trackName: song.title,
+        artistName: song.artist || "",
         title: song.title,
-        artist: song.artist,
+        artist: song.artist || "",
         videoId: song.youtubeVideoId || song.id,
+        duration: String(Math.round(song.duration || 0)),
       });
 
       const res = await fetch(`${BASE_API_URL}/api/lyrics?${params.toString()}`, {

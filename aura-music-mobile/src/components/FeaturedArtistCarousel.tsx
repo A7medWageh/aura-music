@@ -33,11 +33,12 @@ const SlideTimer: React.FC = () => {
   const filled = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
+    filled.setValue(0);
     const run = Animated.timing(filled, {
       toValue: 1,
       duration: SLIDE_MS,
       easing: Easing.linear,
-      useNativeDriver: false,
+      useNativeDriver: true,
     });
     run.start();
     return () => run.stop();
@@ -48,7 +49,11 @@ const SlideTimer: React.FC = () => {
       <Animated.View
         style={[
           styles.slideTimerFill,
-          { width: filled.interpolate({ inputRange: [0, 1], outputRange: ["0%", "100%"] }) },
+          {
+            width: "100%",
+            transformOrigin: "left",
+            transform: [{ scaleX: filled }],
+          } as any,
         ]}
       />
     </View>

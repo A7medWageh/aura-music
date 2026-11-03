@@ -38,6 +38,8 @@ import { getArtistAvatar } from "@/constants/artistAvatars";
 import { MusicApi } from "@/services/api/musicApi";
 import { scrollBus } from "@/utils/scrollBus";
 import { getAllCachedLyricsMap } from "@/database/db";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { LibraryBackupModal } from "@/components/LibraryBackupModal";
 import { PLACEHOLDER_ARTIST, PLACEHOLDER_ALBUM, PLACEHOLDER_SONG } from "@/constants/placeholders";
 import {
   AuraArtwork,
@@ -84,6 +86,9 @@ export default function LibraryScreen() {
   const createCustomFolder = useLibraryStore((s) => s.createCustomFolder);
 
   const playSong = usePlayerStore((s) => s.playSong);
+
+  const insets = useSafeAreaInsets();
+  const topInset = Math.max(insets.top, 16);
 
   const [openArtist, setOpenArtist] = useState<string | null>(null);
   const [openAlbum, setOpenAlbum] = useState<string | null>(null);
@@ -353,7 +358,7 @@ export default function LibraryScreen() {
         keyboardShouldPersistTaps="handled"
       >
         {/* ── HEADER ── */}
-        <View style={styles.header}>
+        <View style={[styles.header, { paddingTop: topInset + Space.s1 }]}>
           <View style={styles.headerTop}>
             <AuraTouch
               onPress={handleUnlockVault}
@@ -1029,23 +1034,16 @@ export default function LibraryScreen() {
         <ModalButtons onCancel={() => setShowVaultPrompt(false)} confirmLabel="فتح" onConfirm={submitVaultPassword} />
       </AuraModal>
 
-      {/* ── LOCAL STORAGE INFO ── */}
-      <AuraModal visible={showTransferModal} onClose={() => setShowTransferModal(false)}>
-        <ModalIcon icon={<Smartphone size={17} color={Color.gold500} />} />
-        <AuraText role="titleSm">أغانيك على هذا الجهاز</AuraText>
-        <AuraText role="caption" color={Color.text_secondary} style={styles.modalBody}>
-          {stats.count} أغنية بحجم {stats.sizeMB.toFixed(1)} MB محفوظة على هذا الجهاز، وتعمل دون اتصال
-          حتى عند إغلاق الشاشة.
-        </AuraText>
-        <ModalButtons
-          hideCancel
-          confirmLabel="حسنًا"
-          onConfirm={() => {
-            setShowTransferModal(false);
-            showToast("مكتبة الجهاز جاهزة");
-          }}
-        />
-      </AuraModal>
+      {/* ── BACKUP & TRANSFER MODAL (.aurapack) ── */}
+      <LibraryBackupModal
+        visible={showTransferModal}
+        onClose={() => setShowTransferModal(false)}
+        songsCount={stats.count}
+        totalSizeMB={stats.sizeMB}
+        onSuccess={() => {
+          showToast("تم تحديث مكتبتك بالأغاني الجديدة 🚀");
+        }}
+      />
 
       {/* ── MOVE SONG ── */}
       <AuraModal visible={!!movingSong} onClose={() => setMovingSong(null)}>

@@ -783,6 +783,23 @@ export async function resolveUniversalAudio(params: {
         return await ingestToTelegram(ytResult, cacheKey, title, effectiveArtist, videoId);
       }
     } catch {}
+
+    // Final Host Fallback: Local yt-dlp binary (unblocked on host/VPS)
+    try {
+      const { isYtDlpAvailable } = await import("@apis/yt-dlp");
+      if (isYtDlpAvailable()) {
+        const directUrl = `/api/ytdownload?videoId=${encodeURIComponent(videoId)}&forceYtDlp=true`;
+        console.log(`[AudioResolver] ⚡ Falling back to direct local yt-dlp for "${title || videoId}"`);
+        return {
+          streamUrl: directUrl,
+          directPlay: true,
+          source: "youtube",
+          title,
+          artist,
+          videoId,
+        };
+      }
+    } catch {}
   }
 
   throw new Error(`لم نتمكن من العثور على رابط صوتي للأغنية: ${title || videoId}`);

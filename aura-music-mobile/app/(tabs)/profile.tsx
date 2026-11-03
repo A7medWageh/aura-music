@@ -3,6 +3,7 @@ import { View, StyleSheet, ScrollView, TextInput } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import Constants from "expo-constants";
 import { useRouter } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   Headphones,
   Music2,
@@ -55,6 +56,8 @@ const absFill = StyleSheet.absoluteFill as any;
 
 export default function ProfileScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const topInset = Math.max(insets.top, 16);
   const [user, setUser] = React.useState<any>(null);
   const downloadedSongs = useLibraryStore((s) => s.downloadedSongs);
   const favorites = useLibraryStore((s) => s.favorites);
@@ -157,7 +160,7 @@ export default function ProfileScreen() {
 
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={[styles.content, { paddingBottom: dockClearance + Space.s5 }]}
+        contentContainerStyle={[styles.content, { paddingTop: topInset + Space.s1, paddingBottom: dockClearance + Space.s5 }]}
         showsVerticalScrollIndicator={false}
       >
         {/* ── IDENTITY & AUTH ── */}
