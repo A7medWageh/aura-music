@@ -1,0 +1,432 @@
+{
+  "egyptian": [
+    {
+      "name": "عمرو دياب",
+      "artistId": "UCaA0_e02nT85T8h3xMclMvA",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/pUe16NPzy38_YPtW-rFqzRJVrcFt0cWqJXKdJ391df5vvgZIjR5_nnCJNRVGjn8Y1bcYUnyC0-OZ5g=s1080"
+    },
+    {
+      "name": "شيرين عبدالوهاب",
+      "artistId": "UCsLsnDUzLX_Pq7ZkVQESnxQ",
+      "thumbnailUrl": "https://yt3.ggpht.com/ytc/AIdro_n5b8IzsJUTLPw_VbYvFiNhllRT325FanS2pA_Q1Ia7AoI=s1080"
+    },
+    {
+      "name": "تامر حسني",
+      "artistId": "UCLnNBIKnAe3LtVte6OxJE1w",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/cSP4BHue5ZJT959SCuYn5rZaQSOI8fwSWgcM6ApFBngl-_mqlk2cUntE-k3fDYfFqsoZu_LIvQ=s1080"
+    },
+    {
+      "name": "أحمد سعد",
+      "artistId": "UC4HVjB-bY2jE8hKYUoAZQpA",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/D01_Fn8nqrsjHn1rIK6QUIaaPiFqux-3HETQvq7AaMzHkASoE4eNqkdRDMYHymTxDn2CxNBreWl5kuc=s1080"
+    },
+    {
+      "name": "ويجز",
+      "artistId": "UCNshhQRW5gF0Hoo7zvxqhEg",
+      "thumbnailUrl": "https://lh3.googleusercontent.com/dDeoSKRY2HRJheBMncFbvFCPTSFvEvYRhuUDp3axspitmQtisTontP0WOTWzVOuGMOgp7hwVG9KwEZw=s1080"
+    },
+    {
+      "name": "نانسي عجرم",
+      "artistId": "UCon_-FivLncfeatzAPn0jWw",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/7vHuDstipBz-7AzNt7uS6L3dl786d8M6tQNi7c5WHphzABzxZ2ccdMDQvSqwlDu-JOsDlgA575WTm_G9=s1080"
+    },
+    {
+      "name": "حماقي",
+      "artistId": "UCYmclddSeUDeJwe8PkUr4SA",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/B2hG1XbLTc8qP2peWYSSwLcHr2QgGSKNQe5A94Ev_If4N3lcEgEJqWoltQCXD36izmUQ3FW4dmacQNq9=s1080"
+    },
+    {
+      "name": "وائل كفوري",
+      "artistId": "UCZc-4KKAu8l93SUNr1I7HEw",
+      "thumbnailUrl": "https://lh3.googleusercontent.com/DvPq0n9wSsXrPwtGc9A74aIgW1Gm9jLJV9WUig2GedpXtLz1EHTbceR5PRQoHIO75ds0hkXUBKkeCN8=s1080"
+    },
+    {
+      "name": "مروان موسى",
+      "artistId": "UC3foXd7OMbut1i4zKDmLS5Q",
+      "thumbnailUrl": "https://lh3.googleusercontent.com/FxDJVEQSp3hXOBglBcd73UXu6GQN90PtX6PCfsKcqq8qs8IZGA2TlHFDxlHMHmDoUhfiWPkp5LU-ulJf=s1080"
+    },
+    {
+      "name": "فرقة كايروكي",
+      "artistId": "UCfh4CPgJ9vgO60P6GKDDBzw",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/79aRa7yEP9lwzdXUTG1e_EkvFR69Shmcl-GwWv4Lt0BvdemzABkFsdjYsrQD0Qp3rsvHG_6Wwf8IrOCo=s1080"
+    },
+    {
+      "name": "حسين الجسمي",
+      "artistId": "UCNhfOGwagdaG6NSvNH7e4nw",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/ZzH7hr1UYqP05rs5JcPn9KGcJ8ZTqh0WUSOUO2Ltcu2CiAnBVwHhWFK-dW5w92cD51mVthPwlOiDdFE=s1080"
+    },
+    {
+      "name": "بهاء سلطان",
+      "artistId": "UCNwPoppLC2N7ZhTRh1hHuLg",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/ZTAQq2eGp3gFaG3BlDknDgNv1cm9D9CaEE9QXmJgZFfoksJro28FxtWYQWxNtLI8qDwFD9RpYgCSaGg=s1080"
+    },
+    {
+      "name": "رامي صبري",
+      "artistId": "UCm2InzSdDYk1zurgB73wBEw",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/yS2h4Px-P8BLvHAnnM3YZV-pY4AN5GecfxjC9DM0VoHV6NkWRzFG7josJA8ON2qhUX7VY5qjdjuA1A=s1080"
+    },
+    {
+      "name": "محمود العسيلي",
+      "artistId": "UCJJqNtvo6S9xy8ldvAEOxGA",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/jV2k9cancOTeQNuRiApD4fgrG37u5SFN3yfvqjI7hwYd4QNQz9y8Mc3RJWw_EjCgw0vx1zpzjDX4HvM=s1080"
+    },
+    {
+      "name": "روبي",
+      "artistId": "UC1l4q_secY7P93UCpqN9BQA",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/WskDcDVu5kiYkvQXHP7UNPx8sCdYar_kdSkrEb3vSAE_NrEV27K9_I7ZSyAqhc1_NSaHskLXgMx2Zg=s1080"
+    },
+    {
+      "name": "إليسا",
+      "artistId": "UC6bPEzqfwKuLia5CYJ261_g",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/qYUu4defGMqYI9jPiCgSd5fT2ifxi9MIlsGs9LDkCU-ilAaIFEZSTsycRUOws-zm6EbffXwvI2_iVNw=s1080"
+    },
+    {
+      "name": "محمد منير",
+      "artistId": "UCqhCK-Uuz6OqbkRv2v-_U4w",
+      "thumbnailUrl": "https://lh3.googleusercontent.com/8JCG9fEa-lEe9kfCnjGIF9rDTfzVlY_CVblJtixQx0ZQlNZXm3fzGp8vjjKK3FxBGPRFGtuCJ6fPzqDr=s1080"
+    },
+    {
+      "name": "عبدالباسط حمودة",
+      "artistId": "UCoX2IoGLF2SBFPej7M5djhg",
+      "thumbnailUrl": "https://lh3.googleusercontent.com/4vE0eNlF-0VXHW3qm8izyYs9t3eFtpO_BRcOJ_1YWH12UyQZlfVu8ksK-p3oLsYXaLMBfA7Gk19m_J20=s1080"
+    },
+    {
+      "name": "عصام صاصا",
+      "artistId": "UCnfgYhSuRHtyWDA62hlIG8g",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/XTRmvf34uMWLtZDrfiIYtCRD7rogdVOyOpZpMoF2khtYOGvpK6So00dTh3Pon5M4adY9-VCcmQ=s1080"
+    },
+    {
+      "name": "مروان بابلو",
+      "artistId": "UC9esEWExqSEo8CeQdvrQDCw",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/4wMAusLdM3PD_j_gayo8Xejy_ej9FGA4R_Xr46QC6qkJD-hA6QkudaXxjFUJZ2qX_MavKncN_g=s1080"
+    },
+    {
+      "name": "عفروتو",
+      "artistId": "UC1P-58PAX5clcuCCiwsGSmg",
+      "thumbnailUrl": "https://lh3.googleusercontent.com/LgWjLkeDd-v8fD2TzQkclmKsnksnoRUhU6LPmsx2OHTiv3VUtCVuuoDxcvKX475p2-I4rEMB_zfBfu8=s1080"
+    },
+    {
+      "name": "حمزة نمرة",
+      "artistId": "UC56gUvHfFHwCnQ5K7NvanFw",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/xCctHaKVTSmuoHEH14HNd2TMayoeb5S6N5Lv-9ArV85HN0Bq8R1VTM48xfR_4SghpFjjYbBrRA=s1080"
+    },
+    {
+      "name": "سميرة سعيد",
+      "artistId": "UCPiaoAh-QG_BLKVF1X-7T5Q",
+      "thumbnailUrl": "https://lh3.googleusercontent.com/bDs0QjV3xrnEtQR8cmtX_964_-7grjbd2-w-R-616YW1AAR54mdROMXzM_QM0Gs6PkzzqlRZbPwlC9o=s1080"
+    },
+    {
+      "name": "عبدالمجيد عبدالله",
+      "artistId": "UC47xBjf6dzE1E447uHh8LJQ",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/BPRRJMxoCqUN1CXRNyq92oyK-Y3g7-OGdmsEdvCKRYX56K3cTH72RKu8Xr2BSRIz2PVloXqcfrGY370=s1080"
+    },
+    {
+      "name": "كاظم الساهر",
+      "artistId": "UCm0hH2nIDZ0Ec0W4AfMulKA",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/GePMYAx4mH5UZdnXoGpr1OW3hg8aTYbsqRfCvBY-zKiRYodGxdKVd6H9ZxY7VjuLUVUO5qSEWDc8PmQ=s1080"
+    },
+    {
+      "name": "راشد الماجد",
+      "artistId": "UCbjBkkDM2rdUa5sXJlFxVFg",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/7D0v1Swd4rtdMgBC3awSy1X9fHPZ2GPIERyaPTWev_Sq19PkLuUXwPf2p5vR0dVRRGCFi9M8NQ=s1080"
+    },
+    {
+      "name": "نوال الزغبي",
+      "artistId": "UCVAUyEbRLnfsfrucT1wfeuQ",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/gmH4wmW95jtZ_dIPTdgfiUp_sBgusXkAbdYt98znMoJTk5vppweWCphwquqikLXYyLVfvjWWSAgcxeg=s1080"
+    },
+    {
+      "name": "هيفاء وهبي",
+      "artistId": "UCavNRDlJrTS4yKneG5ci-qw",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/pNOgzmk_G5jrVJDRBZ9sgFfKJ1q9phup41gnFsDYIxE9_92QyAMrAUeLVKUL0mKQ8d_c0HjVeGP7TLk=s1080"
+    },
+    {
+      "name": "مصطفى حجاج",
+      "artistId": "UCNhePoTUw82WGSLGkbWNmHQ",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/qmq2kZqPI9W054lNVAbClir9ytxIz0ZrgyjKIwtbH9soIo0oQmY45Qb9mUTh8-Q8GVTYdxJfE5AAAgw=s1080"
+    },
+    {
+      "name": "حكيم",
+      "artistId": "UCDNzTEF2A-BPLx0o0pdH7rg",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/kssVRIqgvyoIJZDYtShRZZcC23gRrFMZ5Q6dD0melaIlOHnesbCacPT6O4IQn-HQ4_pUKTwsq4eUq9fl=s1080"
+    },
+    {
+      "name": "مسار إجباري",
+      "artistId": "UCorM8VRF-3dmZuvYaaSbEYw",
+      "thumbnailUrl": "https://lh3.googleusercontent.com/rLxH3M1ABTM5XLQ81DPyOOA-HrkSQtquZ22MCoWUEM3cb2Qi2RPzwOo3eg4NtfGQP3KClvfVQnh8qPno=s1080"
+    },
+    {
+      "name": "شارموفرز",
+      "artistId": "UCfonTFj1GNojWMfHxVUAAEQ",
+      "thumbnailUrl": "https://lh3.googleusercontent.com/uyCoyleHkm5bctVgrm0lhMnpxmL2mXnH9-sMAEOUMdGfL46N2oTGyOt1MvNh4KQ009YkUke_yRWlw38=s1080"
+    },
+    {
+      "name": "أوكا وأورتيجا",
+      "artistId": "UCReC0VX7Dy6VJtujPWbDswg",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/kY_P9yRN1uPputob0vMQ3jKSq1kCzaTom-VzoRWd0uG0zex-jMDwUftJESe27rwMKXHJJnPUYelscTWT=s1080"
+    },
+    {
+      "name": "عمر كمال",
+      "artistId": "UC8oTfeBiRLLXgFdJD2BuVCg",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/qFn-6DjymEL24PQ2Y5WqCA1Jp5zXZVuybN4jrYOXhnQ0-_SX9Z_FiDlsSvN-haskyvHaZyjDHg0=s1080"
+    },
+    {
+      "name": "حسن شاكوش",
+      "artistId": "UCPdJlWbRrnhncqQoKkclw2g",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/lmNwYyLWOdqxS4rj6NCo8FTjDoKZBcIvEcS9sKBvow-Q-BAKdpSuZ356iOmhyiukHCV5SAZzjgAcHRo=s1080"
+    },
+    {
+      "name": "رضا البحراوي",
+      "artistId": "UCd-mdtudjaguq04YVm6d42g",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/rKpAEby0OKmMkn_JZ_Udci7pW29Szudh6v2pbreEFH35jMsURRnNftYBYIj1mnFjLceE2BF8BBb2PBENyQ=s1080"
+    },
+    {
+      "name": "عنبة",
+      "artistId": "UCwJWkokvlksni7piD-O13Iw",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/lU4VU_TNshfPySHxpgVhfBWhv-j3rf4E-UV0m3tZV8KuNhbUmXL_5VSWhpRwv8VY76_chrVXbQZZPmc=s1080"
+    },
+    {
+      "name": "عبدالرحمن رشدي",
+      "artistId": "UCvBGCvgP2aGY9WU3Sdtf2Ew",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/kTRvFuHAhP8IWb7K2CbKphghAEVnu0mafImj560kwxFrpv0kBJOp9ee59kSCYd6cHFpyq5oTDQ=s1080"
+    }
+  ],
+  "intl": [
+    {
+      "name": "The Weeknd",
+      "artistId": "UClYV6hHlupm_S_ObS1W-DYw",
+      "thumbnailUrl": "https://lh3.googleusercontent.com/U-SAmNOu4TynE818gLCfKsuHZ0U5YNEtO9mrjSI9WCCKERs98LzrCal5kajBBTQNwdcisoB2Bn-pHp4=s1080"
+    },
+    {
+      "name": "Taylor Swift",
+      "artistId": "UCPC0L1d253x-KuMNwa05TpA",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/RCpTA6EXJQyjVFDosWOKa2SMmqkua_lA9mHPDWWciLwgqpZLz-k8rXWRF_367trrQ7up9BUwCbk6kRk=s1080"
+    },
+    {
+      "name": "Billie Eilish",
+      "artistId": "UCERrDZ8oN0U_n9MphMKERcg",
+      "thumbnailUrl": "https://lh3.googleusercontent.com/tQC4rOL6xz6FhmFr0ggQExxyGbYSOsyveXVSnPBh2WjEyIzQ9pMHablLJ-0GlMBrLBlBrbWQGmzrV6KN=s1080"
+    },
+    {
+      "name": "Drake",
+      "artistId": "UCU6cE7pdJPc6DU2jSrKEsdQ",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/MxNjcRJ-uK4Xvx7u90IhEFLQM8x9LIGTA9VCKHq5U4Wn2jOgiWaMtg-qz329SIzqnCyhdCCB3MpdAGs=s1080"
+    },
+    {
+      "name": "Dua Lipa",
+      "artistId": "UCzVb0SIXp9q9PeKCcFjsBtA",
+      "thumbnailUrl": "https://lh3.googleusercontent.com/aFx8s1fTuelgxONGbezmTG0EKR8r82uB5H-Q6ZJtssyCWLJWF8GfZNr4tHo84sXdFCPBKrA4R6zXOss=s1080"
+    },
+    {
+      "name": "Ed Sheeran",
+      "artistId": "UClmXPfaYhXOYsNn_QUyheWQ",
+      "thumbnailUrl": "https://lh3.googleusercontent.com/jQoBIAS6JjFGpcqQY1M_Mh3AasOvFENCdVRxkgax1a0K6qiq7AgE3MbJ6Jtt-Jndcarvoawmrg66KTny=s1080"
+    },
+    {
+      "name": "Adele",
+      "artistId": "UCRw0x9_EfawqmgDI2IgQLLg",
+      "thumbnailUrl": "https://lh3.googleusercontent.com/mFjMekiL9JJDrJOSTpAvu264z4DDmYS6pdy51ZCLr98kA256rvxSrIIuNv12kMj8RJW2vtTq1ECDhA=s1080"
+    },
+    {
+      "name": "Justin Bieber",
+      "artistId": "UCGvj8kfUV5Q6lzECIrGY19g",
+      "thumbnailUrl": "https://lh3.googleusercontent.com/4ULlRiFBFglNemZJyKn6_e2-iOIdJEbgBgq_79RQclndG6pge0yGgS2k2On6E1FkCJzenyHkHRzkvjFp=s1080"
+    },
+    {
+      "name": "Rihanna",
+      "artistId": "UCvWtix2TtWGe9kffqnwdaMw",
+      "thumbnailUrl": "https://lh3.googleusercontent.com/tLzIJPsFe-q93Y_erAUU_hDIyXCgCrYJ0C-S4DmMurqfB9LJ_PNFpTPA41k-dVMB6ODgc4-1nF1cOp6c=s1080"
+    },
+    {
+      "name": "Bruno Mars",
+      "artistId": "UCZn4r7heNOPY-C43YIywnVA",
+      "thumbnailUrl": "https://lh3.googleusercontent.com/hnefGBrazRhn4Z92bdSZBUENl40ONjRiVDsmZKZh-WZ2iCKE-2c7KKR7SNcZfzLHoRyB3E6as8L87YA=s1080"
+    },
+    {
+      "name": "Post Malone",
+      "artistId": "UCyD3XWRK9ko-izf2nBSFitw",
+      "thumbnailUrl": "https://lh3.googleusercontent.com/48LfK4z6o-CCEWgHQnQfg0ltcT9tbZSN0qjSh0FSJsJI5GF48j2-pH219ciG1ML-PI80ZGD4Vz6sjg=s1080"
+    },
+    {
+      "name": "Ariana Grande",
+      "artistId": "UC0076UMUgEng8HORUw_MYHA",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/DU6Kpr5TYKcW6QHvMnsJau5_8QSuix8LCLtf5UEaziZZdXw8SxvcxJ9YWmVIQuzhg2R-MVHYgjdGCQ=s1080"
+    },
+    {
+      "name": "Coldplay",
+      "artistId": "UCIaFw5VBEK8qaW6nRpx_qnw",
+      "thumbnailUrl": "https://lh3.googleusercontent.com/IOKuXtp8PCQ_Fc-vaRKm3sKIXBxFV51gZheLTH5br-YGnWHFQf_Jywcuk7wbprYRoEbQyS_XZY6-nMJX=s1080"
+    },
+    {
+      "name": "Imagine Dragons",
+      "artistId": "UC0aXrjVxG5pZr99v77wZdPQ",
+      "thumbnailUrl": "https://lh3.googleusercontent.com/TAadzeojHFGU1EJ5jnOWDn6K8Cf8O2x0F04PVxnZwUEhcaYN0pA0dic49VU7OKGs7oovBTylWx70xhY=s1080"
+    },
+    {
+      "name": "Harry Styles",
+      "artistId": "UCVacQ2t5GUZ2t_J3Ia9BynA",
+      "thumbnailUrl": "https://lh3.googleusercontent.com/O6RvnokIzjsvwQzyRLLkKOx0mvxLXy1bEspu1YdG48jQ2s6o64wyr5Cd8MWjACGocpsl2zlN8iJoMg=s1080"
+    },
+    {
+      "name": "Beyonce",
+      "artistId": "UCoPQ_TWm8JZ5nJv4a5BzSWA",
+      "thumbnailUrl": "https://lh3.googleusercontent.com/GAR8Y4xuTIBIrOr0GPSPdhPc-aRvUCOXwiC0O75cKSP7uRoHFvb20K2ZwpaZwxp2IcSoXGBiAgjit-BC=s1080"
+    },
+    {
+      "name": "Kanye West",
+      "artistId": "UCRY5dYsbIN5TylSbd7gVnZg",
+      "thumbnailUrl": "https://lh3.googleusercontent.com/IFlc3sf6sHV3TAZ_5vhyHQiKb9D4AdSlDkiTSgsRiicnzLASXwVr1n22EEg6Vtd2XBlyJslm8xlYiA=s1080"
+    },
+    {
+      "name": "Kendrick Lamar",
+      "artistId": "UCprAFmT0C6O4X0ToEXpeFTQ",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/uB8Magh99SvDyT_mcDYeNYxlVZ_F9WN-cJtAFMHw_Q-_N_8y5-uZiay8-EZSKKloNoWxymBzVehSF4PN=s1080"
+    },
+    {
+      "name": "Travis Scott",
+      "artistId": "UCf_gP4AMRSgAfyzbkeS9k4g",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/r9k_FpAswxhQnl_cudiaT2ocWFccR6SzEFXgZ9a12iR5eDPSILlIL2EQewyQ-yYSt1JFyH1pqnoBXxs=s1080"
+    },
+    {
+      "name": "Bad Bunny",
+      "artistId": "UCiY3z8HAGD6BlSNKVn2kSvQ",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/ploU_4iWpDoJlX3FOlwwd_yQcex0I8A0_665lePXAEBbNp1zn5g42eNwg5Q7lvYc2mG2--UNIYcIhww=s1080"
+    },
+    {
+      "name": "J Balvin",
+      "artistId": "UCWw-Guyr5ul9B-d5kJlHMng",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/uEfoH9sXpsrJuCqHsQ5EYuOWf42zsbpvv32Zd34P8i1f_ebjrcngqaMRfObvIl8Lkij3ggDBIIswnSM=s1080"
+    },
+    {
+      "name": "Shakira",
+      "artistId": "UCo6JijJGA3IvIiPsawDK3Ww",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/7NhzXEoaIgr-0tYoab-gNZfF8zA8IbpTPt_buovH2Y78pc1L7IfKTq7tGU6zSk9EBJX0yKq7wp3jts8=s1080"
+    },
+    {
+      "name": "Snoop Dogg",
+      "artistId": "UC7xz_YipuZtypOuVALNzeog",
+      "thumbnailUrl": "https://lh3.googleusercontent.com/DoGOiDEX8TzwP7eMoG6jijWa4Eme2D0rLECNBsWYmqpF0Kftv71ZCIFu_p45ObuOtFvDPuwLFIQsPws=s1080"
+    },
+    {
+      "name": "Tupac",
+      "artistId": "UC5RrGzC-JXglhFW5NhT4r6w",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/gP9PWaBlnp-bSMxLCRHCIYsz5-gx5Cw0TmM6kS0_wawKDRR3_frVFEf4go8uXU_rG8rEI-CqBsxfRw=s1080"
+    },
+    {
+      "name": "Notorious BIG",
+      "artistId": "UCczXQ2ehGOS2U2UnR8rY3Hg",
+      "thumbnailUrl": "https://lh3.googleusercontent.com/NJWRafgsmPWAiJsx5mGBmbmPW-F62U99uF5qJsa8UzwG-F8-JH-DY7RYLCGFWLfjkL_Q0ehfXUQ1a_s=s1080"
+    },
+    {
+      "name": "Jay-Z",
+      "artistId": "UCbJG1HvzgzaMe_15xfiUyWw",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/YcGJemFC30LtMjWCOMXUgjHhVknIUlxtgh6yBkEl1NA8ZHhih7VE4UrFqFqvwGPraXBr_EDvfbQ0ZkVi=s1080"
+    },
+    {
+      "name": "Lady Gaga",
+      "artistId": "UCGKXb1syicud01CJOOFRykg",
+      "thumbnailUrl": "https://lh3.googleusercontent.com/umSdMueKqbLBTq0jhiEzh1F82_C8hRVzkw2ZsxOqEktWjNXOKSCMPMGiJtu73myxd995RC4BqKL5fAXM=s1080"
+    },
+    {
+      "name": "Katy Perry",
+      "artistId": "UC_7s69e1mDS3lgcTMJEPjCg",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/E8nupXSF6-wweZCLqn5vwxPcLIGW2Tg9szpacMZoLXOXa1PGh-WpU5-7FH8YLfElD8Lbzh15kljZog=s1080"
+    },
+    {
+      "name": "Shawn Mendes",
+      "artistId": "UC6ZjlLJhqP79nqGr3Ic6Adg",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/VVGOJpxGFBbbUJHurZq_U1F_BjIhaMBAY1sDhOT3a2kE2DnidfYT8L_hY7WoJOusysvzn1msCoinvtma=s1080"
+    },
+    {
+      "name": "Charlie Puth",
+      "artistId": "UCQ-ygxSFSlq-O2zGnXxELXQ",
+      "thumbnailUrl": "https://lh3.googleusercontent.com/Wqr_bvGshelPD-n5OohFA1Au6r130npkqQX3BS0bEb4l373-FVX9ZhkhWykNKdq3CrNCF6ubJNTLVwI=s1080"
+    },
+    {
+      "name": "Selena Gomez",
+      "artistId": "UCeBYRgPhy8kcRmIGQWKuqdQ",
+      "thumbnailUrl": "https://lh3.googleusercontent.com/iGTppsoVmH36Cz1M0e_pXYusBIWXOgDBzepEHWTIFtMdjZ-3khOVKtF31rrwii9_Kcp5nFSaoRGrNg=s1080"
+    },
+    {
+      "name": "Miley Cyrus",
+      "artistId": "UCREdEwBdZcnQLIT0ThaAtmQ",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/JnkcgxxXJy9JhrMcNVXLgtb-qIZed36bpFF4h5KZr5gzYUujmWCo61Fd37Oip-pI8tMB6J7qbCii20lw=s1080"
+    },
+    {
+      "name": "Zayn",
+      "artistId": "UCYR9erHSNBPjjNswR4FrMaw",
+      "thumbnailUrl": "https://lh3.googleusercontent.com/8Cizh7XvhtlW0ysf6LdNSfy7CbzZ_5ukXxzfMmcPFjnlnv_GGeMi4ATE_Yva77Hm8lbvC5tg-mulmcM=s1080"
+    },
+    {
+      "name": "Olivia Rodrigo",
+      "artistId": "UCE5XNpliPM-SmyFEp61tL_g",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/41-4WZupE4yY88igineZefzBZ3ud2nrtlBMv61OBWOfOcATol8PhmI5OZ0fLlrTszyZ3Ul9I9sE=s1080"
+    },
+    {
+      "name": "Doja Cat",
+      "artistId": "UCwgX_dLqGYna_7Fm8ecf4Ng",
+      "thumbnailUrl": "https://lh3.googleusercontent.com/Y4jz4Ky3uGHQ6DE_mV7_pPKSBgSK62ERNf-9kFJ-mUXPdHsuVriJX1LuJ0B7XyScCZ65Dvypr1LZpvUK=s1080"
+    },
+    {
+      "name": "Megan Thee Stallion",
+      "artistId": "UCZBf6sY19D8pN4JIxP9PE3Q",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/p2y1tk6YVQ0xnk8iNFyNhZxTGjO-nIMTFu77q_uLFZKTPdnmf1Ed7fI5m3OaXrw9_nnPwhowwu_ZAg=s1080"
+    },
+    {
+      "name": "Cardi B",
+      "artistId": "UCoIp9Cj1l7k63B90hFg38Zw",
+      "thumbnailUrl": "https://lh3.googleusercontent.com/eVvTJjxO-b9q77Hb3jz9a2vCm0avHKIB1mL5h412pp5PnM1GNVaajceaZGQxB7Y6bvZIihjdqPa6oVU=s1080"
+    },
+    {
+      "name": "Nicki Minaj",
+      "artistId": "UCTTcTeAszDGxALRSMkJH9FQ",
+      "thumbnailUrl": "https://lh3.googleusercontent.com/dxazpVxrrUIWVdh49h3-GBhkgI5Wl2ALR5lI1AEldaVbUtz5TN4HfmL_ssUddy2ctEKcSPzNGeFOl-c=s1080"
+    },
+    {
+      "name": "Lil Nas X",
+      "artistId": "UCCF_6PwrZf1u70yghKms3Mw",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/qqXM2TgVGgJWUoBhf0UEIVpr0j0bdKA33iA8TbJhDg4m9sDw7ZT9Ng8ux3ezNDINO-ORdKelVh9m40g=s1080"
+    },
+    {
+      "name": "Lil Uzi Vert",
+      "artistId": "UCybEdRVR5u_WFoV-BLTEBiA",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/5rBwZUjAmTGZp5IA31AER-HUOLIet4SHmT4MKEfnLmt0YvTH0DngwtmMq2GJQDk9p83ICdvadKrLtDk=s1080"
+    },
+    {
+      "name": "Juice WRLD",
+      "artistId": "UCbn0GRdgsQtl9hlV-IqxFGg",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/6YKQ7fDb3ISfzNUjpJnXX1FLw9EQ8eK5qHa07VANJtkaGagUtqtHiAOKz2AJ1AoASNacrCeg8pd35ao=s1080"
+    },
+    {
+      "name": "XXXTentacion",
+      "artistId": "UCnAcxgRZ065f_eXK1o85c1w",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/No3I8pA9ows2dy6NElEr9mCXLzYxgjVvsQr7h69C03palsH1u8Q8iw-sAAUxav599Wmi64up8lbDGbI=s1080"
+    },
+    {
+      "name": "Calvin Harris",
+      "artistId": "UCZ0Aezmtk-S2l8A9Ln-2lKw",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/OsW5zo5w26RBwGTLhC4SSNpmt6ufjosU0lzTg2EqlozD5L5Ja2jpP0GWSA06E2bIa8SFflpw=s1080"
+    },
+    {
+      "name": "David Guetta",
+      "artistId": "UCh-4c1ZoBPNP1C8c-7iVvUQ",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/3eBIDwhU0lhvxmScIULhDZTLrpIFTW32aCbDbRMabkpxytTWU80JCj_duXrlZMSbF1b-0cmn7I7ZBkc=s1080"
+    },
+    {
+      "name": "Martin Garrix",
+      "artistId": "UCqJnSdHjKtfsrHi9aI-9d3g",
+      "thumbnailUrl": "https://lh3.googleusercontent.com/HVjzD5hZ602Mj8NKuSZRIgCFgQOm60q65Ki42aqgsfWSxAswO4990hUUG3ksQLxYW2yzKtJVvXQ5A8w=s1080"
+    },
+    {
+      "name": "Skrillex",
+      "artistId": "UCibXKvuw5PoJVmyZJ4qhDIw",
+      "thumbnailUrl": "https://lh3.googleusercontent.com/VV_UrDtHZTdKt-oP2Gcn4D15Oh2kec4yuGRn7F-S7vx7-tit2QfZNys-kL9uyjK0VovAg96LIscl8_FJ=s1080"
+    },
+    {
+      "name": "Marshmello",
+      "artistId": "UCrxpwXq8wCTskOQq5d_KoqQ",
+      "thumbnailUrl": "https://yt3.googleusercontent.com/FgXNumEMez1nb_08prkNDaGnKChcoTsxfe3dLBQ1bZoDFQ4X1pBnoTbZLeP28dWKkWYxOerVnamKag=s1080"
+    }
+  ]
+}
+

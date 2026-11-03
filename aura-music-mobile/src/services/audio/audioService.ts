@@ -1,0 +1,767 @@
+import { Platform } from "react-native";
+import {
+  createAudioPlayer,
+  setAudioModeAsync,
+  type AudioPlayer,
+  type AudioStatus,
+} from "expo-audio";
+import { Song } from "@/types/music";
+import { MusicApi } from "@/services/api/musicApi";
+import { FileManager } from "@/services/storage/fileManager";
+import { updateSongLastPlayed } from "@/database/db";
+import {
+  SOUND_PRESET_CONFIG,
+  type SoundPreset,
+} from "@/services/audio/soundPresets";
+import { getOfflineAudioBlob } from "@/database/webOfflineStorage";
+
+export type PlaybackStatusListener = (status: {
+  isPlaying: boolean;
+  positionMillis: number;
+  durationMillis: number;
+  isBuffering: boolean;
+  didJustFinish: boolean;
+  error?: string;
+}) => void;
+
+class AudioService {
+  private sound: AudioPlayer | null = null;
+  private soundSubscription: { remove: () => void } | null = null;
+  private webAudio: HTMLAudioElement | null = null;
+  private currentSong: Song | null = null;
+  private isInitialized = false;
+  private listeners: Set<PlaybackStatusListener> = new Set();
+  private lastKnownPosition = 0;
+  private lastKnownDuration = 0;
+  private isAudioPlaying = false;
+
+  // Web-only Web Audio graph for the sound-preset (EQ) engine.
+  private webCtx: any = null;
+  private webGraph: {
+    preGain: any;
+    bands: any[];
+    compressor: any;
+    limiter: any;
+    postGain: any;
+    panner: any;
+  } | null = null;
+  private rotationOsc: any = null;
+  private rotationGain: any = null;
+  private soundPreset: SoundPreset = "off";
+  private boost = 1;
+
+  // Progressive worker streams are chunked without a Content-Length, which
+  // makes the browser report seekable=[0,0] and restarts playback on any
+  // currentTime write. The first seek swaps in a local blob of the same audio.
+  private blobSeek = { url: null as string | null, pending: null as number | null, busy: false };
+
+  public subscribe(listener: PlaybackStatusListener): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  private notify(data: {
+    isPlaying: boolean;
+    positionMillis: number;
+    durationMillis: number;
+    isBuffering: boolean;
+    didJustFinish: boolean;
+    error?: string;
+  }): void {
+    this.isAudioPlaying = data.isPlaying;
+    this.lastKnownPosition = data.positionMillis;
+    this.lastKnownDuration = data.durationMillis;
+    this.listeners.forEach((l) => l(data));
+  }
+
+  /**
+   * Initialize audio session (Native iOS/Android background playback)
+   */
+  public async initAudioSession(): Promise<void> {
+    if (this.isInitialized) return;
+    try {
+      if (Platform.OS !== "web") {
+        await setAudioModeAsync({
+          playsInSilentMode: true,
+          shouldPlayInBackground: true,
+          // Lock-screen controls only attach to the player in a non-mixing mode.
+          interruptionMode: "doNotMix",
+        });
+        console.log("[AudioService] Native iOS background audio session initialized");
+      }
+      this.isInitialized = true;
+    } catch (err) {
+      console.warn("[AudioService] Failed to set audio mode:", err);
+    }
+  }
+
+  /**
+   * Builds the Web Audio chain once: source → pre-gain → 5 EQ bands →
+   * compressor → limiter → post-gain → stereo panner → speakers.
+   * Returns false on native (expo-audio exposes no DSP) or when unavailable.
+   */
+  private ensureWebGraph(): boolean {
+    if (this.webGraph) return true;
+    if (Platform.OS !== "web" || typeof window === "undefined" || !this.webAudio) {
+      return false;
+    }
+    const AudioCtx = (window as any).AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtx) return false;
+
+    try {
+      const ctx = new AudioCtx();
+      const source = ctx.createMediaElementSource(this.webAudio);
+      const preGain = ctx.createGain();
+      const bands = Array.from({ length: 5 }, () => ctx.createBiquadFilter());
+      const compressor = ctx.createDynamicsCompressor();
+      const limiter = ctx.createDynamicsCompressor();
+      const postGain = ctx.createGain();
+      const panner = typeof ctx.createStereoPanner === "function" ? ctx.createStereoPanner() : null;
+
+      let node: any = source;
+      for (const next of [preGain, ...bands, compressor, limiter, postGain, ...(panner ? [panner] : [])]) {
+        node.connect(next);
+        node = next;
+      }
+      node.connect(ctx.destination);
+
+      this.webCtx = ctx;
+      this.webGraph = { preGain, bands, compressor, limiter, postGain, panner };
+      this.applyPreset(this.soundPreset);
+      return true;
+    } catch (err) {
+      console.warn("[AudioService] Web Audio graph unavailable:", err);
+      return false;
+    }
+  }
+
+  private applyPreset(preset: SoundPreset): void {
+    const ctx = this.webCtx;
+    const graph = this.webGraph;
+    if (!ctx || !graph) return;
+
+    const cfg = SOUND_PRESET_CONFIG[preset] ?? SOUND_PRESET_CONFIG.off;
+    const now = ctx.currentTime;
+    const ramp = 0.04; // 40 ms — click-free switching
+
+    graph.preGain.gain.setTargetAtTime(1.05, now, ramp);
+
+    graph.bands.forEach((band: any, i: number) => {
+      const spec = cfg.bands[i];
+      if (!spec) return;
+      if (band.type !== spec.type) band.type = spec.type;
+      band.frequency.setTargetAtTime(spec.freq, now, ramp);
+      band.gain.setTargetAtTime(spec.gain, now, ramp);
+      if (spec.Q) band.Q.setTargetAtTime(spec.Q, now, ramp);
+    });
+
+    graph.compressor.threshold.setTargetAtTime(cfg.comp.threshold, now, ramp);
+    graph.compressor.knee.setTargetAtTime(14, now, ramp);
+    graph.compressor.ratio.setTargetAtTime(cfg.comp.ratio, now, ramp);
+    graph.compressor.attack.setTargetAtTime(cfg.comp.attack, now, ramp);
+    graph.compressor.release.setTargetAtTime(cfg.comp.release, now, ramp);
+
+    // Brick-wall limiter so boosted presets never clip.
+    graph.limiter.threshold.setTargetAtTime(-0.1, now, ramp);
+    graph.limiter.knee.setTargetAtTime(10, now, ramp);
+    graph.limiter.ratio.setTargetAtTime(20, now, ramp);
+    graph.limiter.attack.setTargetAtTime(0.001, now, ramp);
+    graph.limiter.release.setTargetAtTime(0.04, now, ramp);
+
+    graph.postGain.gain.setTargetAtTime(cfg.postGain * this.boost, now, ramp);
+
+    if (preset === "spatial" && graph.panner) {
+      this.startRotation();
+    } else {
+      this.stopRotation();
+    }
+  }
+
+  private startRotation(): void {
+    const ctx = this.webCtx;
+    const panner = this.webGraph?.panner;
+    if (!ctx || !panner || this.rotationOsc) return;
+    try {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = 0.18; // one full 360° sweep every ~5.5 s
+      gain.gain.value = 0.85;
+      osc.connect(gain);
+      gain.connect(panner.pan);
+      osc.start();
+      this.rotationOsc = osc;
+      this.rotationGain = gain;
+    } catch (err) {
+      console.warn("[AudioService] 8D rotation failed:", err);
+    }
+  }
+
+  private stopRotation(): void {
+    const panner = this.webGraph?.panner;
+    try {
+      this.rotationOsc?.stop();
+      this.rotationOsc?.disconnect();
+      this.rotationGain?.disconnect();
+    } catch {
+      /* already stopped */
+    }
+    this.rotationOsc = null;
+    this.rotationGain = null;
+    if (this.webCtx && panner) {
+      try {
+        panner.pan.setTargetAtTime(0, this.webCtx.currentTime, 0.05);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  /**
+   * Instant 8D Earbud Test: sweeps hard Left, then hard Right, then returns to Center.
+   */
+  public test8dSound(onStep?: (msg: string) => void): void {
+    const ctx = this.webCtx;
+    const panner = this.webGraph?.panner;
+
+    if (!ctx || !panner) {
+      onStep?.("يرجى تشغيل أي أغنية أولاً لبدء اختبار تقليب السماعات 🎧");
+      return;
+    }
+
+    try {
+      this.stopRotation();
+      const t = ctx.currentTime;
+      panner.pan.cancelScheduledValues(t);
+      panner.pan.setValueAtTime(0, t);
+      panner.pan.linearRampToValueAtTime(-0.95, t + 0.35);
+      onStep?.("🎧 جاري الاختبار: السماعة اليسرى فقط ◀️");
+
+      setTimeout(() => {
+        if (!this.webCtx || !this.webGraph?.panner) return;
+        const now = this.webCtx.currentTime;
+        this.webGraph.panner.pan.linearRampToValueAtTime(0.95, now + 0.5);
+        onStep?.("🎧 جاري الاختبار: السماعة اليمنى فقط ▶️");
+      }, 1600);
+
+      setTimeout(() => {
+        if (!this.webCtx || !this.webGraph?.panner) return;
+        const now = this.webCtx.currentTime;
+        this.webGraph.panner.pan.linearRampToValueAtTime(0, now + 0.5);
+        onStep?.("✅ تم اكتمال الاختبار بنجاح - كلا السماعتين تعملان بتناغم!");
+        if (this.soundPreset === "spatial") {
+          setTimeout(() => this.startRotation(), 600);
+        }
+      }, 3300);
+    } catch (err) {
+      console.warn("[audioService] test8dSound error:", err);
+    }
+  }
+
+  /**
+   * Applies a studio sound profile. Real DSP on web; on native expo-audio has no
+   * equaliser, so the preference is kept but no audio is altered.
+   */
+  public async setSoundPreset(preset: SoundPreset): Promise<void> {
+    this.soundPreset = preset;
+    if (Platform.OS !== "web") return;
+    if (preset === "off" && this.boost === 1) {
+      if (this.webGraph) this.applyPreset("off");
+      return;
+    }
+    if (!this.ensureWebGraph()) return;
+    try {
+      if (this.webCtx?.state === "suspended") await this.webCtx.resume();
+    } catch {
+      /* resume requires a user gesture; next tap retries */
+    }
+    this.applyPreset(preset);
+  }
+
+  public getSoundPreset(): SoundPreset {
+    return this.soundPreset;
+  }
+
+  /**
+   * Super Boost: multiplies the post-gain of the Web Audio chain (100–200%).
+   * The hard limiter after it keeps boosted output from clipping.
+   */
+  public async setBoost(boost: number): Promise<void> {
+    this.boost = Math.max(1, Math.min(2, boost));
+    if (Platform.OS !== "web") return;
+    if (!this.webGraph && this.soundPreset === "off" && this.boost === 1) return;
+    if (!this.ensureWebGraph()) return;
+    try {
+      if (this.webCtx?.state === "suspended") await this.webCtx.resume();
+    } catch {
+      /* resumed on the next user gesture */
+    }
+    this.applyPreset(this.soundPreset);
+  }
+
+  public getBoost(): number {
+    return this.boost;
+  }
+
+  /**
+   * Determine playback source: prioritizes local downloaded file, falls back to stream URL
+   */
+  private async resolveAudioUri(song: Song): Promise<{ uri: string; isOffline: boolean }> {
+    // 0. On Web: Check IndexedDB offline blob store
+    if (Platform.OS === "web") {
+      try {
+        let blob = await getOfflineAudioBlob(song.id);
+        if (!blob && song.localFilePath && song.localFilePath.startsWith("indexeddb://")) {
+          const storedKey = song.localFilePath.replace("indexeddb://", "");
+          blob = await getOfflineAudioBlob(storedKey);
+        }
+        if (blob && blob.size > 10000) {
+          const blobUrl = URL.createObjectURL(blob);
+          console.log(`[AudioService Web] ⚡ Playing 100% offline from IndexedDB blob (${blob.size} bytes): ${song.title}`);
+          return { uri: blobUrl, isOffline: true };
+        }
+      } catch (err) {
+        console.warn("[AudioService Web] Failed to read IndexedDB blob:", err);
+      }
+    }
+
+    // 1. Check if song has a local downloaded file that exists on disk (Native)
+    if (song.localFilePath && Platform.OS !== "web") {
+      const isValid = await FileManager.verifyAudioFile(song.localFilePath);
+      if (isValid) {
+        console.log(`[AudioService] Playing offline from local file: ${song.localFilePath}`);
+        return { uri: song.localFilePath, isOffline: true };
+      }
+    }
+
+    // 2. Check if default file exists in audio storage directory
+    if (Platform.OS !== "web") {
+      const fallbackPath = FileManager.getAudioPath(song.id);
+      const isValid = await FileManager.verifyAudioFile(fallbackPath);
+      if (isValid) {
+        console.log(`[AudioService] Playing offline from default path: ${fallbackPath}`);
+        return { uri: fallbackPath, isOffline: true };
+      }
+    }
+
+    // 3. Fallback to online streaming URL with instant direct 320kbps resolution
+    const streamUrl = await MusicApi.resolveAudioStreamUrl(song);
+    console.log(`[AudioService] Streaming online: ${song.title} -> ${streamUrl}`);
+    return { uri: streamUrl, isOffline: false };
+  }
+
+  /**
+   * Load and play a song
+   */
+  public async playSong(song: Song, initialPositionMillis = 0): Promise<boolean> {
+    try {
+      await this.initAudioSession();
+      await this.stop();
+
+      this.currentSong = song;
+      this.notify({
+        isPlaying: false,
+        positionMillis: initialPositionMillis,
+        durationMillis: (song.duration || 0) * 1000,
+        isBuffering: true,
+        didJustFinish: false,
+      });
+
+      const { uri } = await this.resolveAudioUri(song);
+
+      // Web platform: Use HTML5 Audio directly for 100% browser compatibility
+      if (Platform.OS === "web" && typeof window !== "undefined") {
+        if (!this.webAudio) {
+          this.webAudio = new window.Audio();
+          // The stream endpoint sends Access-Control-Allow-Origin: *; asking for
+          // it anonymously is what lets the Web Audio EQ read the samples.
+          this.webAudio.crossOrigin = "anonymous";
+
+          this.webAudio.addEventListener("timeupdate", () => {
+            if (!this.webAudio) return;
+            const dur = (this.webAudio.duration && !isNaN(this.webAudio.duration) && isFinite(this.webAudio.duration))
+              ? this.webAudio.duration * 1000
+              : (this.currentSong?.duration || 0) * 1000;
+
+            this.notify({
+              isPlaying: !this.webAudio.paused,
+              positionMillis: (this.webAudio.currentTime || 0) * 1000,
+              durationMillis: dur,
+              isBuffering: false,
+              didJustFinish: false,
+            });
+          });
+
+          this.webAudio.addEventListener("ended", () => {
+            this.notify({
+              isPlaying: false,
+              positionMillis: (this.webAudio?.currentTime || 0) * 1000,
+              durationMillis: (this.webAudio?.duration || 0) * 1000,
+              isBuffering: false,
+              didJustFinish: true,
+            });
+          });
+
+          this.webAudio.addEventListener("waiting", () => {
+            this.notify({
+              isPlaying: false,
+              positionMillis: (this.webAudio?.currentTime || 0) * 1000,
+              durationMillis: (this.webAudio?.duration || 0) * 1000,
+              isBuffering: true,
+              didJustFinish: false,
+            });
+          });
+
+          this.webAudio.addEventListener("playing", () => {
+            this.notify({
+              isPlaying: true,
+              positionMillis: (this.webAudio?.currentTime || 0) * 1000,
+              durationMillis: (this.webAudio?.duration || 0) * 1000,
+              isBuffering: false,
+              didJustFinish: false,
+            });
+          });
+
+          this.webAudio.addEventListener("error", (e) => {
+            console.warn("[AudioService] Web Audio Error:", e);
+            this.notify({
+              isPlaying: false,
+              positionMillis: 0,
+              durationMillis: 0,
+              isBuffering: false,
+              didJustFinish: false,
+              error: "Failed to play audio stream",
+            });
+          });
+        }
+
+        const staleBlob = this.blobSeek.url;
+        this.blobSeek.url = null;
+        this.blobSeek.pending = null;
+        if (staleBlob) URL.revokeObjectURL(staleBlob);
+
+        this.webAudio.preload = "auto";
+        this.webAudio.src = uri;
+        this.webAudio.load();
+
+        this.ensureWebGraph();
+        try {
+          if (this.webCtx?.state === "suspended") await this.webCtx.resume();
+        } catch {
+          /* refreshed on the next user tap */
+        }
+        if (initialPositionMillis > 0 && isFinite(initialPositionMillis)) {
+          try {
+            this.webAudio.currentTime = initialPositionMillis / 1000;
+          } catch {}
+        }
+
+        try {
+          await this.webAudio.play();
+        } catch (playErr: any) {
+          // If NotSupportedError occurs (CORS/crossOrigin anonymous rejection on redirect or CDN),
+          // remove crossOrigin attribute and retry playing direct audio stream
+          if (
+            playErr?.name === "NotSupportedError" ||
+            playErr?.message?.includes("supported source") ||
+            (this.webAudio.error && this.webAudio.error.code === 4)
+          ) {
+            console.warn("[AudioService] crossOrigin issue or codec failure, retrying without crossOrigin...");
+            try {
+              this.webAudio.removeAttribute("crossOrigin");
+              (this.webAudio as any).crossOrigin = null;
+            } catch {}
+
+            try {
+              this.webAudio.src = uri;
+              this.webAudio.load();
+              await this.webAudio.play();
+            } catch (retryOriginalErr) {
+              console.warn("[AudioService] Retry original failed, trying local proxy fallback...");
+              const fallbackUrl = MusicApi.getStreamUrl(song);
+              this.webAudio.src = fallbackUrl;
+              this.webAudio.load();
+              await this.webAudio.play();
+            }
+          } else {
+            throw playErr;
+          }
+        }
+
+        updateSongLastPlayed(song.id).catch(() => {});
+        return true;
+      }
+
+      // Native iOS / Android: progressive streaming, without downloading the whole file first.
+      const player = createAudioPlayer({ uri }, { updateInterval: 300, downloadFirst: false });
+      this.soundSubscription = player.addListener("playbackStatusUpdate", this.onPlaybackStatusUpdate);
+      this.sound = player;
+
+      if (initialPositionMillis > 0) {
+        await player.seekTo(initialPositionMillis / 1000);
+      }
+      player.play();
+
+      try {
+        player.setActiveForLockScreen(true, {
+          title: song.title,
+          artist: song.artist,
+          albumTitle: song.albumName,
+          artworkUrl: song.thumbnailUrl ?? undefined,
+        });
+      } catch (err) {
+        console.warn("[AudioService] lock screen controls unavailable:", err);
+      }
+
+      // Update play count in persistent DB
+      updateSongLastPlayed(song.id).catch(() => {});
+
+      return true;
+    } catch (err: any) {
+      console.error("[AudioService] playSong error:", err);
+      this.notify({
+        isPlaying: false,
+        positionMillis: 0,
+        durationMillis: 0,
+        isBuffering: false,
+        didJustFinish: false,
+        error: err?.message || "Failed to load audio",
+      });
+      return false;
+    }
+  }
+
+  private onPlaybackStatusUpdate = (status: AudioStatus) => {
+    if (status.error) {
+      this.notify({
+        isPlaying: false,
+        positionMillis: 0,
+        durationMillis: 0,
+        isBuffering: false,
+        didJustFinish: false,
+        error: status.error,
+      });
+      return;
+    }
+
+    this.notify({
+      isPlaying: status.playing,
+      positionMillis: status.currentTime * 1000,
+      durationMillis: status.duration * 1000 || (this.currentSong?.duration || 0) * 1000,
+      isBuffering: status.isBuffering,
+      didJustFinish: status.didJustFinish,
+    });
+  };
+
+  public async pause(): Promise<void> {
+    if (Platform.OS === "web" && this.webAudio) {
+      this.webAudio.pause();
+      return;
+    }
+    if (this.sound) {
+      try {
+        this.sound.pause();
+      } catch (err) {
+        console.warn("[AudioService] pause error:", err);
+      }
+    }
+  }
+
+  public async resume(): Promise<void> {
+    if (Platform.OS === "web" && this.webAudio) {
+      try {
+        if (this.webCtx?.state === "suspended") await this.webCtx.resume();
+        await this.webAudio.play();
+      } catch (e) {
+        console.warn("[AudioService] web resume error:", e);
+      }
+      return;
+    }
+    if (this.sound) {
+      try {
+        this.sound.play();
+      } catch (err) {
+        console.warn("[AudioService] resume error:", err);
+      }
+    }
+  }
+
+  public async togglePlay(): Promise<void> {
+    if (this.isAudioPlaying) {
+      await this.pause();
+    } else {
+      await this.resume();
+    }
+  }
+
+  public async seekTo(positionMillis: number): Promise<void> {
+    if (isNaN(positionMillis) || !isFinite(positionMillis) || positionMillis < 0) {
+      return;
+    }
+    if (Platform.OS === "web" && this.webAudio) {
+      const targetSec = positionMillis / 1000;
+      if (this.isSeekableTo(this.webAudio, targetSec)) {
+        try {
+          this.webAudio.currentTime = targetSec;
+        } catch (err) {
+          console.warn("[AudioService Web] seekTo error:", err);
+        }
+        return;
+      }
+      await this.seekViaLocalBlob(targetSec);
+      return;
+    }
+    if (this.sound) {
+      try {
+        await this.sound.seekTo(positionMillis / 1000);
+      } catch (err) {
+        console.warn("[AudioService] seekTo error:", err);
+      }
+    }
+  }
+
+  private isSeekableTo(el: HTMLAudioElement, targetSec: number): boolean {
+    const ranges = el.seekable;
+    if (!ranges || ranges.length === 0) return false;
+    for (let i = 0; i < ranges.length; i++) {
+      if (targetSec >= ranges.start(i) - 0.25 && targetSec <= ranges.end(i) + 0.25) return true;
+    }
+    return false;
+  }
+
+  private async seekViaLocalBlob(targetSec: number): Promise<void> {
+    const el = this.webAudio;
+    if (!el) return;
+    if (this.blobSeek.busy) {
+      this.blobSeek.pending = targetSec;
+      return;
+    }
+    const src = el.currentSrc || el.src;
+    if (!src || src.startsWith("blob:")) {
+      try {
+        el.currentTime = targetSec;
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+    this.blobSeek.busy = true;
+    const wasPlaying = !el.paused;
+    try {
+      const res = await fetch(src, { cache: "force-cache" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      if (!blob.size || blob.size > 64 * 1024 * 1024) {
+        throw new Error(`unusable blob (${blob.size} bytes)`);
+      }
+      const url = URL.createObjectURL(blob);
+      await new Promise<void>((resolve, reject) => {
+        const cleanup = () => {
+          el.removeEventListener("loadedmetadata", ok);
+          el.removeEventListener("error", fail);
+          clearTimeout(timer);
+        };
+        const ok = () => {
+          cleanup();
+          resolve();
+        };
+        const fail = () => {
+          cleanup();
+          reject(new Error("blob audio failed to load"));
+        };
+        const timer = setTimeout(ok, 4000);
+        el.addEventListener("loadedmetadata", ok);
+        el.addEventListener("error", fail);
+        el.src = url;
+      });
+      const previous = this.blobSeek.url;
+      this.blobSeek.url = url;
+      const duration = isFinite(el.duration) ? el.duration : 0;
+      el.currentTime = duration > 0 ? Math.min(duration - 0.05, targetSec) : targetSec;
+      if (wasPlaying) await el.play().catch(() => {});
+      if (previous) URL.revokeObjectURL(previous);
+    } catch (err: any) {
+      console.warn("[AudioService Web] blob seek fallback failed:", err?.message || err);
+      try {
+        el.currentTime = targetSec;
+      } catch {
+        /* ignore */
+      }
+    } finally {
+      const queued = this.blobSeek.pending;
+      this.blobSeek.pending = null;
+      this.blobSeek.busy = false;
+      if (queued != null) void this.seekTo(queued * 1000);
+    }
+  }
+
+  public async setVolume(volume: number): Promise<void> {
+    const clamped = Math.max(0, Math.min(1, volume));
+    if (Platform.OS === "web" && this.webAudio) {
+      this.webAudio.volume = clamped;
+      return;
+    }
+    if (this.sound) {
+      try {
+        this.sound.volume = clamped;
+      } catch (err) {
+        console.warn("[AudioService] setVolume error:", err);
+      }
+    }
+  }
+
+  public async setRate(rate: number): Promise<void> {
+    if (Platform.OS === "web" && this.webAudio) {
+      this.webAudio.playbackRate = rate;
+      return;
+    }
+    if (this.sound) {
+      try {
+        this.sound.shouldCorrectPitch = true;
+        this.sound.setPlaybackRate(rate);
+      } catch (err) {
+        console.warn("[AudioService] setRate error:", err);
+      }
+    }
+  }
+
+  public async stop(): Promise<void> {
+    if (Platform.OS === "web" && this.webAudio) {
+      try {
+        this.webAudio.pause();
+        this.webAudio.src = "";
+      } catch {
+        /* ignore */
+      }
+    }
+    if (this.sound) {
+      try {
+        this.soundSubscription?.remove();
+        this.sound.pause();
+        this.sound.remove();
+      } catch {
+        /* ignore */
+      }
+      this.soundSubscription = null;
+      this.sound = null;
+    }
+  }
+
+  public getCurrentSong(): Song | null {
+    return this.currentSong;
+  }
+
+  public getPosition(): number {
+    return this.lastKnownPosition;
+  }
+
+  public getDuration(): number {
+    return this.lastKnownDuration;
+  }
+
+  public isPlaying(): boolean {
+    return this.isAudioPlaying;
+  }
+}
+
+export const audioService = new AudioService();
