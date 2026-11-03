@@ -110,6 +110,7 @@ function polish(text: string): string {
 
 const ARTIST_OVERRIDES: Record<string, string> = {
   "عمرو دياب": "Amr Diab",
+  "شيرين": "Sherine",
   "شيرين عبد الوهاب": "Sherine",
   "شيرين عبدالوهاب": "Sherine",
   "تامر حسني": "Tamer Hosny",
@@ -195,6 +196,12 @@ const TITLE_OVERRIDES: Record<string, string> = {
   "سر وجعنا": "Ser Waga3na",
   "الغابة ليها بابا": "El Ghaba Leha Baba",
   "تملي معاك": "Tamally Maak",
+  "كلام عينيه": "Kalam Eneih",
+  "دلوقتي عجبناكوا": "Delwaty Egebnaako",
+  "دلوقتي عجبناكو": "Delwaty Egebnaako",
+  "قلبي بلاستيك": "Alby Plastic",
+  "البخت": "El Bakht",
+  "تيجي نسيب": "Teegy Nseeb",
   "مكانك في قلبي": "Makanak Fe Albi",
   يتعلموا: "Yet3alemo",
   "برج الحوت": "Borg El Hout",

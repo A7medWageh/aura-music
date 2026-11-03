@@ -656,7 +656,7 @@ function FullPlayer({
 
   const activeLineIndex = useMemo(() => {
     if (!effectiveSynced) return -1;
-    const pos = currentTimeMs - lyricOffset;
+    const pos = currentTimeMs + 180 - lyricOffset;
     return effectiveSynced.findIndex((line, i) => {
       const nextLine = effectiveSynced[i + 1];
       return pos >= line.timeMs && (!nextLine || pos < nextLine.timeMs);
@@ -1094,23 +1094,31 @@ function FullPlayer({
                 <p className="text-sm font-bold text-white">جاري البحث عن الكلمات...</p>
               </div>
             ) : effectiveSynced ? (
-              <div className="flex flex-col gap-5 pb-[42vh] pt-[16vh]">
+              <div className="flex flex-col gap-6 pb-[42vh] pt-[42vh]">
                 {effectiveSynced.map((line, i) => {
                   const isActive = i === activeLineIndex;
-                  const isPassed = i < activeLineIndex;
+                  const dist = activeLineIndex === -1 ? 0 : Math.abs(i - activeLineIndex);
+                  let filterBlur = "blur(5px)";
+                  let opacityClass = "text-white/10 scale-90";
+
+                  if (isActive) {
+                    filterBlur = "blur(0px)";
+                    opacityClass = "text-white scale-105 drop-shadow-[0_0_24px_rgba(255,255,255,0.45)]";
+                  } else if (dist === 1) {
+                    filterBlur = "blur(1.5px)";
+                    opacityClass = "text-white/50 scale-100";
+                  } else if (dist === 2) {
+                    filterBlur = "blur(3.5px)";
+                    opacityClass = "text-white/25 scale-95";
+                  }
+
                   return (
                     <div
                       key={i}
                       id={`lyrics-line-${i}`}
                       onClick={() => seekTo(line.timeMs / 1000)}
-                      className={`font-black text-[19px] md:text-2xl leading-snug transition-all duration-500 cursor-pointer ${
-                        isActive 
-                          ? "text-white scale-105 drop-shadow-lg" 
-                          : isPassed 
-                            ? "text-white/40 scale-100" 
-                            : "text-white/20 scale-95"
-                      }`}
-                      style={{ filter: isActive ? "blur(0px)" : "blur(0.5px)" }}
+                      className={`font-black text-[21px] md:text-3xl leading-snug transition-all duration-500 cursor-pointer select-none ${opacityClass}`}
+                      style={{ filter: filterBlur }}
                     >
                       {line.text}
                     </div>

@@ -1,4 +1,5 @@
 import { Song, LyricsData } from "@/types/music";
+import { latinizeTitle, latinizeArtist } from "@/utils/latinize";
 import { getArtworkUrl } from "@/utils/media";
 import { Platform } from "react-native";
 import {
@@ -290,6 +291,7 @@ export const MusicApi = {
    * Fetch Lyrics (plain and synced LRC)
    */
   async getLyrics(song: Song): Promise<LyricsData> {
+    let serverPlain: string | null = null;
     try {
       const params = new URLSearchParams({
         trackName: song.title,
@@ -304,30 +306,80 @@ export const MusicApi = {
         headers: { Accept: "application/json" },
       });
 
-      if (!res.ok) {
-        return {
-          songId: song.id,
-          plainLyrics: null,
-          syncedLyrics: null,
-          source: "none",
-        };
+      if (res.ok) {
+        const json = await res.json();
+        if (json.syncedLyrics) {
+          return {
+            songId: song.id,
+            plainLyrics: json.lyrics || null,
+            syncedLyrics: json.syncedLyrics,
+            source: json.source || "server",
+          };
+        }
+        if (json.lyrics) {
+          serverPlain = json.lyrics;
+        }
       }
+    } catch {}
 
-      const json = await res.json();
-      return {
-        songId: song.id,
-        plainLyrics: json.lyrics || null,
-        syncedLyrics: json.syncedLyrics || null,
-        source: json.source || "server",
-      };
-    } catch (e: any) {
-      return {
-        songId: song.id,
-        plainLyrics: null,
-        syncedLyrics: null,
-        source: "error",
-      };
-    }
+    // Fallback directly to LRCLIB with bilingual translation
+    try {
+      const direct = await this.fetchDirectLrclib(song);
+      if (direct?.syncedLyrics) {
+        return direct;
+      }
+      if (direct?.plainLyrics && !serverPlain) {
+        serverPlain = direct.plainLyrics;
+      }
+    } catch {}
+
+    return {
+      songId: song.id,
+      plainLyrics: serverPlain,
+      syncedLyrics: null,
+      source: serverPlain ? "server" : "none",
+    };
+  },
+
+  async fetchDirectLrclib(song: Song): Promise<LyricsData | null> {
+    try {
+      const latinTrack = latinizeTitle(song.title);
+      const latinArtist = latinizeArtist(song.artist);
+      const cleanTrack = (song.title || "")
+        .replace(/\|.*$/g, "")
+        .replace(/\(.*?\)/g, "")
+        .replace(/\[.*?\]/g, "")
+        .replace(/(official|music|video|audio|lyric|lyrics|visualizer|remastered|hd|4k)/gi, "")
+        .trim();
+
+      const queries = [
+        `https://lrclib.net/api/get?track_name=${encodeURIComponent(latinTrack)}&artist_name=${encodeURIComponent(latinArtist)}`,
+        `https://lrclib.net/api/search?q=${encodeURIComponent(`${latinTrack} ${latinArtist}`.trim())}`,
+        `https://lrclib.net/api/search?q=${encodeURIComponent(latinTrack)}`,
+        `https://lrclib.net/api/get?track_name=${encodeURIComponent(cleanTrack)}&artist_name=${encodeURIComponent(song.artist || "")}`,
+      ];
+
+      for (const url of queries) {
+        try {
+          const res = await fetch(url, {
+            headers: { "User-Agent": "AuraMusic/1.0.0 (https://github.com/A7medWageh)" },
+          });
+          if (res.ok) {
+            const data = await res.json();
+            const hit = Array.isArray(data) ? data.find((x: any) => x.syncedLyrics) || data[0] : data;
+            if (hit?.syncedLyrics || hit?.plainLyrics) {
+              return {
+                songId: song.id,
+                plainLyrics: hit.plainLyrics || null,
+                syncedLyrics: hit.syncedLyrics || null,
+                source: "lrclib-direct",
+              };
+            }
+          }
+        } catch {}
+      }
+    } catch {}
+    return null;
   },
 
   /**

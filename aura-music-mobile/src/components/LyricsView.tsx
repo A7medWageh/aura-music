@@ -5,14 +5,11 @@ import {
   ScrollView,
   ActivityIndicator,
   Dimensions,
+  Platform,
+  LayoutChangeEvent,
 } from "react-native";
-import Animated, {
-  Easing,
-  cancelAnimation,
-  useAnimatedStyle,
-  useSharedValue,
-  withTiming,
-} from "react-native-reanimated";
+import { LinearGradient } from "expo-linear-gradient";
+import * as Haptics from "expo-haptics";
 import { Minus, Plus, AlignLeft } from "lucide-react-native";
 import { Song, SyncedLyricLine } from "@/types/music";
 import { MusicApi } from "@/services/api/musicApi";
@@ -26,36 +23,11 @@ interface LyricsViewProps {
   song: Song;
 }
 
-const LINE_PITCH = 58;
-const FOCUS_Y = Math.round(Dimensions.get("window").height * 0.28);
-
-const stampOf = (ms: number) =>
-  `${Math.floor(ms / 60000)}:${String(Math.floor((ms % 60000) / 1000)).padStart(2, "0")}`;
-
-// Gold line that fills under the sung lyric for as long as that line lasts.
-const LineProgress: React.FC<{ durationMs: number; playing: boolean }> = ({ durationMs, playing }) => {
-  const filled = useSharedValue(0);
-
-  useEffect(() => {
-    if (!playing) {
-      cancelAnimation(filled);
-      return;
-    }
-    filled.value = withTiming(1, { duration: durationMs * (1 - filled.value), easing: Easing.linear });
-  }, [playing, durationMs, filled]);
-
-  const style = useAnimatedStyle(() => ({ width: `${filled.value * 100}%` }));
-
-  return (
-    <View pointerEvents="none" style={styles.lineProgressTrack}>
-      <Animated.View style={[styles.lineProgressFill, style]} />
-    </View>
-  );
-};
+// 180ms perceptual vocal lead matches speech articulation and audio pipeline delay
+const VOCAL_LEAD_MS = 180;
 
 export const LyricsView: React.FC<LyricsViewProps> = ({ song }) => {
   const position = usePlayerStore((s) => s.position);
-  const isPlaying = usePlayerStore((s) => s.isPlaying);
   const seekTo = usePlayerStore((s) => s.seekTo);
 
   const [loading, setLoading] = useState(true);
@@ -64,11 +36,16 @@ export const LyricsView: React.FC<LyricsViewProps> = ({ song }) => {
   const [activeIndex, setActiveIndex] = useState(-1);
   const [lyricOffset, setLyricOffset] = useState(0);
 
+  const [containerHeight, setContainerHeight] = useState(() =>
+    Math.round(Dimensions.get("window").height * 0.52)
+  );
+
   const scrollViewRef = useRef<any>(null);
   const manualScrollUntilRef = useRef(0);
+  const lineLayouts = useRef<{ [idx: number]: { y: number; height: number } }>({});
 
   const pauseAutoScroll = useCallback(() => {
-    manualScrollUntilRef.current = Date.now() + 8000;
+    manualScrollUntilRef.current = Date.now() + 4500;
   }, []);
 
   const bumpLyricOffset = (delta: number) => {
@@ -78,6 +55,8 @@ export const LyricsView: React.FC<LyricsViewProps> = ({ song }) => {
   useEffect(() => {
     let isMounted = true;
     setLyricOffset(0);
+    setActiveIndex(-1);
+    lineLayouts.current = {};
 
     async function fetchLyrics() {
       setLoading(true);
@@ -106,7 +85,7 @@ export const LyricsView: React.FC<LyricsViewProps> = ({ song }) => {
         }
       } catch {}
 
-      // 3. Fetch from backend API
+      // 3. Fetch from backend API / direct LRCLIB
       const remote = await MusicApi.getLyrics(song);
       if (isMounted) {
         processLyrics(remote.syncedLyrics, remote.plainLyrics);
@@ -118,38 +97,41 @@ export const LyricsView: React.FC<LyricsViewProps> = ({ song }) => {
     }
 
     function processLyrics(synced: string | null, plain: string | null) {
+      // 1. Try true synced LRC lyrics
       if (synced) {
         const parsed = parseLrc(synced);
         if (parsed.length > 0) {
           setSyncedLines(parsed);
+          setPlainLyrics(null);
           return;
         }
       }
 
+      // 2. Check if plain lyrics text happens to embed LRC timestamps
+      if (plain && /\[\d{1,2}:\d{2}/.test(plain)) {
+        const parsed = parseLrc(plain);
+        if (parsed.length > 0) {
+          setSyncedLines(parsed);
+          setPlainLyrics(null);
+          return;
+        }
+      }
+
+      // 3. Clean and display genuine plain lyrics without artificial/fake timestamps
       if (plain) {
-        // Auto-generate synchronized lines for plain lyrics so every single song gets the karaoke focus effect
-        const rawLines = plain
+        const cleaned = plain
           .replace(/<br\s*\/?>/gi, "\n")
           .replace(/<\/p>/gi, "\n")
           .replace(/<[^>]+>/g, "")
-          .split("\n")
-          .map((l) => l.trim())
-          .filter((l) => l.length > 0 && !/^\[.*\]$/.test(l));
-
-        if (rawLines.length > 0) {
-          const totalMs = Math.max(30000, (song.duration || 180) * 1000);
-          const startOffset = totalMs * 0.04;
-          const activeSpan = totalMs * 0.92;
-          const syntheticSynced: SyncedLyricLine[] = rawLines.map((text, i) => ({
-            timeMs: Math.round(startOffset + (i / rawLines.length) * activeSpan),
-            text,
-          }));
-          setSyncedLines(syntheticSynced);
-          return;
-        }
+          .replace(/\[\d+:\d+(?:\.\d+)?\]/g, "")
+          .trim();
+        setPlainLyrics(cleaned);
+        setSyncedLines([]);
+        return;
       }
 
-      setPlainLyrics(plain);
+      setPlainLyrics(null);
+      setSyncedLines([]);
     }
 
     fetchLyrics();
@@ -159,11 +141,11 @@ export const LyricsView: React.FC<LyricsViewProps> = ({ song }) => {
     };
   }, [song.id]);
 
-  // Track active synced lyric line with offset
+  // Track active synced lyric line with 180ms vocal lead offset
   useEffect(() => {
     if (syncedLines.length === 0) return;
 
-    const currentMs = position * 1000 - lyricOffset;
+    const currentMs = position * 1000 + VOCAL_LEAD_MS - lyricOffset;
     let idx = -1;
 
     for (let i = 0; i < syncedLines.length; i++) {
@@ -176,15 +158,23 @@ export const LyricsView: React.FC<LyricsViewProps> = ({ song }) => {
 
     if (idx !== activeIndex && idx !== -1) {
       setActiveIndex(idx);
-      // Auto-scroll unless user recently scrolled manually
+
+      // Dead-center scrolling: center of active line sits at the vertical middle of container
       if (Date.now() > manualScrollUntilRef.current) {
-        scrollViewRef.current?.scrollTo({
-          y: Math.max(0, idx * LINE_PITCH - FOCUS_Y),
-          animated: true,
-        });
+        const layout = lineLayouts.current[idx];
+        if (layout && containerHeight > 0) {
+          const targetY = Math.max(
+            0,
+            layout.y - containerHeight / 2 + layout.height / 2
+          );
+          scrollViewRef.current?.scrollTo({
+            y: targetY,
+            animated: true,
+          });
+        }
       }
     }
-  }, [position, syncedLines, lyricOffset]);
+  }, [position, syncedLines, lyricOffset, containerHeight]);
 
   function parseLrc(lrcText: string): SyncedLyricLine[] {
     const lines = lrcText.split("\n");
@@ -198,7 +188,7 @@ export const LyricsView: React.FC<LyricsViewProps> = ({ song }) => {
         for (const m of matches) {
           const min = parseInt(m[1], 10);
           const sec = parseInt(m[2], 10);
-          const ms = m[3] ? parseInt(m[3].padEnd(3, "0"), 10) : 0;
+          const ms = m[3] ? parseInt(m[3].padEnd(3, "0").slice(0, 3), 10) : 0;
           const totalMs = min * 60 * 1000 + sec * 1000 + ms;
           result.push({ timeMs: totalMs, text });
         }
@@ -207,6 +197,30 @@ export const LyricsView: React.FC<LyricsViewProps> = ({ song }) => {
 
     return result.sort((a, b) => a.timeMs - b.timeMs);
   }
+
+  const handleLinePress = (timeMs: number) => {
+    if (Platform.OS !== "web") {
+      try {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      } catch {}
+    }
+    seekTo(timeMs / 1000);
+  };
+
+  const handleLineLayout = (idx: number, e: LayoutChangeEvent) => {
+    lineLayouts.current[idx] = e.nativeEvent.layout;
+    if (idx === activeIndex && Date.now() > manualScrollUntilRef.current) {
+      const layout = e.nativeEvent.layout;
+      const targetY = Math.max(
+        0,
+        layout.y - containerHeight / 2 + layout.height / 2
+      );
+      scrollViewRef.current?.scrollTo({
+        y: targetY,
+        animated: true,
+      });
+    }
+  };
 
   if (loading) {
     return (
@@ -224,7 +238,9 @@ export const LyricsView: React.FC<LyricsViewProps> = ({ song }) => {
       <View style={styles.center}>
         <AuraSurface tone="gold" style={styles.emptySurface}>
           <AlignLeft size={24} color={Color.gold500} />
-          <AuraText role="titleSm" align="center">لا توجد كلمات مسجلة لهذا العمل حالياً</AuraText>
+          <AuraText role="titleSm" align="center">
+            لا توجد كلمات مسجلة لهذا العمل حالياً
+          </AuraText>
           <AuraText role="caption" align="center">
             يقوم نظام أورا الذكي بالبحث التلقائي عن الكلمات فور تشغيل كل أغنية.
           </AuraText>
@@ -233,17 +249,27 @@ export const LyricsView: React.FC<LyricsViewProps> = ({ song }) => {
     );
   }
 
+  const isSynced = syncedLines.length > 0;
+  const verticalPadding = Math.round(containerHeight * 0.44);
+
   return (
-    <View style={styles.container}>
+    <View
+      style={styles.container}
+      onLayout={(e) => {
+        const h = e.nativeEvent.layout.height;
+        if (h > 100) setContainerHeight(h);
+      }}
+    >
+      {/* Sleek Minimal Header */}
       <View style={styles.header}>
         <View style={styles.headerCopy}>
           <AuraKicker>كلمات الأغنية</AuraKicker>
-          <AuraText role="label" lines={1}>
+          <AuraText role="label" lines={1} color={Color.text_primary}>
             {song.title}
           </AuraText>
         </View>
 
-        {syncedLines.length > 0 && (
+        {isSynced ? (
           <View style={styles.nudgeRow}>
             <AuraBadge label="متزامنة ✓" tone="live" />
             <AuraTouch
@@ -253,11 +279,13 @@ export const LyricsView: React.FC<LyricsViewProps> = ({ song }) => {
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               style={styles.nudgeBtn}
             >
-              <Minus size={14} color={Color.text_secondary} />
+              <Minus size={13} color={Color.text_secondary} />
             </AuraTouch>
             <AuraTouch feedback="selection" onPress={() => setLyricOffset(0)}>
               <AuraText role="numeric" style={styles.offsetLabel}>
-                {lyricOffset === 0 ? "توقيت" : `${lyricOffset > 0 ? "+" : ""}${(lyricOffset / 1000).toFixed(0)}s`}
+                {lyricOffset === 0
+                  ? "توقيت"
+                  : `${lyricOffset > 0 ? "+" : ""}${(lyricOffset / 1000).toFixed(0)}s`}
               </AuraText>
             </AuraTouch>
             <AuraTouch
@@ -267,67 +295,121 @@ export const LyricsView: React.FC<LyricsViewProps> = ({ song }) => {
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               style={styles.nudgeBtn}
             >
-              <Plus size={14} color={Color.text_secondary} />
+              <Plus size={13} color={Color.text_secondary} />
             </AuraTouch>
           </View>
+        ) : (
+          <AuraBadge label="كلمات غير موقوتة" tone="quiet" />
         )}
       </View>
 
-      <ScrollView
-        ref={scrollViewRef}
-        style={styles.scrollArea}
-        contentContainerStyle={styles.contentContainer}
-        showsVerticalScrollIndicator={false}
-        onTouchStart={pauseAutoScroll}
-        onScrollBeginDrag={pauseAutoScroll}
-      >
-        {syncedLines.length > 0 ? (
-          syncedLines.map((line, idx) => {
-            const isActive = idx === activeIndex;
-            const isPassed = idx < activeIndex;
-            return (
-              <AuraTouch
-                key={`${idx}-${line.timeMs}`}
-                feedback="selection"
-                pressedScale={1}
-                onPress={() => seekTo(line.timeMs / 1000)}
-                style={[styles.lineRow, isActive && styles.lineRowActive]}
-              >
-                <View style={styles.stampWrap}>
-                  {isActive ? (
-                    <View style={styles.activeFilament} />
-                  ) : (
-                    <AuraText role="numeric" style={styles.stamp}>
-                      {stampOf(line.timeMs)}
-                    </AuraText>
-                  )}
-                </View>
-                <AuraText
-                  role="label"
-                  style={[
-                    styles.lineText,
-                    isActive && styles.lineTextActive,
-                    isPassed && styles.lineTextPassed,
-                  ]}
+      {/* Viewport with Top and Bottom Gradient Vignettes */}
+      <View style={styles.viewport}>
+        {/* Top Vignette Blur Mask */}
+        <LinearGradient
+          colors={[
+            "rgba(10, 9, 8, 0.98)",
+            "rgba(10, 9, 8, 0.85)",
+            "rgba(10, 9, 8, 0.35)",
+            "transparent",
+          ]}
+          locations={[0, 0.35, 0.7, 1]}
+          pointerEvents="none"
+          style={styles.topVignette}
+        />
+
+        {/* Bottom Vignette Blur Mask */}
+        <LinearGradient
+          colors={[
+            "transparent",
+            "rgba(10, 9, 8, 0.35)",
+            "rgba(10, 9, 8, 0.85)",
+            "rgba(10, 9, 8, 0.98)",
+          ]}
+          locations={[0, 0.3, 0.65, 1]}
+          pointerEvents="none"
+          style={styles.bottomVignette}
+        />
+
+        <ScrollView
+          ref={scrollViewRef}
+          style={styles.scrollArea}
+          contentContainerStyle={[
+            styles.contentContainer,
+            {
+              paddingTop: verticalPadding,
+              paddingBottom: verticalPadding,
+            },
+          ]}
+          showsVerticalScrollIndicator={false}
+          onTouchStart={pauseAutoScroll}
+          onScrollBeginDrag={pauseAutoScroll}
+        >
+          {isSynced ? (
+            syncedLines.map((line, idx) => {
+              const isActive = idx === activeIndex;
+              const dist = activeIndex === -1 ? 0 : Math.abs(idx - activeIndex);
+
+              // Apple Music style graduated opacity & typography hierarchy
+              let textStyle = styles.lineTextDistance3;
+              let webBlur = "blur(5px)";
+
+              if (isActive) {
+                textStyle = styles.lineTextActive;
+                webBlur = "blur(0px)";
+              } else if (dist === 1) {
+                textStyle = styles.lineTextDistance1;
+                webBlur = "blur(1.5px)";
+              } else if (dist === 2) {
+                textStyle = styles.lineTextDistance2;
+                webBlur = "blur(3.5px)";
+              }
+
+              return (
+                <AuraTouch
+                  key={`${idx}-${line.timeMs}`}
+                  feedback="selection"
+                  pressedScale={1.02}
+                  onPress={() => handleLinePress(line.timeMs)}
+                  onLayout={(e) => handleLineLayout(idx, e)}
+                  style={[styles.lineContainer, isActive && styles.lineContainerActive]}
                 >
-                  {line.text}
-                </AuraText>
-                {isActive && (
-                  <LineProgress
-                    key={line.timeMs}
-                    durationMs={Math.max(800, Math.min(12000, (syncedLines[idx + 1]?.timeMs ?? line.timeMs + 4000) - line.timeMs))}
-                    playing={isPlaying}
-                  />
-                )}
-              </AuraTouch>
-            );
-          })
-        ) : (
-          <AuraText role="body" style={styles.plainText} align="center">
-            {plainLyrics}
-          </AuraText>
-        )}
-      </ScrollView>
+                  <AuraText
+                    role="body"
+                    align="center"
+                    style={[
+                      styles.lineBase,
+                      textStyle,
+                      Platform.OS === "web" ? ({ filter: webBlur } as any) : undefined,
+                    ]}
+                  >
+                    {line.text}
+                  </AuraText>
+                </AuraTouch>
+              );
+            })
+          ) : (
+            <View style={styles.plainContainer}>
+              {plainLyrics?.split("\n").map((chunk, i) => {
+                const trimmed = chunk.trim();
+                if (!trimmed) {
+                  return <View key={i} style={styles.plainSpacer} />;
+                }
+                return (
+                  <AuraText
+                    key={i}
+                    role="body"
+                    align="center"
+                    style={styles.plainLine}
+                  >
+                    {trimmed}
+                  </AuraText>
+                );
+              })}
+            </View>
+          )}
+        </ScrollView>
+      </View>
     </View>
   );
 };
@@ -354,9 +436,10 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: Space.s4,
-    paddingVertical: Space.s3,
+    paddingHorizontal: Space.s5,
+    paddingVertical: Space.s2,
     gap: Space.s3,
+    zIndex: 10,
   },
   headerCopy: {
     flex: 1,
@@ -369,8 +452,8 @@ const styles = StyleSheet.create({
     gap: Space.s2,
   },
   nudgeBtn: {
-    width: 30,
-    height: 30,
+    width: 28,
+    height: 28,
     borderRadius: Radius.pill,
     backgroundColor: Color.ink2,
     borderWidth: 1,
@@ -379,82 +462,96 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   offsetLabel: {
-    minWidth: 34,
+    minWidth: 32,
     textAlign: "center",
+    fontSize: 11,
     color: Color.gold300,
+  },
+  viewport: {
+    flex: 1,
+    width: "100%",
+    position: "relative",
+  },
+  topVignette: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 115,
+    zIndex: 5,
+  },
+  bottomVignette: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 140,
+    zIndex: 5,
   },
   scrollArea: {
     flex: 1,
     width: "100%",
   },
   contentContainer: {
-    paddingTop: Space.s5,
-    paddingBottom: 220,
     paddingHorizontal: Space.s4,
-  },
-  lineRow: {
-    flexDirection: "row",
     alignItems: "center",
-    gap: Space.s3,
-    minHeight: LINE_PITCH,
-    paddingStart: Space.s3,
-    paddingEnd: Space.s3,
-    borderRadius: Radius.md,
   },
-  lineRowActive: {
-    backgroundColor: Color.veil_goldTint,
-    borderWidth: 1,
-    borderColor: Color.veil_goldHairline,
-  },
-  stampWrap: {
-    width: 42,
+  lineContainer: {
+    width: "100%",
+    paddingVertical: Space.s3,
+    paddingHorizontal: Space.s2,
     alignItems: "center",
     justifyContent: "center",
   },
-  stamp: {
-    fontSize: 11,
-    color: Color.text_muted,
+  lineContainerActive: {
+    transform: [{ scale: 1.04 }],
   },
-  activeFilament: {
-    width: 16,
-    height: 2,
-    borderRadius: Radius.pill,
-    backgroundColor: Color.gold500,
-  },
-  lineText: {
-    flex: 1,
-    fontSize: 17,
-    lineHeight: 26,
-    color: "rgba(245, 240, 230, 0.42)",
+  lineBase: {
+    textAlign: "center",
   },
   lineTextActive: {
     fontFamily: "Almarai_700",
-    fontSize: 20,
-    lineHeight: 30,
-    color: Color.gold300,
-    textShadowColor: Color.veil_goldHairline,
+    fontSize: 25,
+    lineHeight: 38,
+    color: "#FFFFFF",
+    opacity: 1,
+    textShadowColor: "rgba(226, 177, 60, 0.45)",
     textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 14,
+    textShadowRadius: 18,
   },
-  lineProgressTrack: {
-    position: "absolute",
-    bottom: 0,
-    start: Space.s3,
-    end: Space.s3,
-    height: 2,
-    borderRadius: Radius.pill,
-    overflow: "hidden",
+  lineTextDistance1: {
+    fontFamily: "Almarai_700",
+    fontSize: 19,
+    lineHeight: 30,
+    color: "rgba(255, 255, 255, 0.55)",
+    opacity: 0.42,
   },
-  lineProgressFill: {
-    height: "100%",
-    borderRadius: Radius.pill,
-    backgroundColor: Color.gold500,
+  lineTextDistance2: {
+    fontSize: 17,
+    lineHeight: 28,
+    color: "rgba(255, 255, 255, 0.35)",
+    opacity: 0.2,
   },
-  lineTextPassed: {
-    color: "rgba(245, 240, 230, 0.62)",
+  lineTextDistance3: {
+    fontSize: 15,
+    lineHeight: 24,
+    color: "rgba(255, 255, 255, 0.15)",
+    opacity: 0.08,
   },
-  plainText: {
+  plainContainer: {
+    width: "100%",
+    paddingHorizontal: Space.s4,
+    paddingVertical: Space.s4,
+    alignItems: "center",
+  },
+  plainLine: {
+    fontSize: 18,
     lineHeight: 32,
-    color: Color.text_primary,
+    color: "rgba(255, 255, 255, 0.8)",
+    paddingVertical: Space.s1,
+    textAlign: "center",
+  },
+  plainSpacer: {
+    height: Space.s4,
   },
 });

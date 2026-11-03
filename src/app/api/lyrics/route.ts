@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getLyricsYoutube, getSyncedLyricsYoutube } from "@apis/youtubei.js";
 import { query } from "@apis/neon";
+import { ARABIC_TO_LATIN_MAP, BILINGUAL_ARTIST_MAP } from "@/services/music/artistMatcher";
+import { latinizeTitle } from "@/utils/latinize";
 
 export const dynamic = "force-dynamic";
 
@@ -802,6 +804,54 @@ export async function GET(req: NextRequest) {
         if (best?.plainLyrics && usable(best.plainLyrics)) {
           return await succeed({ lyrics: best.plainLyrics, syncedLyrics: null, source: "lrclib" });
         }
+      }
+
+      // 3b. LRCLIB bilingual / Latin fallback search (crucial for Arabic songs indexed under Latin/Franco titles)
+      const latinArtist = (artistName && (ARABIC_TO_LATIN_MAP[artistName.trim()] || BILINGUAL_ARTIST_MAP[artistName.toLowerCase().trim()])) || "";
+      const latinTrack = cleanTrack ? latinizeTitle(cleanTrack) : "";
+      const altQueries: string[] = [];
+      if (latinArtist && cleanTrack) altQueries.push(`${latinArtist} ${cleanTrack}`);
+      if (latinArtist && latinTrack && latinTrack.toLowerCase() !== cleanTrack.toLowerCase()) {
+        altQueries.push(`${latinArtist} ${latinTrack}`);
+      }
+      if (latinTrack && latinTrack.toLowerCase() !== cleanTrack.toLowerCase()) {
+        altQueries.push(`${artistName || ""} ${latinTrack}`);
+        altQueries.push(latinTrack);
+      }
+
+      // Try exact Latin get first (fast and skips search queue)
+      if (latinTrack && (latinArtist || artistName)) {
+        const candidateArtists = [latinArtist, artistName].filter(Boolean);
+        for (const cArtist of candidateArtists) {
+          try {
+            const latinGetRes = await fetch(
+              `https://lrclib.net/api/get?track_name=${encodeURIComponent(latinTrack)}&artist_name=${encodeURIComponent(cArtist)}`,
+              { headers: { "User-Agent": "AuraMusic/1.0.0 (https://github.com/A7medWageh)" }, signal: AbortSignal.timeout(3000) }
+            ).catch(() => null);
+            if (latinGetRes?.ok) {
+              const data = await latinGetRes.json();
+              if (data?.syncedLyrics && usable(data.syncedLyrics)) {
+                return await succeed({ lyrics: data.plainLyrics || null, syncedLyrics: data.syncedLyrics, source: "lrclib" });
+              }
+            }
+          } catch {}
+        }
+      }
+
+      for (const altQ of altQueries) {
+        try {
+          const altRes = await fetch(
+            `https://lrclib.net/api/search?q=${encodeURIComponent(altQ.trim())}`,
+            { headers: { "User-Agent": "AuraMusic/1.0.0 (https://github.com/A7medWageh)" }, signal: AbortSignal.timeout(3000) }
+          ).catch(() => null);
+          if (altRes?.ok) {
+            const altHits: LrclibHit[] = await altRes.json();
+            const altBest = pickLrclib(Array.isArray(altHits) ? altHits : [], durationSec, artistName);
+            if (altBest?.syncedLyrics && usable(altBest.syncedLyrics)) {
+              return await succeed({ lyrics: altBest.plainLyrics || null, syncedLyrics: altBest.syncedLyrics, source: "lrclib" });
+            }
+          }
+        } catch {}
       }
     }
 
