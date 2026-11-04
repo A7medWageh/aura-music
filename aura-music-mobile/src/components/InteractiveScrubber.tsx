@@ -71,7 +71,11 @@ export function InteractiveScrubber({
       const pageX = typeof native.pageX === "number" ? native.pageX : NaN;
       const pageLeft =
         typeof window !== "undefined" ? barLayoutRef.current.x + (window.scrollX || 0) : barLayoutRef.current.x;
-      const rawX = isFinite(pageX) ? pageX - pageLeft : native.locationX;
+      // locationX is relative to the touch area (its children are pointer-transparent), so it stays
+      // correct even when the player shifts, scrolls, or the async native measurement is stale.
+      const localX =
+        typeof native.locationX === "number" && isFinite(native.locationX) ? native.locationX : NaN;
+      const rawX = isFinite(localX) ? localX : isFinite(pageX) ? pageX - pageLeft : 0;
       const clampedX = Math.max(0, Math.min(width, isFinite(rawX) ? rawX : 0));
       // The track runs right-to-left (Arabic-first UI) while locationX is always measured from the
       // left edge, so the fraction is inverted.
@@ -121,6 +125,7 @@ export function InteractiveScrubber({
       onPanResponderTerminate: () => {
         setIsDragging(false);
       },
+      onPanResponderTerminationRequest: () => false,
     })
   ).current;
 
@@ -142,7 +147,7 @@ export function InteractiveScrubber({
         {...panResponder.panHandlers}
       >
         {/* Track Background */}
-        <View style={styles.track}>
+        <View style={styles.track} pointerEvents="none">
           {/* Progress Fill */}
           <View style={[styles.fill, { width: `${progressPercent}%` }]}>
             <LinearGradient
@@ -157,6 +162,7 @@ export function InteractiveScrubber({
         {/* Thumb Handle: anchored to the fill's starting edge. Native mirrors `start` under RTL
             while web always reads it as left, so web names the right edge directly. */}
         <View
+          pointerEvents="none"
           style={[
             styles.thumb,
             Platform.OS === "web"

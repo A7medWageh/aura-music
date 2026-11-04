@@ -25,6 +25,7 @@ export function VolumeSlider({
   const wrapRef = useRef<any>(null);
   const boxRef = useRef({ left: 0, width: 0 });
   const [dragging, setDragging] = useState(false);
+  const [dragValue, setDragValue] = useState(0);
 
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
@@ -63,7 +64,11 @@ export function VolumeSlider({
     const pageX = typeof native.pageX === "number" ? native.pageX : NaN;
     const pageLeft =
       typeof window !== "undefined" ? boxRef.current.left + (window.scrollX || 0) : boxRef.current.left;
-    const rawX = isFinite(pageX) ? pageX - pageLeft : native.locationX;
+    // Children are pointer-transparent, so locationX is measured against this slider itself and
+    // stays correct even when the async native measurement has not landed yet.
+    const localX =
+      typeof native.locationX === "number" && isFinite(native.locationX) ? native.locationX : NaN;
+    const rawX = isFinite(localX) ? localX : isFinite(pageX) ? pageX - pageLeft : 0;
     const x = Math.max(0, Math.min(width, isFinite(rawX) ? rawX : 0));
     // The slider runs right-to-left like the rest of the Arabic UI.
     return 1 - x / width;
@@ -77,22 +82,30 @@ export function VolumeSlider({
         if (disabledRef.current) return;
         measure();
         setDragging(true);
-        onChangeRef.current(valueFromEvent(evt));
+        const next = valueFromEvent(evt);
+        setDragValue(next);
+        onChangeRef.current(next);
       },
       onPanResponderMove: (evt) => {
         if (disabledRef.current) return;
-        onChangeRef.current(valueFromEvent(evt));
+        const next = valueFromEvent(evt);
+        setDragValue(next);
+        onChangeRef.current(next);
       },
       onPanResponderRelease: (evt) => {
         if (disabledRef.current) return;
+        const next = valueFromEvent(evt);
+        setDragValue(next);
         setDragging(false);
-        onChangeRef.current(valueFromEvent(evt));
+        onChangeRef.current(next);
       },
       onPanResponderTerminate: () => setDragging(false),
+      onPanResponderTerminationRequest: () => false,
     }),
   ).current;
 
-  const pct = Math.round(Math.max(0, Math.min(1, value)) * 100);
+  const displayValue = dragging ? dragValue : value;
+  const pct = Math.round(Math.max(0, Math.min(1, displayValue)) * 100);
 
   return (
     <View
@@ -101,10 +114,11 @@ export function VolumeSlider({
       onLayout={handleLayout}
       {...panResponder.panHandlers}
     >
-      <View style={styles.track}>
+      <View style={styles.track} pointerEvents="none">
         <View style={[styles.fill, { width: `${pct}%`, backgroundColor: accent }]} />
       </View>
       <View
+        pointerEvents="none"
         style={[
           styles.thumb,
           {

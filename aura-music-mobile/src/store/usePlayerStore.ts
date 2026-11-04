@@ -68,6 +68,13 @@ interface PlayerState {
 let isServiceSubscribed = false;
 let sleepTimerHandle: ReturnType<typeof setInterval> | null = null;
 
+// Streaming seeks take a moment to land; until the audio clock catches up it keeps reporting the
+// pre-seek position, which would yank the scrubber back. Hold the requested target in the UI.
+let seekHoldTargetSec = -1;
+let seekHoldUntil = 0;
+const SEEK_HOLD_MS = 4000;
+const SEEK_TOLERANCE_SEC = 1.25;
+
 export const usePlayerStore = create<PlayerState>((set, get) => ({
   currentSong: null,
   queue: [],
@@ -107,9 +114,18 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
           ? status.durationMillis / 1000
           : (currentSong?.duration || 0);
 
+        let displayPos = posSec;
+        if (seekHoldTargetSec >= 0) {
+          if (Math.abs(posSec - seekHoldTargetSec) <= SEEK_TOLERANCE_SEC || Date.now() > seekHoldUntil) {
+            seekHoldTargetSec = -1;
+          } else {
+            displayPos = seekHoldTargetSec;
+          }
+        }
+
         set({
           isPlaying: Boolean(status.isPlaying),
-          position: Math.max(0, posSec),
+          position: Math.max(0, displayPos),
           duration: Math.max(0, durSec),
           isBuffering: Boolean(status.isBuffering),
           error: status.error || null,
@@ -169,6 +185,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   playSong: async (song: Song, newQueue?: Song[], index?: number) => {
+    seekHoldTargetSec = -1;
+    seekHoldUntil = 0;
     let queue = newQueue ? [...newQueue] : get().queue;
     let queueIndex = typeof index === "number" ? index : queue.findIndex((s) => s.id === song.id);
 
@@ -225,6 +243,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
   seekTo: async (seconds: number) => {
     if (isNaN(seconds) || !isFinite(seconds) || seconds < 0) return;
+    seekHoldTargetSec = seconds;
+    seekHoldUntil = Date.now() + SEEK_HOLD_MS;
     set({ position: seconds });
     await audioService.seekTo(seconds * 1000);
   },
@@ -238,6 +258,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   closePlayer: async () => {
+    seekHoldTargetSec = -1;
+    seekHoldUntil = 0;
     const { repeatMode, shuffle } = get();
     await audioService.stop();
     set({
