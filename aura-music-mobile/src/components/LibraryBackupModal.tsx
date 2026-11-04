@@ -135,8 +135,13 @@ export const LibraryBackupModal: React.FC<LibraryBackupModalProps> = ({
           <input
             ref={fileInputRef as any}
             type="file"
-            accept=".aurapack,application/octet-stream"
-            style={{ display: "none" }}
+            style={{
+              position: "absolute",
+              width: 1,
+              height: 1,
+              opacity: 0,
+              pointerEvents: "none",
+            }}
             onChange={handleFileChange as any}
           />
         )}
