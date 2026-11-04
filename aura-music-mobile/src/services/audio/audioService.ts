@@ -524,6 +524,11 @@ class AudioService {
       }
       player.play();
 
+      const songDurationSec =
+        song.duration && isFinite(song.duration) && song.duration > 0
+          ? Math.round(song.duration)
+          : undefined;
+
       try {
         player.setActiveForLockScreen(
           true,
@@ -532,15 +537,16 @@ class AudioService {
             artist: song.artist,
             albumTitle: song.albumName || "Aura Music",
             artworkUrl: song.thumbnailUrl ?? undefined,
-          },
+            duration: songDurationSec,
+          } as any,
           {
             isLiveStream: false,
             showSeekForward: true,
             showSeekBackward: true,
             showNextTrack: true,
             showPreviousTrack: true,
-            seekForwardIntervalSeconds: 10,
-            seekBackwardIntervalSeconds: 10,
+            seekForwardIntervalSeconds: 15,
+            seekBackwardIntervalSeconds: 15,
           }
         );
       } catch (err) {
@@ -593,10 +599,27 @@ class AudioService {
       return;
     }
 
+    const resolvedDur = status.duration && isFinite(status.duration) && status.duration > 0
+      ? status.duration * 1000
+      : (this.currentSong?.duration || 0) * 1000;
+
+    // Refresh lock-screen duration if initial load reported 0
+    if (Platform.OS !== "web" && this.sound && this.currentSong && resolvedDur > 0 && !this.lastKnownDuration) {
+      try {
+        this.sound.updateLockScreenMetadata({
+          title: this.currentSong.title,
+          artist: this.currentSong.artist,
+          albumTitle: this.currentSong.albumName || "Aura Music",
+          artworkUrl: this.currentSong.thumbnailUrl ?? undefined,
+          duration: Math.round(resolvedDur / 1000),
+        } as any);
+      } catch {}
+    }
+
     this.notify({
       isPlaying: status.playing,
       positionMillis: status.currentTime * 1000,
-      durationMillis: status.duration * 1000 || (this.currentSong?.duration || 0) * 1000,
+      durationMillis: resolvedDur,
       isBuffering: status.isBuffering,
       didJustFinish: status.didJustFinish,
     });

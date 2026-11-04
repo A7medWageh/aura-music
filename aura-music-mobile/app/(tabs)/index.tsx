@@ -24,6 +24,7 @@ import {
   CheckCircle2,
   DownloadCloud,
 } from "lucide-react-native";
+import { getSafeTopInset } from "@/utils/safeArea";
 import { Color, Gradient, Radius, Size, Space } from "@/theme";
 import {
   AuraArtwork,
@@ -107,7 +108,7 @@ export default function HomeScreen() {
   const setPremiumModalVisible = useAuthStore((s) => s.setPremiumModalVisible);
 
   const insets = useSafeAreaInsets();
-  const topInset = Math.max(insets.top, 16);
+  const topInset = getSafeTopInset(insets.top);
   const scrollRef = useRef<any>(null);
   const downloadSong = useDownloadStore((s) => s.downloadSong);
   const downloadProgressMap = useDownloadStore((s) => s.progressMap);

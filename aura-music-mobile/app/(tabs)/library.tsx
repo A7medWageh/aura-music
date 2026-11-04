@@ -25,6 +25,7 @@ import {
   Heart,
 } from "lucide-react-native";
 
+import { getSafeTopInset } from "@/utils/safeArea";
 import { Color, Gradient, Radius, Space, Type } from "@/theme";
 import { Song } from "@/types/music";
 import { useLibraryStore } from "@/store/useLibraryStore";
@@ -88,7 +89,7 @@ export default function LibraryScreen() {
   const playSong = usePlayerStore((s) => s.playSong);
 
   const insets = useSafeAreaInsets();
-  const topInset = Math.max(insets.top, 16);
+  const topInset = getSafeTopInset(insets.top);
 
   const [openArtist, setOpenArtist] = useState<string | null>(null);
   const [openAlbum, setOpenAlbum] = useState<string | null>(null);

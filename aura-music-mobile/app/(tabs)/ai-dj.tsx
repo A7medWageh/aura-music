@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { Sparkles, Play, Coffee, Flame, CloudRain, Dumbbell, Car, Shuffle } from "lucide-react-native";
 
+import { getSafeTopInset } from "@/utils/safeArea";
 import { Color, Gradient, Radius, Space } from "@/theme";
 import { Song } from "@/types/music";
 import { usePlayerStore } from "@/store/usePlayerStore";
@@ -45,7 +46,7 @@ export default function AiDjScreen() {
   const [mix, setMix] = useState<{ label: string; tracks: Song[] } | null>(null);
 
   const insets = useSafeAreaInsets();
-  const topInset = Math.max(insets.top, 16);
+  const topInset = getSafeTopInset(insets.top);
   const dockClearance = useDockClearance();
 
   const startMix = async (mood: Mood) => {

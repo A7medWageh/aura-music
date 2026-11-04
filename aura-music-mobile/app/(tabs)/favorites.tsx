@@ -1,5 +1,7 @@
 import React from "react";
 import { View, StyleSheet, ScrollView, Alert } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { getSafeTopInset } from "@/utils/safeArea";
 import { LinearGradient } from "expo-linear-gradient";
 import { Heart, Play, Music2, Trash2 } from "lucide-react-native";
 
@@ -31,6 +33,8 @@ export default function FavoritesScreen() {
   const isPlaying = usePlayerStore((s) => s.isPlaying);
 
   const dockClearance = useDockClearance();
+  const insets = useSafeAreaInsets();
+  const topInset = getSafeTopInset(insets.top);
 
   const handlePlayAll = () => {
     if (favorites.length === 0) return;
@@ -50,7 +54,7 @@ export default function FavoritesScreen() {
 
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={[styles.content, { paddingBottom: dockClearance + Space.s5 }]}
+        contentContainerStyle={[styles.content, { paddingTop: topInset + Space.s2, paddingBottom: dockClearance + Space.s5 }]}
         showsVerticalScrollIndicator={false}
       >
         {/* ── COVER ── */}

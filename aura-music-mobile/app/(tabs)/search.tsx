@@ -13,6 +13,7 @@ import {
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Music, User, Disc, Flame, Radio, Heart, Coffee, Sparkles, X } from "lucide-react-native";
+import { getSafeTopInset } from "@/utils/safeArea";
 import { Color, Radius, Size, Space } from "@/theme";
 import {
   AuraArtwork,
@@ -64,7 +65,7 @@ export default function SearchScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ q?: string }>();
   const insets = useSafeAreaInsets();
-  const topInset = Math.max(insets.top, 16);
+  const topInset = getSafeTopInset(insets.top);
 
   const [query, setQuery] = useState(
     typeof params.q === "string" ? params.q : "",

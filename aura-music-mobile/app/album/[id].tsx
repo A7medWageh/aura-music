@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { View, StyleSheet, ScrollView, ActivityIndicator, Dimensions } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { getSafeTopInset } from "@/utils/safeArea";
 import { LinearGradient } from "expo-linear-gradient";
 import { ChevronRight, Play, Shuffle, DownloadCloud } from "lucide-react-native";
 
@@ -37,6 +38,7 @@ const absFill = StyleSheet.absoluteFill as any;
 export default function AlbumDetailScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const topInset = getSafeTopInset(insets.top);
   const dockClearance = useDockClearance();
   const { id, title, artist, coverUrl } = useLocalSearchParams<{
     id: string;
@@ -132,7 +134,7 @@ export default function AlbumDetailScreen() {
         style={styles.scroll}
         contentContainerStyle={[
           styles.content,
-          { paddingTop: insets.top + Space.s2, paddingBottom: dockClearance + Space.s5 },
+          { paddingTop: topInset + Space.s2, paddingBottom: dockClearance + Space.s5 },
         ]}
         showsVerticalScrollIndicator={false}
       >

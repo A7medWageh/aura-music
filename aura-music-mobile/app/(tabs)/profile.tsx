@@ -23,6 +23,7 @@ import {
   UserCheck,
 } from "lucide-react-native";
 
+import { getSafeTopInset } from "@/utils/safeArea";
 import { Color, Gradient, Radius, Space } from "@/theme";
 import { useLibraryStore } from "@/store/useLibraryStore";
 import { usePlayerStore } from "@/store/usePlayerStore";
@@ -57,7 +58,7 @@ const absFill = StyleSheet.absoluteFill as any;
 export default function ProfileScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const topInset = Math.max(insets.top, 16);
+  const topInset = getSafeTopInset(insets.top);
   const [user, setUser] = React.useState<any>(null);
   const downloadedSongs = useLibraryStore((s) => s.downloadedSongs);
   const favorites = useLibraryStore((s) => s.favorites);

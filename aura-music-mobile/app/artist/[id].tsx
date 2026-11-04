@@ -14,6 +14,7 @@ import {
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { getSafeTopInset } from "@/utils/safeArea";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   BadgeCheck,
@@ -95,6 +96,7 @@ const formatViews = (views?: number) => {
 export default function ArtistDetailScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const topInset = getSafeTopInset(insets.top);
   const dockClearance = useDockClearance();
   const { width: screenWidth } = useWindowDimensions();
   const { id, name, imageUrl } = useLocalSearchParams<{
@@ -508,7 +510,7 @@ export default function ArtistDetailScreen() {
         <AuraCanvas intensity="ember" />
 
         {/* Back navigation button while loading */}
-        <View style={[styles.loadingBackWrap, { top: insets.top + Space.s2, right: Space.s4 }]}>
+        <View style={[styles.loadingBackWrap, { top: topInset + Space.s2, right: Space.s4 }]}>
           <AuraTouch
             feedback="selection"
             pressedScale={0.9}
@@ -572,7 +574,7 @@ export default function ArtistDetailScreen() {
             pressedScale={0.9}
             onPress={handleShare}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            style={[styles.heroIconBtn, { top: insets.top + Space.s2, left: Space.s4 }]}
+            style={[styles.heroIconBtn, { top: topInset + Space.s2, left: Space.s4 }]}
           >
             <Share2 size={18} color={Color.text_primary} />
           </AuraTouch>
@@ -582,7 +584,7 @@ export default function ArtistDetailScreen() {
             pressedScale={0.9}
             onPress={() => router.back()}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            style={[styles.heroIconBtn, { top: insets.top + Space.s2, right: Space.s4 }]}
+            style={[styles.heroIconBtn, { top: topInset + Space.s2, right: Space.s4 }]}
           >
             <ChevronRight size={20} color={Color.text_primary} />
           </AuraTouch>
@@ -973,7 +975,7 @@ export default function ArtistDetailScreen() {
       {/* ── STICKY BAR ── */}
       <Animated.View
         pointerEvents={barOn ? "auto" : "none"}
-        style={[styles.topBar, { paddingTop: insets.top, height: insets.top + 54 }, barStyle]}
+        style={[styles.topBar, { paddingTop: topInset, height: topInset + 54 }, barStyle]}
       >
         <View style={styles.topBarInner}>
           <AuraTouch

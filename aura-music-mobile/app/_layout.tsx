@@ -4,7 +4,7 @@ import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import * as Font from "expo-font";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { SafeAreaProvider } from "react-native-safe-area-context";
+import { SafeAreaProvider, initialWindowMetrics } from "react-native-safe-area-context";
 import { Color, FontFiles } from "@/theme";
 import { usePlayerStore } from "@/store/usePlayerStore";
 import { useLibraryStore } from "@/store/useLibraryStore";
@@ -75,7 +75,7 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={styles.root}>
-      <SafeAreaProvider initialMetrics={initialMetrics}>
+      <SafeAreaProvider initialMetrics={initialWindowMetrics ?? initialMetrics}>
         <StatusBar style="light" />
         <View style={styles.container}>
           <Stack
