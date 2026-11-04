@@ -120,6 +120,11 @@ export const FullPlayerModal: React.FC = () => {
   const soundPreset = usePlayerStore((s) => s.soundPreset);
   const soundBoost = usePlayerStore((s) => s.soundBoost);
   const is8dActive = usePlayerStore((s) => s.is8dActive);
+  const isAuraBypassed = usePlayerStore((s) => s.isAuraBypassed);
+  const auraProfile = usePlayerStore((s) => s.auraProfile);
+  const vocalClarity = usePlayerStore((s) => s.vocalClarity);
+  const bassDepth = usePlayerStore((s) => s.bassDepth);
+  const spatialWidth = usePlayerStore((s) => s.spatialWidth);
   const isAiMix = usePlayerStore((s) => s.isAiMix);
   const isHighQuality = usePlayerStore((s) => s.isHighQuality);
   const sleepTimerMinutes = usePlayerStore((s) => s.sleepTimerMinutes);
@@ -142,6 +147,11 @@ export const FullPlayerModal: React.FC = () => {
   const setSoundBoost = usePlayerStore((s) => s.setSoundBoost);
   const setIs8dActive = usePlayerStore((s) => s.setIs8dActive);
   const test8dSound = usePlayerStore((s) => s.test8dSound);
+  const toggleAuraBypass = usePlayerStore((s) => s.toggleAuraBypass);
+  const setAuraProfile = usePlayerStore((s) => s.setAuraProfile);
+  const setVocalClarity = usePlayerStore((s) => s.setVocalClarity);
+  const setBassDepth = usePlayerStore((s) => s.setBassDepth);
+  const setSpatialWidth = usePlayerStore((s) => s.setSpatialWidth);
   const setIsAiMix = usePlayerStore((s) => s.setIsAiMix);
   const setHighQuality = usePlayerStore((s) => s.setHighQuality);
   const setSleepTimer = usePlayerStore((s) => s.setSleepTimer);
@@ -753,6 +763,150 @@ export const FullPlayerModal: React.FC = () => {
               contentContainerStyle={styles.listPad}
               showsVerticalScrollIndicator={false}
             >
+              {/* AURA SOUND ENGINE — Master Status & A/B Bypass */}
+              <View style={styles.engineCard}>
+                <View style={styles.engineHead}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: Space.s2 }}>
+                    <Sparkles size={18} color={isAuraBypassed ? Color.text_muted : Color.gold500} />
+                    <View>
+                      <AuraText role="label" color={isAuraBypassed ? Color.text_muted : Color.gold300}>
+                        AURA SOUND ENGINE
+                      </AuraText>
+                      <AuraText role="tiny" color={Color.text_muted}>
+                        {isAuraBypassed ? "المعالجة متوقفة مؤقتًا" : "معالجة أصلية DSP (أولوية iPhone 12 Pro Max)"}
+                      </AuraText>
+                    </View>
+                  </View>
+                  <AuraTouch
+                    feedback="selection"
+                    onPress={toggleAuraBypass}
+                    style={[styles.toggleBtn, !isAuraBypassed && styles.toggleBtnActive]}
+                  >
+                    <AuraText role="tiny" color={!isAuraBypassed ? Color.ink0 : Color.text_muted}>
+                      {!isAuraBypassed ? "معالجة نشطة" : "الصوت الخام"}
+                    </AuraText>
+                  </AuraTouch>
+                </View>
+                <AuraText role="caption" color={Color.text_muted} style={{ marginTop: Space.s2 }}>
+                  مقارنة فورية (A/B) بين استوديو AURA الصوتي المحسن والصوت الخام الأصلي بضغطة واحدة.
+                </AuraText>
+              </View>
+
+              {/* Adaptive Audio Profiles */}
+              <View style={styles.presetHead}>
+                <View style={styles.boostTitle}>
+                  <Speaker size={16} color={Color.gold500} />
+                  <AuraText role="kicker">نمط المعايرة التكيفية (Adaptive Profile)</AuraText>
+                </View>
+                <AuraBadge
+                  label={
+                    auraProfile === "speaker"
+                      ? "iPhone 12 Pro Max"
+                      : auraProfile === "headphones"
+                      ? "سماعات الرأس"
+                      : "AirPods / بلوتوث"
+                  }
+                  tone="gold"
+                />
+              </View>
+              <View style={styles.speedRow}>
+                <AuraChip
+                  label="آيفون 12 Pro Max"
+                  active={auraProfile === "speaker"}
+                  onPress={() => setAuraProfile("speaker")}
+                  style={{ flex: 1 }}
+                />
+                <AuraChip
+                  label="سماعات رأس"
+                  active={auraProfile === "headphones"}
+                  onPress={() => setAuraProfile("headphones")}
+                  style={{ flex: 1 }}
+                />
+                <AuraChip
+                  label="AirPods / بلوتوث"
+                  active={auraProfile === "airpods"}
+                  onPress={() => setAuraProfile("airpods")}
+                  style={{ flex: 1 }}
+                />
+              </View>
+              <AuraText role="caption" color={Color.text_muted} style={{ marginTop: Space.s2, marginBottom: Space.s3 }}>
+                {auraProfile === "speaker"
+                  ? "معايرة مخصصة لسماعات آيفون 12 برو ماكس: عزل الترددات تحت 55Hz لمنع اهتزاز السماعات وإبراز نبرة صوت المطرب بنقاء استثنائي."
+                  : auraProfile === "headphones"
+                  ? "استجابة ترددية كاملة (20Hz - 20kHz) مع مسرح ستيريو واسع وتفاصيل خافتة فائقة الوضوح."
+                  : "موازنة ديناميكية لنقاء مخارج الحروف مع تحسين استهلاك الطاقة عبر البلوتوث."}
+              </AuraText>
+
+              <AuraHairline style={{ marginVertical: Space.s3 }} />
+
+              {/* Fine Tuning: Vocal Clarity, Bass Depth, Spatial Width */}
+              <View style={styles.presetHead}>
+                <View style={styles.boostTitle}>
+                  <Mic2 size={16} color={Color.gold500} />
+                  <AuraText role="kicker">تنقية وإبراز تفاصيل الصوت</AuraText>
+                </View>
+              </View>
+              <View style={styles.fineTuneCard}>
+                {/* Vocal Clarity */}
+                <View style={styles.fineTuneRow}>
+                  <View style={{ flex: 1 }}>
+                    <AuraText role="label" color={Color.text_primary}>إبراز صوت الفنان (Vocal Presence)</AuraText>
+                    <AuraText role="tiny" color={Color.text_muted}>عزل النبرة الغنائية في منتصف المسرح الصوتي (2.4kHz)</AuraText>
+                  </View>
+                  <View style={styles.stepperWrap}>
+                    <AuraTouch onPress={() => setVocalClarity(vocalClarity - 0.1)} style={styles.stepperBtn}>
+                      <AuraText role="label" color={Color.gold300}>-</AuraText>
+                    </AuraTouch>
+                    <AuraText role="label" color={Color.gold300} style={{ minWidth: 42, textAlign: "center" }}>
+                      {`${Math.round(vocalClarity * 100)}%`}
+                    </AuraText>
+                    <AuraTouch onPress={() => setVocalClarity(vocalClarity + 0.1)} style={styles.stepperBtn}>
+                      <AuraText role="label" color={Color.gold300}>+</AuraText>
+                    </AuraTouch>
+                  </View>
+                </View>
+
+                {/* Bass Depth */}
+                <View style={[styles.fineTuneRow, { marginTop: Space.s3 }]}>
+                  <View style={{ flex: 1 }}>
+                    <AuraText role="label" color={Color.text_primary}>عمق البيس وقوته (Dynamic Bass)</AuraText>
+                    <AuraText role="tiny" color={Color.text_muted}>نبضات هارمونية نقية (120Hz-160Hz) بدون أي طنين</AuraText>
+                  </View>
+                  <View style={styles.stepperWrap}>
+                    <AuraTouch onPress={() => setBassDepth(bassDepth - 0.1)} style={styles.stepperBtn}>
+                      <AuraText role="label" color={Color.gold300}>-</AuraText>
+                    </AuraTouch>
+                    <AuraText role="label" color={Color.gold300} style={{ minWidth: 42, textAlign: "center" }}>
+                      {`${Math.round(bassDepth * 100)}%`}
+                    </AuraText>
+                    <AuraTouch onPress={() => setBassDepth(bassDepth + 0.1)} style={styles.stepperBtn}>
+                      <AuraText role="label" color={Color.gold300}>+</AuraText>
+                    </AuraTouch>
+                  </View>
+                </View>
+
+                {/* Spatial Width */}
+                <View style={[styles.fineTuneRow, { marginTop: Space.s3 }]}>
+                  <View style={{ flex: 1 }}>
+                    <AuraText role="label" color={Color.text_primary}>اتساع المسرح (Stereo Stage)</AuraText>
+                    <AuraText role="tiny" color={Color.text_muted}>معالجة Mid/Side مع حماية البيس الأحادي في المنتصف</AuraText>
+                  </View>
+                  <View style={styles.stepperWrap}>
+                    <AuraTouch onPress={() => setSpatialWidth(spatialWidth - 0.1)} style={styles.stepperBtn}>
+                      <AuraText role="label" color={Color.gold300}>-</AuraText>
+                    </AuraTouch>
+                    <AuraText role="label" color={Color.gold300} style={{ minWidth: 42, textAlign: "center" }}>
+                      {`${Math.round(spatialWidth * 100)}%`}
+                    </AuraText>
+                    <AuraTouch onPress={() => setSpatialWidth(spatialWidth + 0.1)} style={styles.stepperBtn}>
+                      <AuraText role="label" color={Color.gold300}>+</AuraText>
+                    </AuraTouch>
+                  </View>
+                </View>
+              </View>
+
+              <AuraHairline style={{ marginVertical: Space.s3 }} />
+
               {/* 1. Super Loudness Booster */}
               <View style={styles.presetHead}>
                 <View style={styles.boostTitle}>
@@ -776,7 +930,7 @@ export const FullPlayerModal: React.FC = () => {
                 ))}
               </View>
               <AuraText role="caption" color={Color.text_muted} style={{ marginTop: Space.s2, marginBottom: Space.s4 }}>
-                مضاعفة مستوى الصوت حتى 200% مع محدّد احترافي يمنع التشويش وإجهاد السماعات.
+                مضاعفة قوة الصوت حتى 200% مع محدّد دقيق (True-Peak Limiter) وتشبع تناظري يمنعان أي تشويش أو فرقعة.
               </AuraText>
 
               <AuraHairline style={{ marginVertical: Space.s3 }} />
@@ -1207,5 +1361,51 @@ const styles = StyleSheet.create({
   presetIconActive: {
     backgroundColor: Color.gold500,
     borderColor: Color.gold500,
+  },
+  engineCard: {
+    backgroundColor: Color.veil_goldTint,
+    borderWidth: 1,
+    borderColor: Color.veil_goldHairline,
+    borderRadius: Radius.md,
+    padding: Space.s3,
+    marginBottom: Space.s2,
+  },
+  engineHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  fineTuneCard: {
+    backgroundColor: Color.ink1,
+    borderWidth: 1,
+    borderColor: Color.veil_hairline,
+    borderRadius: Radius.md,
+    padding: Space.s3,
+    marginBottom: Space.s2,
+  },
+  fineTuneRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: Space.s2,
+  },
+  stepperWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: Color.ink2,
+    borderWidth: 1,
+    borderColor: Color.veil_hairline,
+    borderRadius: Radius.pill,
+    paddingHorizontal: Space.s1,
+    paddingVertical: 2,
+    gap: Space.s1,
+  },
+  stepperBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: Radius.pill,
+    backgroundColor: Color.veil_goldTint,
+    alignItems: "center",
+    justifyContent: "center",
   },
 });

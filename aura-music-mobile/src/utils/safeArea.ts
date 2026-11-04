@@ -29,3 +29,4 @@ export function getSafeTopInset(insetsTop: number = 0): number {
   // Web desktop fallback
   return Math.max(insetsTop, 16);
 }
+

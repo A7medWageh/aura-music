@@ -7,6 +7,8 @@ import {
   type SoundPreset,
 } from "@/services/audio/soundPresets";
 import { savePlaybackSession, loadPlaybackSession } from "@/database/db";
+import { auraSoundEngine } from "@/services/audio/auraSoundEngine";
+import { type AuraAudioProfile } from "@/services/audio/auraSoundEngineTypes";
 
 const SOUND_PRESET_KEY = "aura-sound-preset";
 const SOUND_BOOST_KEY = "aura-sound-boost";
@@ -26,6 +28,11 @@ interface PlayerState {
   soundPreset: SoundPreset;
   soundBoost: number;
   is8dActive: boolean;
+  isAuraBypassed: boolean;
+  auraProfile: AuraAudioProfile;
+  vocalClarity: number;
+  bassDepth: number;
+  spatialWidth: number;
   isAiMix: boolean;
   isHighQuality: boolean;
   sleepTimerMinutes: number | null;
@@ -58,6 +65,11 @@ interface PlayerState {
   setSoundPreset: (preset: SoundPreset) => Promise<void>;
   setSoundBoost: (boost: number) => Promise<void>;
   setIs8dActive: (active: boolean) => Promise<void>;
+  toggleAuraBypass: () => void;
+  setAuraProfile: (profile: AuraAudioProfile) => void;
+  setVocalClarity: (val: number) => void;
+  setBassDepth: (val: number) => void;
+  setSpatialWidth: (val: number) => void;
   test8dSound: (onStep?: (msg: string) => void) => void;
   setIsAiMix: (active: boolean) => void;
   setHighQuality: (active: boolean) => void;
@@ -90,6 +102,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   soundPreset: "off",
   soundBoost: 1.0,
   is8dActive: false,
+  isAuraBypassed: false,
+  auraProfile: "speaker",
+  vocalClarity: 0.5,
+  bassDepth: 0.5,
+  spatialWidth: 1.0,
   isAiMix: false,
   isHighQuality: true,
   sleepTimerMinutes: null,
@@ -167,7 +184,19 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
     // 4. Restore the saved sound profile and arm the Web Audio engine
     try {
-      const saved = await AsyncStorage.getItem(SOUND_PRESET_KEY);
+      await auraSoundEngine.loadPersistedSettings();
+      const cfg = auraSoundEngine.getConfig();
+      set({
+        soundPreset: (cfg.presetId as SoundPreset) || "off",
+        soundBoost: cfg.soundBoost || 1.0,
+        isAuraBypassed: cfg.isBypassed,
+        auraProfile: cfg.profile,
+        vocalClarity: cfg.vocalClarity,
+        bassDepth: cfg.bassDepth,
+        spatialWidth: cfg.spatialWidth,
+        is8dActive: cfg.is8dActive,
+      });
+      const saved = cfg.presetId;
       if (isSoundPreset(saved)) {
         set({ soundPreset: saved });
         await audioService.setSoundPreset(saved);
@@ -370,7 +399,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   setSoundPreset: async (preset: SoundPreset) => {
-    set({ soundPreset: preset, is8dActive: preset === "spatial" });
+    set({ soundPreset: preset, is8dActive: preset === "spatial", isAuraBypassed: false });
+    auraSoundEngine.setPreset(preset);
     AsyncStorage.setItem(SOUND_PRESET_KEY, preset).catch(() => {});
     await audioService.setSoundPreset(preset);
   },
@@ -378,6 +408,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   setSoundBoost: async (boost: number) => {
     const clamped = Math.max(1, Math.min(2, boost));
     set({ soundBoost: clamped });
+    auraSoundEngine.setBoost(clamped);
     AsyncStorage.setItem(SOUND_BOOST_KEY, String(clamped)).catch(() => {});
     await audioService.setBoost(clamped);
   },
@@ -386,11 +417,42 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     set({ is8dActive: active });
     const targetPreset: SoundPreset = active ? "spatial" : "off";
     set({ soundPreset: targetPreset });
+    auraSoundEngine.set8DActive(active);
     await audioService.setSoundPreset(targetPreset);
   },
 
   test8dSound: (onStep?: (msg: string) => void) => {
     audioService.test8dSound(onStep);
+  },
+
+  toggleAuraBypass: () => {
+    const current = get().isAuraBypassed;
+    const next = !current;
+    set({ isAuraBypassed: next });
+    auraSoundEngine.setBypassed(next);
+  },
+
+  setAuraProfile: (profile: AuraAudioProfile) => {
+    set({ auraProfile: profile });
+    auraSoundEngine.setProfile(profile);
+  },
+
+  setVocalClarity: (val: number) => {
+    const clamped = Math.max(0, Math.min(1, val));
+    set({ vocalClarity: clamped });
+    auraSoundEngine.setVocalClarity(clamped);
+  },
+
+  setBassDepth: (val: number) => {
+    const clamped = Math.max(0, Math.min(1, val));
+    set({ bassDepth: clamped });
+    auraSoundEngine.setBassDepth(clamped);
+  },
+
+  setSpatialWidth: (val: number) => {
+    const clamped = Math.max(0, Math.min(2, val));
+    set({ spatialWidth: clamped });
+    auraSoundEngine.setSpatialWidth(clamped);
   },
 
   setIsAiMix: (active: boolean) => {

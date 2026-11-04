@@ -8,6 +8,7 @@ import {
 import { Song } from "@/types/music";
 import { MusicApi } from "@/services/api/musicApi";
 import { FileManager } from "@/services/storage/fileManager";
+import { auraSoundEngine } from "@/services/audio/auraSoundEngine";
 import { updateSongLastPlayed } from "@/database/db";
 import {
   SOUND_PRESET_CONFIG,
@@ -268,6 +269,7 @@ class AudioService {
    */
   public async setSoundPreset(preset: SoundPreset): Promise<void> {
     this.soundPreset = preset;
+    auraSoundEngine.setPreset(preset);
     if (Platform.OS !== "web") return;
     if (preset === "off" && this.boost === 1) {
       if (this.webGraph) this.applyPreset("off");
@@ -292,6 +294,7 @@ class AudioService {
    */
   public async setBoost(boost: number): Promise<void> {
     this.boost = Math.max(1, Math.min(2, boost));
+    auraSoundEngine.setBoost(this.boost);
     if (Platform.OS !== "web") return;
     if (!this.webGraph && this.soundPreset === "off" && this.boost === 1) return;
     if (!this.ensureWebGraph()) return;
@@ -518,6 +521,7 @@ class AudioService {
       );
       this.soundSubscription = player.addListener("playbackStatusUpdate", this.onPlaybackStatusUpdate);
       this.sound = player;
+      auraSoundEngine.attachPlayer(player);
 
       if (initialPositionMillis > 0) {
         await player.seekTo(initialPositionMillis / 1000);
@@ -825,6 +829,7 @@ class AudioService {
       }
       this.soundSubscription = null;
       this.sound = null;
+      auraSoundEngine.attachPlayer(null);
     }
   }
 
