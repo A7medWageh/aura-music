@@ -787,7 +787,7 @@ export const FullPlayerModal: React.FC = () => {
                   <View style={{ flexDirection: "row", alignItems: "center", gap: Space.s2 }}>
                     <Radio size={18} color={is8dActive ? Color.gold500 : Color.text_muted} />
                     <AuraText role="label" color={is8dActive ? Color.gold300 : Color.text_primary}>
-                      الصوت الفضائي المحيطي 8D (360° Spatial Audio)
+                      الصوت المحيطي 8D (360° Spatial Audio)
                     </AuraText>
                   </View>
                   <AuraTouch
@@ -796,12 +796,12 @@ export const FullPlayerModal: React.FC = () => {
                     style={[styles.toggleBtn, is8dActive && styles.toggleBtnActive]}
                   >
                     <AuraText role="tiny" color={is8dActive ? Color.ink0 : Color.text_muted}>
-                      {is8dActive ? "مفعل ✓" : "معطل"}
+                      {is8dActive ? "مفعّل" : "معطّل"}
                     </AuraText>
                   </AuraTouch>
                 </View>
                 <AuraText role="caption" color={Color.text_muted} style={{ marginVertical: Space.s2 }}>
-                  دوران الصوت 360° بتناغم كامل بين فردتي السماعة كل 5.5 ثوانٍ لتجربة استماع ساحرة.
+                  دوران الصوت 360° بين قناتي اليمين واليسار كل 5.5 ثوانٍ لتجربة استماع أوسع.
                 </AuraText>
                 <AuraTouch
                   feedback="impact"
@@ -811,7 +811,7 @@ export const FullPlayerModal: React.FC = () => {
                 >
                   <Headphones size={15} color={Color.gold300} />
                   <AuraText role="label" color={Color.gold300}>
-                    🎧 اختبار تقليب السماعات (سماعة يمين / شمال)
+                    اختبار تبديل القنوات (يمين / يسار)
                   </AuraText>
                 </AuraTouch>
                 {testMessage && (
@@ -827,9 +827,9 @@ export const FullPlayerModal: React.FC = () => {
 
               {/* 3. Studio Sound Profiles */}
               <View style={styles.presetHead}>
-                <AuraText role="kicker">بروفايلات الاستوديو (Studio EQ)</AuraText>
+                <AuraText role="kicker">إعدادات الصوت (Studio EQ)</AuraText>
                 <AuraText role="tiny" color={Color.gold300}>
-                  {SOUND_PRESETS.length} بروفايلات متطورة
+                  {SOUND_PRESETS.length} إعدادات صوتية
                 </AuraText>
               </View>
 
@@ -878,7 +878,7 @@ export const FullPlayerModal: React.FC = () => {
               <View style={styles.presetHead}>
                 <View style={styles.boostTitle}>
                   <Clock size={16} color={Color.gold500} />
-                  <AuraText role="kicker">مؤقت النوم الذكي (Sleep Timer)</AuraText>
+                  <AuraText role="kicker">مؤقت النوم (Sleep Timer)</AuraText>
                 </View>
                 {remainingTimer && (
                   <AuraBadge label={`متبقي ${remainingTimer}`} tone="gold" />
@@ -896,7 +896,7 @@ export const FullPlayerModal: React.FC = () => {
                 ))}
               </View>
               <AuraText role="caption" color={Color.text_muted} style={{ marginTop: Space.s2, marginBottom: Space.s4 }}>
-                يتوقف تشغيل الموسيقى تلقائياً بنعومة عند انقضاء الوقت المحدد.
+                يتوقف التشغيل تلقائياً عند انتهاء الوقت المحدد.
               </AuraText>
 
               <AuraHairline style={{ marginVertical: Space.s3 }} />
@@ -915,7 +915,7 @@ export const FullPlayerModal: React.FC = () => {
                 ))}
               </View>
               <AuraText role="caption" color={Color.text_muted} style={{ marginTop: Space.s2 }}>
-                تُطبَّق سرعة التشغيل على المقطع الصوتي فوراً دون التأثير على طبقة الصوت.
+                تُطبَّق سرعة التشغيل على الصوت فوراً دون تغيير درجة النغمة.
               </AuraText>
             </ScrollView>
           )}

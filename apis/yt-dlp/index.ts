@@ -49,7 +49,7 @@ export function streamAudioFromYouTube(videoId: string, fallbackQuery?: string) 
     : `https://www.youtube.com/watch?v=${videoId}`;
 
   const makeArgs = (targetUrl: string) => [
-    "-f", "ba[ext=m4a]/ba[ext=mp3]/bestaudio/ba/b",
+    "-f", "ba[ext=m4a]/ba[ext=mp3]/bestaudio[ext=mp4]/best",
     "-o", "-",
     "--no-warnings",
     "--no-playlist",
@@ -122,7 +122,13 @@ export function streamAudioFromYouTube(videoId: string, fallbackQuery?: string) 
 export async function resolveAudioStream(videoId: string): Promise<string> {
   const binary = getYtDlpBinary();
   const isWin = process.platform === "win32" && (binary.endsWith(".cmd") || binary.endsWith(".bat"));
-  const args = ["-f", "bestaudio/best/18/worst", "-g", "--no-warnings", `https://www.youtube.com/watch?v=${videoId}`];
+  // m4a/mp3 first: the ranged proxy hands this URL to iOS AVPlayer, which cannot
+  // decode the WebM/Opus track YouTube serves as its default "bestaudio".
+  const args = [
+    "-f", "ba[ext=m4a]/ba[ext=mp3]/bestaudio[ext=mp4]/best",
+    "-g", "--no-warnings", "--no-playlist",
+    `https://www.youtube.com/watch?v=${videoId}`,
+  ];
 
   return new Promise((resolve, reject) => {
     const proc = spawn(binary, args, { shell: isWin });
@@ -150,6 +156,43 @@ export async function resolveAudioStream(videoId: string): Promise<string> {
       resolve(urls[0]);
     });
   });
+}
+
+/**
+ * Direct googlevideo URLs answer HTTP 206 natively, so seeking and iOS/AVPlayer
+ * probes work. yt-dlp URL extraction is expensive (~3-5s), so the URL is cached
+ * until shortly before googlevideo's own expiry.
+ */
+const directUrlCache = new Map<string, { url: string; expiresAt: number }>();
+const DIRECT_URL_TTL = 20 * 60 * 1000;
+
+export async function resolveAudioDirectUrl(videoId: string, force = false): Promise<string> {
+  const hit = directUrlCache.get(videoId);
+  if (!force && hit && hit.expiresAt > Date.now()) return hit.url;
+  const url = await resolveAudioStream(videoId);
+  directUrlCache.set(videoId, { url, expiresAt: Date.now() + DIRECT_URL_TTL });
+  return url;
+}
+
+/** Proxy a byte range straight from googlevideo, preserving 206/Content-Range. */
+export async function proxyAudioRange(
+  videoId: string,
+  range: string | null,
+  signal?: AbortSignal
+): Promise<Response> {
+  const request = async (force: boolean) => {
+    const url = await resolveAudioDirectUrl(videoId, force);
+    return fetch(url, {
+      headers: range ? { Range: range } : {},
+      signal: signal || AbortSignal.timeout(30000),
+    });
+  };
+  let res = await request(false);
+  if (res.status === 403 || res.status === 410) {
+    directUrlCache.delete(videoId);
+    res = await request(true);
+  }
+  return res;
 }
 
 export type YouTubeSearchItem = {

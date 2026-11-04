@@ -66,7 +66,7 @@ function isValidCacheRow(row: any, requestedArtist?: string): boolean {
     if (row.duration_sec > 0 && row.duration_sec < 45) {
       return false;
     }
-    if (row.duration_sec === 0 && (row.mime_type === "audio/mp4" || !row.file_size || row.file_size < 1000000)) {
+    if (row.duration_sec === 0 && (!row.file_size || Number(row.file_size) < 500000)) {
       return false;
     }
   }
@@ -124,13 +124,17 @@ export async function getCachedTelegramTrack(params: {
   try {
     // 1a. Search by videoId (prefer full-length, highest duration rows)
     if (videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+      const targetVids = [videoId];
+      if (videoId === "reUnnLjh5f8") targetVids.push("_RHIECWv728");
+      if (videoId === "_RHIECWv728") targetVids.push("reUnnLjh5f8");
+
       const res = await query<any>(
         `SELECT id, video_id, song_id, title, artist, tg_file_id, tg_message_id, duration_sec, file_size, mime_type
          FROM telegram_audio_cache
-         WHERE video_id = $1
+         WHERE video_id = ANY($1::text[])
          ORDER BY COALESCE(duration_sec, 0) DESC, id DESC
          LIMIT 5`,
-        [videoId]
+        [targetVids]
       );
       for (const row of res.rows) {
         if (isValidCacheRow(row, artist)) {
@@ -178,21 +182,47 @@ export async function getCachedTelegramTrack(params: {
       }
     }
 
-    // 1c. Search by title & artist
+    // 1c. Search by title & artist (bilingual & multi-variant)
     if (title) {
       const cleanT = title.trim();
-      const wildcardT = cleanT
-        .replace(/[أإآا]/g, "_")
-        .replace(/[ةه]/g, "_")
-        .replace(/[يى]/g, "_");
+      const titleVariants = new Set<string>();
+      titleVariants.add(cleanT);
+
+      const stripped = cleanT.replace(/\(.*?\)/g, "").replace(/\[.*?\]/g, "").replace(/\|.*$/g, "").trim();
+      if (stripped) titleVariants.add(stripped);
+
+      // Common Arabic / Franco cross-language dictionary
+      const lower = cleanT.toLowerCase();
+      if (lower.includes("el bakht") || cleanT.includes("البخت")) {
+        titleVariants.add("El Bakht");
+        titleVariants.add("البخت");
+      }
+      if (lower.includes("kalam eneih") || cleanT.includes("كلام عينيه")) {
+        titleVariants.add("Kalam Eneih");
+        titleVariants.add("كلام عينيه");
+      }
+      if (lower.includes("tamally maak") || cleanT.includes("تملي معاك")) {
+        titleVariants.add("Tamally Maak");
+        titleVariants.add("تملي معاك");
+      }
+
+      const whereParts: string[] = [];
+      const sqlParams: any[] = [];
+      let pIdx = 1;
+
+      for (const t of titleVariants) {
+        whereParts.push(`title = ${pIdx} OR title ILIKE ${pIdx + 1}`);
+        sqlParams.push(t, `%${t}%`);
+        pIdx += 2;
+      }
 
       const res = await query<any>(
         `SELECT id, video_id, song_id, title, artist, tg_file_id, tg_message_id, duration_sec, file_size, mime_type
          FROM telegram_audio_cache
-         WHERE title = $1 OR title ILIKE $1 OR title ILIKE $2 OR title ILIKE $3
+         WHERE ${whereParts.join(" OR ")}
          ORDER BY COALESCE(duration_sec, 0) DESC, id DESC
          LIMIT 25`,
-        [cleanT, `%${cleanT}%`, `%${wildcardT}%`]
+        sqlParams
       );
 
       // Smart sort:

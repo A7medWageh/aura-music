@@ -55,6 +55,10 @@ class AudioService {
   // currentTime write. The first seek swaps in a local blob of the same audio.
   private blobSeek = { url: null as string | null, pending: null as number | null, busy: false };
 
+  // One automatic retry per song when the native player fails to load a stream
+  // (expired provider URL, tunnel hiccup) instead of leaving playback dead.
+  private nativeRetriedSongId: string | null = null;
+
   public subscribe(listener: PlaybackStatusListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -225,7 +229,7 @@ class AudioService {
     const panner = this.webGraph?.panner;
 
     if (!ctx || !panner) {
-      onStep?.("يرجى تشغيل أي أغنية أولاً لبدء اختبار تقليب السماعات 🎧");
+      onStep?.("شغّل أغنية أولاً لبدء اختبار القنوات");
       return;
     }
 
@@ -235,20 +239,20 @@ class AudioService {
       panner.pan.cancelScheduledValues(t);
       panner.pan.setValueAtTime(0, t);
       panner.pan.linearRampToValueAtTime(-0.95, t + 0.35);
-      onStep?.("🎧 جاري الاختبار: السماعة اليسرى فقط ◀️");
+      onStep?.("جارٍ الاختبار: القناة اليسرى فقط");
 
       setTimeout(() => {
         if (!this.webCtx || !this.webGraph?.panner) return;
         const now = this.webCtx.currentTime;
         this.webGraph.panner.pan.linearRampToValueAtTime(0.95, now + 0.5);
-        onStep?.("🎧 جاري الاختبار: السماعة اليمنى فقط ▶️");
+        onStep?.("جارٍ الاختبار: القناة اليمنى فقط");
       }, 1600);
 
       setTimeout(() => {
         if (!this.webCtx || !this.webGraph?.panner) return;
         const now = this.webCtx.currentTime;
         this.webGraph.panner.pan.linearRampToValueAtTime(0, now + 0.5);
-        onStep?.("✅ تم اكتمال الاختبار بنجاح - كلا السماعتين تعملان بتناغم!");
+        onStep?.("اكتمل الاختبار — القناتان تعملان بشكل سليم");
         if (this.soundPreset === "spatial") {
           setTimeout(() => this.startRotation(), 600);
         }
@@ -507,7 +511,9 @@ class AudioService {
           updateInterval: 250,
           downloadFirst: false,
           keepAudioSessionActive: true,
-          preferredForwardBufferDuration: 30,
+          // AVPlayer stalls the start while it fills this window; 5s starts
+          // playback immediately and still absorbs network jitter.
+          preferredForwardBufferDuration: 5,
         }
       );
       this.soundSubscription = player.addListener("playbackStatusUpdate", this.onPlaybackStatusUpdate);
@@ -561,6 +567,21 @@ class AudioService {
 
   private onPlaybackStatusUpdate = (status: AudioStatus) => {
     if (status.error) {
+      const failedSong = this.currentSong;
+      if (
+        Platform.OS !== "web" &&
+        failedSong &&
+        this.nativeRetriedSongId !== failedSong.id
+      ) {
+        this.nativeRetriedSongId = failedSong.id;
+        console.warn("[AudioService] load failed, retrying stream once:", status.error);
+        this.stop()
+          .catch(() => {})
+          .finally(() => {
+            this.playSong(failedSong, 0).catch(() => {});
+          });
+        return;
+      }
       this.notify({
         isPlaying: false,
         positionMillis: 0,

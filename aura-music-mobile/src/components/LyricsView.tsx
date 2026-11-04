@@ -26,8 +26,14 @@ interface LyricsViewProps {
 // 180ms perceptual vocal lead matches speech articulation and audio pipeline delay
 const VOCAL_LEAD_MS = 180;
 
+const nowMs = () =>
+  typeof performance !== "undefined" && typeof performance.now === "function"
+    ? performance.now()
+    : Date.now();
+
 export const LyricsView: React.FC<LyricsViewProps> = ({ song }) => {
   const position = usePlayerStore((s) => s.position);
+  const isPlaying = usePlayerStore((s) => s.isPlaying);
   const seekTo = usePlayerStore((s) => s.seekTo);
 
   const [loading, setLoading] = useState(true);
@@ -44,6 +50,17 @@ export const LyricsView: React.FC<LyricsViewProps> = ({ song }) => {
   const manualScrollUntilRef = useRef(0);
   const lineLayouts = useRef<{ [idx: number]: { y: number; height: number } }>({});
 
+  // The store only pushes a position ~4x/second (web timeupdate / native 250ms).
+  // Extrapolating from an anchor between pushes keeps karaoke line changes exact.
+  const clockRef = useRef({ baseMs: 0, anchor: nowMs() });
+  const syncedRef = useRef<SyncedLyricLine[]>(syncedLines);
+  syncedRef.current = syncedLines;
+  const offsetRef = useRef(lyricOffset);
+  offsetRef.current = lyricOffset;
+  const activeIndexRef = useRef(-1);
+  const containerHeightRef = useRef(containerHeight);
+  containerHeightRef.current = containerHeight;
+
   const pauseAutoScroll = useCallback(() => {
     manualScrollUntilRef.current = Date.now() + 4500;
   }, []);
@@ -56,39 +73,58 @@ export const LyricsView: React.FC<LyricsViewProps> = ({ song }) => {
     let isMounted = true;
     setLyricOffset(0);
     setActiveIndex(-1);
+    activeIndexRef.current = -1;
     lineLayouts.current = {};
 
     async function fetchLyrics() {
       setLoading(true);
       setSyncedLines([]);
       setPlainLyrics(null);
+      let plainShown = false;
 
-      // 1. Try persistent SQLite database cache
+      // 1. Persistent SQLite cache. A plain-only entry is shown immediately but
+      // still upgraded: older rows predate the timed-lyrics pipeline. Caption
+      // rows are refreshed too — older builds stored raw rolling-fragment ASR.
       const cached = await getCachedLyrics(song.id);
-      if (cached && (cached.syncedLyrics || cached.plainLyrics)) {
+      let upgradeCaptions = false;
+      if (cached?.syncedLyrics) {
         if (isMounted) {
           processLyrics(cached.syncedLyrics, cached.plainLyrics);
           setLoading(false);
-          return;
+          const src = (cached.source || "").toLowerCase();
+          upgradeCaptions = src.includes("timedtext") || src.includes("captions");
+          if (!upgradeCaptions) return;
         }
       }
+      if (cached?.plainLyrics && !cached?.syncedLyrics && isMounted) {
+        processLyrics(null, cached.plainLyrics);
+        setLoading(false);
+        plainShown = true;
+      }
 
-      // 2. Try Web IndexedDB offline storage
+      // 2. Web IndexedDB offline storage
       try {
         const offlineData = await getOfflineLyrics(song.id);
-        if (offlineData && (offlineData.syncedLyrics || offlineData.plainLyrics)) {
+        if (offlineData?.syncedLyrics) {
           if (isMounted) {
-            processLyrics(offlineData.syncedLyrics || null, offlineData.plainLyrics || null);
+            processLyrics(offlineData.syncedLyrics, offlineData.plainLyrics ?? null);
             setLoading(false);
             return;
           }
+        } else if (offlineData?.plainLyrics && !plainShown && isMounted) {
+          processLyrics(null, offlineData.plainLyrics);
+          setLoading(false);
+          plainShown = true;
         }
       } catch {}
 
       // 3. Fetch from backend API / direct LRCLIB
       const remote = await MusicApi.getLyrics(song);
       if (isMounted) {
-        processLyrics(remote.syncedLyrics, remote.plainLyrics);
+        const hasTimed = !!remote.syncedLyrics;
+        if (hasTimed || !plainShown) {
+          processLyrics(remote.syncedLyrics, remote.plainLyrics);
+        }
         setLoading(false);
         if (remote.syncedLyrics || remote.plainLyrics) {
           saveLyrics(remote).catch(() => {});
@@ -141,40 +177,73 @@ export const LyricsView: React.FC<LyricsViewProps> = ({ song }) => {
     };
   }, [song.id]);
 
-  // Track active synced lyric line with 180ms vocal lead offset
-  useEffect(() => {
-    if (syncedLines.length === 0) return;
-
-    const currentMs = position * 1000 + VOCAL_LEAD_MS - lyricOffset;
-    let idx = -1;
-
-    for (let i = 0; i < syncedLines.length; i++) {
-      if (currentMs >= syncedLines[i].timeMs) {
-        idx = i;
-      } else {
-        break;
-      }
+  const scrollToLine = useCallback((idx: number) => {
+    if (Date.now() <= manualScrollUntilRef.current) return;
+    const layout = lineLayouts.current[idx];
+    const height = containerHeightRef.current;
+    if (layout && height > 0) {
+      scrollViewRef.current?.scrollTo({
+        y: Math.max(0, layout.y - height / 2 + layout.height / 2),
+        animated: true,
+      });
     }
+  }, []);
 
-    if (idx !== activeIndex && idx !== -1) {
-      setActiveIndex(idx);
+  const applyClock = useCallback(
+    (ms: number) => {
+      const lines = syncedRef.current;
+      if (lines.length === 0) return;
 
-      // Dead-center scrolling: center of active line sits at the vertical middle of container
-      if (Date.now() > manualScrollUntilRef.current) {
-        const layout = lineLayouts.current[idx];
-        if (layout && containerHeight > 0) {
-          const targetY = Math.max(
-            0,
-            layout.y - containerHeight / 2 + layout.height / 2
-          );
-          scrollViewRef.current?.scrollTo({
-            y: targetY,
-            animated: true,
-          });
+      const currentMs = ms + VOCAL_LEAD_MS - offsetRef.current;
+      let idx = -1;
+      for (let i = 0; i < lines.length; i++) {
+        if (currentMs >= lines[i].timeMs) {
+          idx = i;
+        } else {
+          break;
         }
       }
-    }
-  }, [position, syncedLines, lyricOffset, containerHeight]);
+
+      if (idx !== activeIndexRef.current) {
+        activeIndexRef.current = idx;
+        if (idx === -1) {
+          setActiveIndex(-1);
+          return;
+        }
+        setActiveIndex(idx);
+        scrollToLine(idx);
+      }
+    },
+    [scrollToLine]
+  );
+
+  // Re-anchor on every store update; while paused this is the authoritative clock.
+  useEffect(() => {
+    clockRef.current = { baseMs: position * 1000, anchor: nowMs() };
+    if (!isPlaying) applyClock(position * 1000);
+  }, [position, isPlaying, applyClock]);
+
+  // While playing, advance the karaoke clock every frame and only re-render on
+  // an actual line change instead of 25 times per second.
+  useEffect(() => {
+    if (!isPlaying) return;
+    let raf = 0;
+    const loop = () => {
+      const { baseMs, anchor } = clockRef.current;
+      applyClock(baseMs + (nowMs() - anchor));
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [isPlaying, applyClock]);
+
+  useEffect(() => {
+    activeIndexRef.current = -1;
+    const { baseMs, anchor } = clockRef.current;
+    const ms = isPlaying ? baseMs + (nowMs() - anchor) : position * 1000;
+    applyClock(ms);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncedLines.length, lyricOffset]);
 
   function parseLrc(lrcText: string): SyncedLyricLine[] {
     const lines = lrcText.split("\n");
@@ -227,7 +296,7 @@ export const LyricsView: React.FC<LyricsViewProps> = ({ song }) => {
       <View style={styles.center}>
         <ActivityIndicator size="small" color={Color.gold500} />
         <AuraText role="caption" color={Color.text_secondary}>
-          جاري جلب كلمات الأغنية المتزامنة…
+          جارٍ جلب كلمات الأغنية…
         </AuraText>
       </View>
     );
@@ -242,7 +311,7 @@ export const LyricsView: React.FC<LyricsViewProps> = ({ song }) => {
             لا توجد كلمات مسجلة لهذا العمل حالياً
           </AuraText>
           <AuraText role="caption" align="center">
-            يقوم نظام أورا الذكي بالبحث التلقائي عن الكلمات فور تشغيل كل أغنية.
+            يبحث Aura Music تلقائياً عن كلمات كل أغنية فور تشغيلها.
           </AuraText>
         </AuraSurface>
       </View>
@@ -271,7 +340,7 @@ export const LyricsView: React.FC<LyricsViewProps> = ({ song }) => {
 
         {isSynced ? (
           <View style={styles.nudgeRow}>
-            <AuraBadge label="متزامنة ✓" tone="live" />
+            <AuraBadge label="كاريوكي ✓" tone="live" />
             <AuraTouch
               feedback="selection"
               pressedScale={0.9}

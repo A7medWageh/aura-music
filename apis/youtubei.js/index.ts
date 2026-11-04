@@ -1069,6 +1069,73 @@ export interface SyncedLyricsResult {
   source: string;
 }
 
+/**
+ * Auto-captions switch to a rolling window during dense vocal sections: the same
+ * sentence is re-emitted every ~0.7s as growing fragments. Rendered as-is it looks
+ * like machine spam, so collapse each rolling run into its fullest line.
+ */
+function condenseRollingCaptions(
+  segments: { timeMs: number; text: string }[]
+): { timeMs: number; text: string }[] {
+  const tokens = (text: string) => new Set(text.split(/\s+/).filter((w) => w.length > 1));
+  const overlap = (a: Set<string>, b: Set<string>) => {
+    if (a.size === 0 || b.size === 0) return 0;
+    let shared = 0;
+    for (const w of a) if (b.has(w)) shared++;
+    return shared / Math.min(a.size, b.size);
+  };
+
+  const out: { timeMs: number; text: string }[] = [];
+  let run: { timeMs: number; text: string }[] = [];
+
+  const flush = () => {
+    if (run.length === 0) return;
+    if (run.length === 1) {
+      out.push(run[0]);
+    } else {
+      // Keep the most complete sentence for the whole run, timed at its start.
+      const fullest = run.reduce((best, cur) => (cur.text.length > best.text.length ? cur : best), run[0]);
+      out.push({ timeMs: run[0].timeMs, text: fullest.text });
+    }
+    run = [];
+  };
+
+  for (const seg of segments) {
+    const prev = run.length ? run[run.length - 1] : null;
+    const prevPrev = run.length > 1 ? run[run.length - 2] : null;
+
+    if (prev && prev.text === seg.text) continue;
+
+    const isRolling =
+      prev &&
+      seg.timeMs - prev.timeMs <= 1600 &&
+      prev.text.length >= 18 &&
+      seg.text.length >= 18 &&
+      (seg.text.includes(prev.text) ||
+        prev.text.includes(seg.text) ||
+        overlap(tokens(prev.text), tokens(seg.text)) >= 0.35);
+
+    const followsRun =
+      isRolling ||
+      (prevPrev &&
+        prev &&
+        seg.timeMs - prev.timeMs <= 1600 &&
+        prev.timeMs - prevPrev.timeMs <= 1600 &&
+        seg.text.length >= 18 &&
+        prev.text.length >= 18 &&
+        overlap(tokens(prev.text), tokens(seg.text)) >= 0.3);
+
+    if (followsRun) {
+      run.push(seg);
+    } else {
+      flush();
+      run = [seg];
+    }
+  }
+  flush();
+  return out;
+}
+
 export async function getSyncedLyricsYoutube(videoId: string): Promise<SyncedLyricsResult | null> {
   try {
     const innertube = await getYTWeb();
@@ -1076,8 +1143,10 @@ export async function getSyncedLyricsYoutube(videoId: string): Promise<SyncedLyr
     const tracks = info.captions?.caption_tracks || [];
 
     if (tracks.length > 0) {
-      // Find Arabic captions first (incl. ar-EG and auto-generated), then English, or the first available track
+      // Prefer the auto-generated Arabic track: translated/derived tracks repeat
+      // the same timings but carry another language.
       const track =
+        tracks.find((t: any) => t.language_code === "ar" && t.kind === "asr") ||
         tracks.find((t: any) => t.language_code === "ar") ||
         tracks.find((t: any) => (t.language_code || "").toLowerCase().startsWith("ar")) ||
         tracks.find((t: any) => t.name?.text?.toLowerCase().includes("arabic")) ||
@@ -1085,22 +1154,29 @@ export async function getSyncedLyricsYoutube(videoId: string): Promise<SyncedLyr
         tracks[0];
 
       if (track?.base_url) {
-        const res = await fetch(`${track.base_url}&fmt=json3`, { signal: AbortSignal.timeout(4500) });
+        const res = await fetch(`${track.base_url}&fmt=json3`, { signal: AbortSignal.timeout(6000) });
         if (res.ok) {
           const data = await res.json();
           const events = data?.events || [];
           const validSegments: { timeMs: number; text: string }[] = [];
+          const seenTimes = new Set<number>();
 
           for (const ev of events) {
             if (!ev.segs || typeof ev.tStartMs !== "number") continue;
             const lineText = ev.segs
               .map((s: any) => s.utf8 || "")
               .join("")
+              .replace(/\[(?:موسيقى|غناء|تصفيق|music|applause|singing)\]/gi, " ")
+              .replace(/^\s*>>+\s*/, "")
+              .replace(/[♪♫]+/g, " ")
               .replace(/\n+/g, " ")
+              .replace(/\s+/g, " ")
               .trim();
 
-            // Filter sound effect markers like [موسيقى] or [Music] or empty symbols
-            if (!lineText || /^\[.*\]$/.test(lineText) || /^[♪♫\s]+$/.test(lineText)) continue;
+            // Filter sound-effect markers and empty/duplicate rolling events
+            if (!lineText || /^\[.*\]$/.test(lineText)) continue;
+            if (seenTimes.has(ev.tStartMs)) continue;
+            seenTimes.add(ev.tStartMs);
 
             validSegments.push({
               timeMs: ev.tStartMs,
@@ -1108,9 +1184,11 @@ export async function getSyncedLyricsYoutube(videoId: string): Promise<SyncedLyr
             });
           }
 
-          if (validSegments.length >= 3) {
+          const cleanedSegments = condenseRollingCaptions(validSegments);
+
+          if (cleanedSegments.length >= 3) {
             // Build LRC format: [mm:ss.xx]
-            const lrcLines = validSegments.map((seg) => {
+            const lrcLines = cleanedSegments.map((seg) => {
               const totalSec = seg.timeMs / 1000;
               const min = Math.floor(totalSec / 60);
               const sec = (totalSec % 60).toFixed(2);
@@ -1119,7 +1197,7 @@ export async function getSyncedLyricsYoutube(videoId: string): Promise<SyncedLyr
               return `[${mm}:${ss}] ${seg.text}`;
             });
 
-            const plainLines = validSegments.map((s) => s.text);
+            const plainLines = cleanedSegments.map((s) => s.text);
 
             return {
               plainLyrics: plainLines.join("\n"),

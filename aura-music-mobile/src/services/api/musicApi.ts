@@ -9,7 +9,8 @@ import {
   rankSearchSongs,
 } from "@/services/api/curation";
 
-export const BASE_API_URL = "https://aura-musiic.vercel.app";
+export const BASE_API_URL =
+  process.env.EXPO_PUBLIC_API_BASE_URL || "https://aura-musiic.vercel.app";
 
 // The `_t` query param already busts the cache. Sending Cache-Control/Pragma from a browser
 // triggers a preflight that the server's Allow-Headers rejects, so it stays native-only.

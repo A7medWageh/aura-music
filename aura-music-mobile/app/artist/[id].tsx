@@ -1500,8 +1500,7 @@ const styles = StyleSheet.create({
     textAlign: "right",
     borderWidth: 0,
     ...(Platform.OS === "web"
-      ? ({
-          outline: "none",
+      ? ({
           outlineWidth: 0,
           outlineStyle: "none",
           boxShadow: "none",

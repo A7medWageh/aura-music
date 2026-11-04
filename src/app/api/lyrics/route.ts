@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { getLyricsYoutube, getSyncedLyricsYoutube } from "@apis/youtubei.js";
 import { query } from "@apis/neon";
 import { ARABIC_TO_LATIN_MAP, BILINGUAL_ARTIST_MAP } from "@/services/music/artistMatcher";
-import { latinizeTitle } from "@/utils/latinize";
 
 export const dynamic = "force-dynamic";
 
@@ -41,12 +40,19 @@ function cleanTrackName(raw: string): string {
 // translation pages that interleave the foreign text with the original lines).
 const PERSIAN_ONLY = /[گچپژۈۉێەۍ۽۾]/g;
 
+// Scripts an Arabic/Latin lyric sheet can never be written in. LRCLIB's search
+// happily returns, say, a Nepali song titled "Hawa" for an Arabic "Hawa", so a
+// language gate has to exist even when the request carries a Latin title.
+const NON_ARABIC_SCRIPTS =
+  /[\u0370-\u03FF\u0400-\u04FF\u0590-\u05FF\u0900-\u0DFF\u0E00-\u0E7F\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF]/g;
+
 function foreignScriptRatio(text: string): number {
   if (!text) return 0;
   const letters = text.match(/\p{L}/gu);
   if (!letters || letters.length < 20) return 0;
-  const hits = text.match(PERSIAN_ONLY);
-  return (hits ? hits.length : 0) / letters.length;
+  const persian = text.match(PERSIAN_ONLY);
+  const other = text.match(NON_ARABIC_SCRIPTS);
+  return ((persian ? persian.length : 0) + (other ? other.length : 0)) / letters.length;
 }
 
 /** Remove translated/foreign lines, keeping the original Arabic/Latin verses. */
@@ -541,28 +547,160 @@ async function geniusViaRelay(
   return lyrics.length > 30 ? lyrics : null;
 }
 
+/**
+ * YouTube timed captions (real line timings) are refused to Vercel's datacenter
+ * IPs. The always-on worker laptop fetches them with `?provider=captions` and
+ * this endpoint caches the result in Neon like any other source.
+ */
+async function captionsViaRelay(
+  videoId: string,
+  trace?: string[]
+): Promise<{ plainLyrics: string; syncedLyrics: string } | null> {
+  const base = await relayWorkerUrl();
+  if (!base) {
+    trace?.push("captions_relay_no_worker");
+    return null;
+  }
+  const params = new URLSearchParams({ provider: "captions", videoId });
+  try {
+    const res = await fetch(`${base}/api/lyrics?${params.toString()}`, {
+      signal: AbortSignal.timeout(12000),
+    });
+    if (!res.ok) {
+      trace?.push(`captions_relay_http_${res.status}`);
+      return null;
+    }
+    const data = await res.json().catch(() => null);
+    const synced = typeof data?.syncedLyrics === "string" ? data.syncedLyrics : "";
+    if (synced.length < 30) {
+      trace?.push("captions_relay_empty");
+      return null;
+    }
+    trace?.push("captions_relay_ok");
+    return {
+      plainLyrics: typeof data?.lyrics === "string" ? data.lyrics : "",
+      syncedLyrics: synced,
+    };
+  } catch {
+    trace?.push("captions_relay_timeout");
+    return null;
+  }
+}
+
 /** lrclib entries carry duration — pick the one matching this recording. */
 interface LrclibHit {
-  songName?: string;
+  id?: number;
+  trackName?: string;
   artistName?: string;
   duration?: number;
   syncedLyrics?: string;
   plainLyrics?: string;
 }
 
-function pickLrclib(results: LrclibHit[], durationSec: number, artistName: string): LrclibHit | null {
-  const pool = results.filter((r) => r.plainLyrics || r.syncedLyrics);
-  if (pool.length === 0) return null;
-  const compatible = pool.filter((r) => !namesConflict(artistName, r.artistName || ""));
-  const list = compatible.length ? compatible : pool;
-  if (durationSec > 30) {
-    const close = list
-      .map((r) => ({ r, diff: Math.abs((r.duration || 0) - durationSec) }))
-      .filter((x) => x.diff <= 12)
-      .sort((a, b) => a.diff - b.diff);
-    if (close.length) return close[0].r;
+const TITLE_NOISE =
+  /(official\s*(music\s*)?(video|audio)?|lyric(s)?\s*video|lyrics?|visuali[sz]er|remaster(ed)?|audio|hq|hd|4k|كليب|فيديو|أغنية|حصري[ًا]?|نسخة)/gi;
+
+function stripTitleNoise(raw: string): string {
+  return (raw || "")
+    .replace(/[\u{1F300}-\u{1FAFF}\u2600-\u27BF\uFE0F]/gu, " ")
+    .replace(/[“”"'’]/g, "")
+    .replace(/[([].*?[)\]]/g, " ")
+    .replace(TITLE_NOISE, " ")
+    .replace(/\b(19|20)\d{2}\b/g, " ")
+    .replace(/[|]+/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/^[-–\s]+|[-–\s]+$/g, "")
+    .trim();
+}
+
+function nameVariants(raw: string, max = 6): string[] {
+  const out = new Set<string>();
+  const base = stripTitleNoise(raw);
+  if (base.length >= 2) out.add(base);
+  for (const part of (raw || "").split(/\s*[|/]\s*|\s+[-–]\s+/)) {
+    const cleaned = stripTitleNoise(part);
+    if (cleaned.length >= 2) out.add(cleaned);
+    if (out.size >= max) break;
   }
-  return list.find((r) => r.syncedLyrics) || list[0];
+  return [...out].slice(0, max);
+}
+
+/**
+ * Streaming titles bundle singer and track in every order and script
+ * ("Siilawy - Nassaba", "يا حلو - آدم | Adam - Ya Helou"). Rather than guessing
+ * which half is which, every token is offered as both a track and an artist
+ * candidate and the LRCLIB hit's own metadata decides.
+ */
+function lrclibQueryPlan(title: string, artist: string) {
+  const tracks = new Set(nameVariants(title));
+  const artists = new Set(nameVariants(artist));
+  for (const v of nameVariants(title)) artists.add(v);
+  const mapped = ARABIC_TO_LATIN_MAP[artist?.trim() || ""] || BILINGUAL_ARTIST_MAP[artist?.toLowerCase().trim() || ""];
+  if (mapped) artists.add(mapped);
+  for (const part of (artist || "").split(/\s*(?:&|,|،|\+|\/|\band\b|\s+و\s*|feat\.?|ft\.?)\s*/i)) {
+    const cleaned = stripTitleNoise(part);
+    if (cleaned.length >= 2) artists.add(cleaned);
+  }
+
+  const trackList = [...tracks].filter((t) => t.length >= 2);
+  const artistList = [...artists].filter((a) => a.length >= 2);
+  const queries = new Set<string>();
+  for (const t of trackList.slice(0, 3)) {
+    for (const a of artistList.slice(0, 3)) {
+      if (t.toLowerCase() !== a.toLowerCase()) queries.add(`${t} ${a}`);
+    }
+    queries.add(t);
+  }
+  return { tracks: trackList, artists: artistList, queries: [...queries].slice(0, 8) };
+}
+
+async function searchLrclibSynced(
+  title: string,
+  artist: string,
+  durationSec: number,
+  trace?: string[]
+): Promise<LrclibHit | null> {
+  const plan = lrclibQueryPlan(title, artist);
+  const pool = new Map<number, LrclibHit>();
+  let syntheticId = 1;
+  for (const q of plan.queries) {
+    try {
+      const res = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(q)}`, {
+        headers: { "User-Agent": "AuraMusic/1.0.0 (https://github.com/A7medWageh)" },
+        signal: AbortSignal.timeout(3500),
+      });
+      if (!res.ok) continue;
+      const hits: LrclibHit[] = await res.json().catch(() => []);
+      for (const hit of Array.isArray(hits) ? hits : []) {
+        if (!hit || (!hit.syncedLyrics && !hit.plainLyrics)) continue;
+        const key = typeof hit.id === "number" ? hit.id : syntheticId++;
+        if (!pool.has(key)) pool.set(key, hit);
+      }
+    } catch {}
+  }
+  trace?.push(`lrclib_pool=${pool.size}`);
+  const scored = [...pool.values()]
+    .map((hit) => {
+      const titleSim = Math.max(0, ...plan.tracks.map((t) => nameSimilarity(t, hit.trackName || "")));
+      const artistSim = hit.artistName
+        ? Math.max(0, ...plan.artists.map((a) => nameSimilarity(a, hit.artistName || "")))
+        : 0;
+      const diff = durationSec > 30 && hit.duration ? Math.abs(hit.duration - durationSec) : 999;
+      const durationScore = diff <= 8 ? 1 : diff <= 20 ? 0.6 : diff <= 40 ? 0.2 : 0;
+      return { hit, titleSim, artistSim, diff, score: titleSim * 0.6 + artistSim * 0.25 + durationScore * 0.15 };
+    })
+    .sort((a, b) => b.score - a.score);
+
+  const best = scored[0];
+  if (!best) return null;
+  trace?.push(
+    `lrclib_best t=${best.titleSim.toFixed(2)} a=${best.artistSim.toFixed(2)} dur=${best.diff} "${(best.hit.trackName || "").slice(0, 30)}"`
+  );
+  if (best.titleSim < 0.55) return null;
+  // A different title can still be the same recording, but only a matching
+  // runtime makes an unrelated artist safe.
+  if (durationSec > 30 && best.artistSim < 0.2 && !(best.hit.duration && best.diff <= 8)) return null;
+  return best.hit;
 }
 
 /**
@@ -718,6 +856,25 @@ export async function GET(req: NextRequest) {
     );
   }
 
+  // Worker-side caption mode: fetch real line timings on the residential IP and
+  // hand them back to production. Touches no cache (the caller owns it).
+  if (searchParams.get("provider") === "captions") {
+    if (!videoId) return NextResponse.json({ error: "videoId required" }, { status: 400 });
+    const timed = await getSyncedLyricsYoutube(videoId).catch(() => null);
+    if (!timed?.syncedLyrics) {
+      return NextResponse.json({ error: "No timed captions" }, { status: 404 });
+    }
+    return NextResponse.json(
+      {
+        lyrics: timed.plainLyrics || undefined,
+        syncedLyrics: timed.syncedLyrics,
+        source: "youtube-timedtext",
+        cached: false,
+      },
+      { headers: { "Cache-Control": "no-store" } }
+    );
+  }
+
   if (!refresh) {
     const row = await readLyricsCache(keys, videoId);
     if (row) {
@@ -726,6 +883,21 @@ export async function GET(req: NextRequest) {
           debug ? { error: "Lyrics not found", trace: ["cache_none"] } : { error: "Lyrics not found" },
           { status: 404 }
         );
+      }
+      // Plain-only rows predate the caption relay: upgrade them to timed lyrics
+      // so karaoke appears without the user removing the app cache.
+      const stale = Date.now() - new Date(row.updated_at).getTime() > 6 * 3600 * 1000;
+      if (row.plain_lyrics && !row.synced_lyrics && videoId && stale) {
+        const timed = await captionsViaRelay(videoId, debug ? trace : undefined);
+        if (timed) {
+          await writeLyricsCache(keys, videoId, cleanTrack, artistName || "", {
+            lyrics: row.plain_lyrics,
+            syncedLyrics: timed.syncedLyrics,
+            source: "captions-relay",
+          });
+          row.synced_lyrics = timed.syncedLyrics;
+          row.source = "captions-relay";
+        }
       }
       return cachedResponse(row);
     }
@@ -759,7 +931,34 @@ export async function GET(req: NextRequest) {
   const usable = (text: string): boolean => usableLyrics(text, wantsArabic);
 
   try {
-    // 1. YouTube timed captions — word-accurate for official videos
+    let lrclibPlain: string | null = null;
+
+    // 1. LRCLIB exact lookup — hand-curated LRC beats auto-captions whenever it exists.
+    if (cleanTrack && artistName) {
+      const lrclibRes = await fetch(
+        `https://lrclib.net/api/get?track_name=${encodeURIComponent(cleanTrack)}&artist_name=${encodeURIComponent(artistName)}`,
+        { headers: { "User-Agent": "AuraMusic/1.0.0 (https://github.com/A7medWageh)" } }
+      ).catch(() => null);
+
+      if (lrclibRes?.ok) {
+        const data: LrclibHit = await lrclibRes.json();
+        if (data?.syncedLyrics && !namesConflict(artistName, data.artistName || "") && usable(data.syncedLyrics)) {
+          return await succeed({ lyrics: data.plainLyrics || null, syncedLyrics: data.syncedLyrics, source: "lrclib" });
+        }
+        if (data?.plainLyrics && usable(data.plainLyrics)) lrclibPlain = data.plainLyrics;
+      }
+
+      // 2. LRCLIB search across every title/artist spelling the uploader used
+      const best = await searchLrclibSynced(cleanTrack, artistName || "", durationSec, debug ? trace : undefined);
+      if (best?.syncedLyrics && usable(best.syncedLyrics)) {
+        return await succeed({ lyrics: best.plainLyrics || null, syncedLyrics: best.syncedLyrics, source: "lrclib" });
+      }
+      if (!lrclibPlain && best?.plainLyrics && usable(best.plainLyrics)) {
+        lrclibPlain = best.plainLyrics;
+      }
+    }
+
+    // 3. YouTube timed captions — line-level karaoke for songs LRCLIB has never seen.
     if (videoId) {
       const ytSynced = await getSyncedLyricsYoutube(videoId).catch(() => null);
       if (ytSynced?.syncedLyrics) {
@@ -775,87 +974,24 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // 2. LRCLIB exact lookup (timecoded LRC)
-    if (cleanTrack && artistName) {
-      const lrclibRes = await fetch(
-        `https://lrclib.net/api/get?track_name=${encodeURIComponent(cleanTrack)}&artist_name=${encodeURIComponent(artistName)}`,
-        { headers: { "User-Agent": "AuraMusic/1.0.0 (https://github.com/A7medWageh)" } }
-      ).catch(() => null);
-
-      if (lrclibRes?.ok) {
-        const data: LrclibHit = await lrclibRes.json();
-        if (data?.syncedLyrics && !namesConflict(artistName, data.artistName || "") && usable(data.syncedLyrics)) {
-          return await succeed({ lyrics: data.plainLyrics || null, syncedLyrics: data.syncedLyrics, source: "lrclib" });
-        }
-      }
-
-      // 3. LRCLIB search, disambiguated by runtime
-      const searchRes = await fetch(
-        `https://lrclib.net/api/search?q=${encodeURIComponent(searchQuery)}`,
-        { headers: { "User-Agent": "AuraMusic/1.0.0 (https://github.com/A7medWageh)" } }
-      ).catch(() => null);
-
-      if (searchRes?.ok) {
-        const results: LrclibHit[] = await searchRes.json();
-        const best = pickLrclib(Array.isArray(results) ? results : [], durationSec, artistName);
-        if (best?.syncedLyrics && usable(best.syncedLyrics)) {
-          return await succeed({ lyrics: best.plainLyrics || null, syncedLyrics: best.syncedLyrics, source: "lrclib" });
-        }
-        if (best?.plainLyrics && usable(best.plainLyrics)) {
-          return await succeed({ lyrics: best.plainLyrics, syncedLyrics: null, source: "lrclib" });
-        }
-      }
-
-      // 3b. LRCLIB bilingual / Latin fallback search (crucial for Arabic songs indexed under Latin/Franco titles)
-      const latinArtist = (artistName && (ARABIC_TO_LATIN_MAP[artistName.trim()] || BILINGUAL_ARTIST_MAP[artistName.toLowerCase().trim()])) || "";
-      const latinTrack = cleanTrack ? latinizeTitle(cleanTrack) : "";
-      const altQueries: string[] = [];
-      if (latinArtist && cleanTrack) altQueries.push(`${latinArtist} ${cleanTrack}`);
-      if (latinArtist && latinTrack && latinTrack.toLowerCase() !== cleanTrack.toLowerCase()) {
-        altQueries.push(`${latinArtist} ${latinTrack}`);
-      }
-      if (latinTrack && latinTrack.toLowerCase() !== cleanTrack.toLowerCase()) {
-        altQueries.push(`${artistName || ""} ${latinTrack}`);
-        altQueries.push(latinTrack);
-      }
-
-      // Try exact Latin get first (fast and skips search queue)
-      if (latinTrack && (latinArtist || artistName)) {
-        const candidateArtists = [latinArtist, artistName].filter(Boolean);
-        for (const cArtist of candidateArtists) {
-          try {
-            const latinGetRes = await fetch(
-              `https://lrclib.net/api/get?track_name=${encodeURIComponent(latinTrack)}&artist_name=${encodeURIComponent(cArtist)}`,
-              { headers: { "User-Agent": "AuraMusic/1.0.0 (https://github.com/A7medWageh)" }, signal: AbortSignal.timeout(3000) }
-            ).catch(() => null);
-            if (latinGetRes?.ok) {
-              const data = await latinGetRes.json();
-              if (data?.syncedLyrics && usable(data.syncedLyrics)) {
-                return await succeed({ lyrics: data.plainLyrics || null, syncedLyrics: data.syncedLyrics, source: "lrclib" });
-              }
-            }
-          } catch {}
-        }
-      }
-
-      for (const altQ of altQueries) {
-        try {
-          const altRes = await fetch(
-            `https://lrclib.net/api/search?q=${encodeURIComponent(altQ.trim())}`,
-            { headers: { "User-Agent": "AuraMusic/1.0.0 (https://github.com/A7medWageh)" }, signal: AbortSignal.timeout(3000) }
-          ).catch(() => null);
-          if (altRes?.ok) {
-            const altHits: LrclibHit[] = await altRes.json();
-            const altBest = pickLrclib(Array.isArray(altHits) ? altHits : [], durationSec, artistName);
-            if (altBest?.syncedLyrics && usable(altBest.syncedLyrics)) {
-              return await succeed({ lyrics: altBest.plainLyrics || null, syncedLyrics: altBest.syncedLyrics, source: "lrclib" });
-            }
-          }
-        } catch {}
+    // 4. The same captions fetched by the residential worker — Vercel IPs are blocked.
+    if (videoId) {
+      const timed = await captionsViaRelay(videoId, debug ? trace : undefined);
+      if (timed && usable(timed.syncedLyrics)) {
+        return await succeed({
+          lyrics: timed.plainLyrics || null,
+          syncedLyrics: timed.syncedLyrics,
+          source: "captions-relay",
+        });
       }
     }
 
-    // 4. YouTube Music native lyrics block
+    // 5. Plain lyrics from LRCLIB, shown when no timed source exists at all.
+    if (lrclibPlain) {
+      return await succeed({ lyrics: lrclibPlain, syncedLyrics: null, source: "lrclib" });
+    }
+
+    // 6. YouTube Music native lyrics block
     if (videoId) {
       const ytLyrics = await getLyricsYoutube(videoId).catch(() => null);
       if (usable(ytLyrics || "")) {
@@ -863,7 +999,7 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // 5. Genius — page identity verified against the requested artist.
+    // 7. Genius — page identity verified against the requested artist.
     // Genius' own (key-free) API is primary; RapidAPI is quota-capped and only
     // covers the case where Genius blocks us.
     const direct = await geniusStage({ searchQuery, artistName: artistName || "", cleanTrack, upstream, wantsArabic, trace, debug });
@@ -879,7 +1015,7 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // 6. Gemini last resort (never for songs that may be copyrighted elsewhere)
+    // 9. Gemini last resort (never for songs that may be copyrighted elsewhere)
     if (process.env.GEMINI_API_KEY) {
       try {
         const { GoogleGenAI } = require("@google/genai");

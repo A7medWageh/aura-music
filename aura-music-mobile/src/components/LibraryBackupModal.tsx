@@ -22,6 +22,7 @@ import { AuraText, AuraTouch } from "@/ui";
 import {
   downloadLibraryBackup,
   importOfflineLibrary,
+  pickAndImportLibrary,
   type BackupProgress,
 } from "@/services/offline/backupTransfer";
 import { useLibraryStore } from "@/store/useLibraryStore";
@@ -59,7 +60,11 @@ export const LibraryBackupModal: React.FC<LibraryBackupModalProps> = ({
       const fileName = await downloadLibraryBackup((p) => {
         setProgress(p);
       });
-      setStatusMessage(`تم تجهيز وتنزيل ملف الأغاني (${fileName}) بنجاح!`);
+      setStatusMessage(
+        Platform.OS === "web"
+          ? `تم تجهيز وتنزيل ملف الأغاني (${fileName}) بنجاح!`
+          : `تم تجهيز ملف النسخة الاحتياطية — احفظه من قائمة المشاركة أو أرسله لجهازك الآخر.`
+      );
     } catch (err: any) {
       setErrorMessage(err?.message || "حدث خطأ أثناء تجهيز ملف الأغاني.");
     } finally {
@@ -67,10 +72,35 @@ export const LibraryBackupModal: React.FC<LibraryBackupModalProps> = ({
     }
   };
 
-  const handleSelectFile = () => {
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-      fileInputRef.current.click();
+  const handleSelectFile = async () => {
+    if (isProcessing) return;
+
+    if (Platform.OS === "web") {
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+        fileInputRef.current.click();
+      }
+      return;
+    }
+
+    setIsProcessing(true);
+    setProgress(null);
+    setErrorMessage(null);
+    setStatusMessage(null);
+
+    try {
+      const result = await pickAndImportLibrary((p) => setProgress(p));
+      if (result) {
+        await useLibraryStore.getState().loadLibrary();
+        setStatusMessage(
+          `تم بنجاح نقل واستيراد ${result.importedCount} أغنية إلى مكتبة الأوفلاين!`
+        );
+        if (onSuccess) onSuccess();
+      }
+    } catch (err: any) {
+      setErrorMessage(err?.message || "فشل استيراد الملف. تأكد من أنه ملف .aurapack سليم.");
+    } finally {
+      setIsProcessing(false);
     }
   };
 

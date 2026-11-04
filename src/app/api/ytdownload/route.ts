@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { resolveUniversalAudio, type UniversalAudioResult } from "@/services/music/universalAudioResolver";
-import { streamAudioFromYouTube, isYtDlpAvailable } from "@apis/yt-dlp";
+import { streamAudioFromYouTube, isYtDlpAvailable, proxyAudioRange } from "@apis/yt-dlp";
 import { findBestOfficialVideo, extractSmartArtistAndTitle } from "@/services/music/artistMatcher";
 import { uploadAudioBufferToTelegram } from "@/services/telegram/telegramStorage";
 import { JANNAT_OLD_CLASSICS } from "@/data/jannatClassics";
@@ -116,6 +116,51 @@ const STREAM_CACHE_HEADERS = {
 };
 
 const MAX_TELEGRAM_AUDIO_BYTES = 50 * 1024 * 1024;
+
+/**
+ * Serve audio straight from googlevideo so Range requests get a real 206 with
+ * Content-Range/Content-Length. iOS AVPlayer probes with `Range: bytes=0-1`;
+ * answering that from a stdout pipe (200, chunked, no length) made it download
+ * the whole track before playing. CDN caching is disabled because the same URL
+ * serves different byte ranges.
+ */
+async function respondWithRangedAudio(
+  videoId: string,
+  req: NextRequest,
+  fallbackMime = "audio/mp4"
+): Promise<NextResponse | null> {
+  try {
+    const upstream = await proxyAudioRange(videoId, req.headers.get("range"), req.signal ?? undefined);
+    if (!(upstream.ok || upstream.status === 206) || !upstream.body) return null;
+    const headers = new Headers();
+    headers.set("Content-Type", upstream.headers.get("content-type") || fallbackMime);
+    headers.set("Accept-Ranges", "bytes");
+    headers.set("Content-Disposition", "inline");
+    headers.set("Access-Control-Allow-Origin", "*");
+    headers.set(
+      "Access-Control-Expose-Headers",
+      "Content-Length, Content-Range, Accept-Ranges, Content-Disposition, X-Original-Content-Length"
+    );
+    // Cacheable for the OS media stack (lock-screen buffering) but never shared
+    // between byte ranges by the CDN.
+    headers.set("Cache-Control", "private, max-age=3600");
+    headers.set("CDN-Cache-Control", "no-store");
+    headers.set("Vercel-CDN-Cache-Control", "no-store");
+    const contentRange = upstream.headers.get("content-range");
+    if (contentRange) headers.set("Content-Range", contentRange);
+    const contentLength = upstream.headers.get("content-length");
+    if (contentLength) {
+      headers.set("Content-Length", contentLength);
+      headers.set("X-Original-Content-Length", contentLength);
+    }
+    return new NextResponse(upstream.body as any, {
+      status: upstream.status === 206 ? 206 : 200,
+      headers,
+    });
+  } catch {
+    return null;
+  }
+}
 
 async function readAudioBuffer(body: ReadableStream<Uint8Array> | null): Promise<Buffer> {
   if (!body) throw new Error("Audio source returned an empty response");
@@ -466,6 +511,9 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "yt-dlp is unavailable on this worker" }, { status: 503 });
     }
 
+    const ranged = await respondWithRangedAudio(videoId, req);
+    if (ranged) return ranged;
+
     const fallbackQuery = [artist, title].filter(Boolean).join(" ");
     const { stream, mimeType } = streamAudioFromYouTube(videoId, fallbackQuery);
     const headers = new Headers(STREAM_CACHE_HEADERS);
@@ -483,6 +531,8 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "A valid videoId is required for streamNow" }, { status: 400 });
     }
     if (isYtDlpAvailable()) {
+      const ranged = await respondWithRangedAudio(videoId, req);
+      if (ranged) return ranged;
       const { stream, mimeType } = streamAudioFromYouTube(videoId);
       const streamHeaders = new Headers(STREAM_CACHE_HEADERS);
       streamHeaders.set("Content-Type", mimeType || "audio/mp4");
@@ -493,23 +543,25 @@ export async function GET(req: NextRequest) {
     const workerUrl = await getRemoteWorkerUrl();
     if (!workerUrl) {
       return NextResponse.json(
-        { error: "مش قادر أستخرج الصوت دلوقتي — شغّل خادم Aura Music Link أو جرّب أغنية تانية" },
+        { error: "تعذّر تجهيز الصوت الآن — تأكد من تشغيل خادم الاستخراج ثم أعد المحاولة" },
         { status: 503 }
       );
     }
+    const rangeHeader = req.headers.get("range");
     const workerRes = await fetch(
       `${workerUrl}/api/ytdownload?videoId=${encodeURIComponent(videoId)}&forceYtDlp=true`,
       {
         headers: {
           "User-Agent": "AuraMusic/1.0",
           Authorization: `Bearer ${process.env.REMOTE_STREAM_WORKER_TOKEN || ""}`,
+          ...(rangeHeader ? { Range: rangeHeader } : {}),
         },
         signal: AbortSignal.timeout(55000),
       }
     );
-    if (!workerRes.ok || !workerRes.body) {
+    if (!(workerRes.ok || workerRes.status === 206) || !workerRes.body) {
       return NextResponse.json(
-        { error: `استخراج الصوت فشل (HTTP ${workerRes.status}) — جرّب تاني بعد نص دقيقة` },
+        { error: `تعذّر استخراج الصوت (HTTP ${workerRes.status}) — أعد المحاولة بعد قليل` },
         { status: 502 }
       );
     }
@@ -517,7 +569,12 @@ export async function GET(req: NextRequest) {
     streamHeaders.set("Content-Type", workerRes.headers.get("content-type") || "audio/mp4");
     streamHeaders.set("Content-Disposition", "inline");
     streamHeaders.set("Access-Control-Allow-Origin", "*");
-    return new NextResponse(workerRes.body as any, { status: 200, headers: streamHeaders });
+    streamHeaders.set("Accept-Ranges", "bytes");
+    const workerRange = workerRes.headers.get("content-range");
+    if (workerRange) streamHeaders.set("Content-Range", workerRange);
+    const workerLength = workerRes.headers.get("content-length");
+    if (workerLength) streamHeaders.set("Content-Length", workerLength);
+    return new NextResponse(workerRes.body as any, { status: workerRes.status, headers: streamHeaders });
   }
 
   // Background cache warm (fire-and-forget from the player): full ingest to
@@ -609,6 +666,63 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // ⚡ Fast-path 1.5 (Telegram Bot Rocket Fetch):
+    // Use the channel bot (@wecibot / @L_10_BOT) to download & deliver audio directly to Telegram CDN!
+    if (title && !prefetch) {
+      try {
+        console.log(`[ytdownload] 🚀 Triggering Telegram Bot rocket fetch for "${title}" (${artist || ""})...`);
+        const { resolveViaMoonBot } = await import("@/services/telegram/moonBotResolver");
+        const botPromise = resolveViaMoonBot({ title, artist, videoId: activeVid, forDownload: isDownload });
+
+        // Race bot with a fast window for immediate playback
+        const botHit = await Promise.race([
+          botPromise,
+          new Promise<null>((r) => setTimeout(() => r(null), resolveOnly ? 6000 : 3500)),
+        ]).catch(() => null);
+
+        if (botHit?.fileId) {
+          console.log(`[ytdownload] ⚡ Telegram Bot rocket HIT for "${title}"! Streaming from Telegram CDN...`);
+          if (resolveOnly) {
+            return NextResponse.json(
+              {
+                url: `/api/telegram/stream?fileId=${encodeURIComponent(botHit.fileId)}&title=${encodeURIComponent(botHit.title || title)}`,
+                directPlay: false,
+                source: "telegram",
+                title: botHit.title || title,
+                artist: botHit.artist || artist,
+                durationSec: botHit.durationSec,
+                bitrate: "320kbps",
+                format: "mp3",
+                mimeType: botHit.mimeType || "audio/mpeg",
+                videoId: activeVid,
+              },
+              { headers: { ...NO_CACHE_HEADERS, "Access-Control-Allow-Origin": "*" } }
+            );
+          }
+
+          const streamedResponse = await streamTelegramCacheRow(
+            {
+              tgFileId: botHit.fileId,
+              title: botHit.title || title,
+              artist: botHit.artist || artist,
+              durationSec: botHit.durationSec,
+              fileSize: botHit.fileSize,
+              mimeType: botHit.mimeType || "audio/mpeg",
+            },
+            req,
+            isDownload,
+            title
+          );
+          if (streamedResponse) return streamedResponse;
+        } else {
+          // Keep bot active in background so track is permanently stored in Telegram
+          void botPromise.catch(() => {});
+        }
+      } catch (botErr: any) {
+        console.warn("[ytdownload] Telegram Bot rocket fetch error:", botErr.message);
+      }
+    }
+
     // ⚡ Fast-path 2 (Progressive Live Worker Stream for cold tracks - ~ 1-2s TTFB):
     // For online player streaming (!isDownload), if an extraction worker is active,
     // pipe its live yt-dlp progressive stream directly to the browser.
@@ -638,6 +752,11 @@ export async function GET(req: NextRequest) {
         }
 
         const fallbackQuery = [artist, title].filter(Boolean).join(" ");
+        const ranged = await respondWithRangedAudio(activeVid, req);
+        if (ranged) {
+          console.log(`[ytdownload] 🚀 Local ranged yt-dlp stream for "${title || activeVid}"`);
+          return ranged;
+        }
         const { stream, mimeType } = streamAudioFromYouTube(activeVid, fallbackQuery);
         console.log(`[ytdownload] 🚀 Live local progressive yt-dlp stream for "${title || activeVid}"`);
         const streamHeaders = new Headers(STREAM_CACHE_HEADERS);
@@ -909,6 +1028,10 @@ export async function GET(req: NextRequest) {
       if (activeVid) {
         // If local yt-dlp is available (local machine), stream via yt-dlp
         if (isYtDlpAvailable()) {
+          if (!isDownload) {
+            const ranged = await respondWithRangedAudio(activeVid, req);
+            if (ranged) return ranged;
+          }
           console.log(`[ytdownload] Direct yt-dlp audio stream for videoId=${activeVid}`);
           const { stream, mimeType } = streamAudioFromYouTube(activeVid);
 
@@ -1041,6 +1164,10 @@ export async function GET(req: NextRequest) {
       const targetVideoId = await getFallbackVideoId(videoId || resolved.videoId, title, artist);
       if (targetVideoId) {
         if (isYtDlpAvailable()) {
+          if (!isDownload) {
+            const ranged = await respondWithRangedAudio(targetVideoId, req);
+            if (ranged) return ranged;
+          }
           console.warn(`[ytdownload] Upstream failed (${upstreamRes.status}), falling back to local yt-dlp...`);
           const { stream, mimeType } = streamAudioFromYouTube(targetVideoId);
           const fallbackHeaders = new Headers(STREAM_CACHE_HEADERS);
