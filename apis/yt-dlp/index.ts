@@ -40,44 +40,82 @@ export function isYtDlpAvailable(): boolean {
  * Directly stream audio from YouTube via yt-dlp to stdout.
  * Bypasses all Google Video 403 Forbidden errors.
  */
-export function streamAudioFromYouTube(videoId: string) {
+export function streamAudioFromYouTube(videoId: string, fallbackQuery?: string) {
   const binary = getYtDlpBinary();
   const isWinCmd = process.platform === "win32" && (binary.endsWith(".cmd") || binary.endsWith(".bat"));
-  const args = [
+
+  const target = videoId.startsWith("http") || videoId.startsWith("ytsearch")
+    ? videoId
+    : `https://www.youtube.com/watch?v=${videoId}`;
+
+  const makeArgs = (targetUrl: string) => [
     "-f", "ba[ext=m4a]/ba[ext=mp3]/bestaudio/ba/b",
     "-o", "-",
     "--no-warnings",
     "--no-playlist",
     "-q",
-    `https://www.youtube.com/watch?v=${videoId}`
+    targetUrl
   ];
 
-  const child = spawn(binary, args, { shell: isWinCmd });
+  let currentChild: any = null;
 
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
-      child.stdout.on("data", (chunk: Buffer) => {
-        controller.enqueue(new Uint8Array(chunk));
-      });
-      child.stdout.on("end", () => {
-        try { controller.close(); } catch {}
-      });
-      child.stdout.on("error", (err) => {
-        try { controller.error(err); } catch {}
-      });
-      child.on("error", (err) => {
-        try { controller.error(err); } catch {}
-      });
+      let bytesSent = 0;
+      let closed = false;
+
+      function run(targetUrl: string, canRetryWithFallback: boolean) {
+        const child = spawn(binary, makeArgs(targetUrl), { shell: isWinCmd });
+        currentChild = child;
+
+        child.stdout.on("data", (chunk: Buffer) => {
+          bytesSent += chunk.length;
+          if (!closed) {
+            controller.enqueue(new Uint8Array(chunk));
+          }
+        });
+
+        child.on("close", (code) => {
+          if (bytesSent === 0 && canRetryWithFallback && fallbackQuery) {
+            console.log(`[yt-dlp] Video ${videoId} yielded 0 bytes (code ${code}), retrying with search fallback: "${fallbackQuery}"`);
+            run(`ytsearch1:${fallbackQuery}`, false);
+            return;
+          }
+
+          if (!closed) {
+            closed = true;
+            if (bytesSent === 0 && code !== 0) {
+              controller.error(new Error(`yt-dlp exited with code ${code} without output`));
+            } else {
+              try { controller.close(); } catch {}
+            }
+          }
+        });
+
+        child.on("error", (err) => {
+          if (bytesSent === 0 && canRetryWithFallback && fallbackQuery) {
+            console.log(`[yt-dlp] Video ${videoId} error: ${err.message}, retrying with search fallback: "${fallbackQuery}"`);
+            run(`ytsearch1:${fallbackQuery}`, false);
+            return;
+          }
+          if (!closed) {
+            closed = true;
+            try { controller.error(err); } catch {}
+          }
+        });
+      }
+
+      run(target, !!fallbackQuery);
     },
     cancel() {
-      child.kill();
+      try { currentChild?.kill(); } catch {}
     }
   });
 
   return {
     stream,
     mimeType: "audio/mp4",
-    kill: () => child.kill(),
+    kill: () => { try { currentChild?.kill(); } catch {} },
   };
 }
 

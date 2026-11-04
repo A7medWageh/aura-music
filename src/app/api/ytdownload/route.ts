@@ -372,6 +372,10 @@ function normalizeText(text: string): string {
 }
 
 async function getFallbackVideoId(videoId?: string, title?: string, artist?: string): Promise<string | null> {
+  // Known official active replacement for Wegz - El Bakht (reUnnLjh5f8 is deleted on YouTube)
+  if (videoId === "reUnnLjh5f8" || (title && (title.includes("البخت") || title.toLowerCase().includes("el bakht")))) {
+    return "_RHIECWv728";
+  }
   const isJannat = !artist || artist.includes("جنات") || artist.toLowerCase().includes("jannat");
   if (isJannat && title) {
     const match = JANNAT_OLD_CLASSICS.find((c) => {
@@ -462,7 +466,8 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "yt-dlp is unavailable on this worker" }, { status: 503 });
     }
 
-    const { stream, mimeType } = streamAudioFromYouTube(videoId);
+    const fallbackQuery = [artist, title].filter(Boolean).join(" ");
+    const { stream, mimeType } = streamAudioFromYouTube(videoId, fallbackQuery);
     const headers = new Headers(STREAM_CACHE_HEADERS);
     headers.set("Content-Type", mimeType || "audio/mp4");
     headers.set("Accept-Ranges", "bytes");
@@ -632,7 +637,8 @@ export async function GET(req: NextRequest) {
           );
         }
 
-        const { stream, mimeType } = streamAudioFromYouTube(activeVid);
+        const fallbackQuery = [artist, title].filter(Boolean).join(" ");
+        const { stream, mimeType } = streamAudioFromYouTube(activeVid, fallbackQuery);
         console.log(`[ytdownload] 🚀 Live local progressive yt-dlp stream for "${title || activeVid}"`);
         const streamHeaders = new Headers(STREAM_CACHE_HEADERS);
         streamHeaders.set("Content-Type", mimeType || "audio/mp4");
@@ -689,7 +695,8 @@ export async function GET(req: NextRequest) {
             headers: forwardHeaders,
             signal: req.signal,
           });
-          if (workerRes.ok || workerRes.status === 206) {
+          const clTest = workerRes.headers.get("content-length") || workerRes.headers.get("x-original-content-length");
+          if ((workerRes.ok || workerRes.status === 206) && clTest !== "0") {
             console.log(`[ytdownload] 🚀 Live progressive worker stream for "${title || activeVid}"`);
             const workerHeaders = new Headers(STREAM_CACHE_HEADERS);
             workerHeaders.set("Content-Type", workerRes.headers.get("content-type") || "audio/mp4");

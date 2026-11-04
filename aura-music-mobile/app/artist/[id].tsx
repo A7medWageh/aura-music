@@ -177,9 +177,10 @@ export default function ArtistDetailScreen() {
         const timeoutPromise = (ms: number) =>
           new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), ms));
 
-        const [artistData, searchRes]: [any, any] = await Promise.all([
-          Promise.race([MusicApi.getArtist(id), timeoutPromise(2200)]).catch(() => null),
-          Promise.race([MusicApi.search(resolvedName), timeoutPromise(2200)]).catch(() => ({ songs: [] })),
+        const [artistData, searchRes1, searchRes2]: [any, any, any] = await Promise.all([
+          Promise.race([MusicApi.getArtist(id), timeoutPromise(3500)]).catch(() => null),
+          Promise.race([MusicApi.search(resolvedName), timeoutPromise(3500)]).catch(() => ({ songs: [] })),
+          Promise.race([MusicApi.search(`${resolvedName} أغاني`), timeoutPromise(3500)]).catch(() => ({ songs: [] })),
         ]);
 
         let accumulatedSongs: Song[] = localHits.length > 0 ? [...localHits] : [];
@@ -187,7 +188,7 @@ export default function ArtistDetailScreen() {
           accumulatedSongs.push(...artistData.songs);
         }
 
-        const candidateSongs = searchRes?.songs || [];
+        const candidateSongs = [...(searchRes1?.songs || []), ...(searchRes2?.songs || [])];
         if (Array.isArray(candidateSongs) && candidateSongs.length > 0) {
           const seenIds = new Set(accumulatedSongs.map((s) => s.id));
           const seenTitles = new Set(accumulatedSongs.map((s) => normalizeArabicName(s.title)));
@@ -361,9 +362,8 @@ export default function ArtistDetailScreen() {
   }, [songs, normalizedQuery, latinQuery, query, apiSongs]);
 
   const visibleSongs = useMemo(() => {
-    if (normalizedQuery || showAllSongs) return filteredSongs;
-    return filteredSongs.slice(0, COMPACT_SONGS_LIMIT);
-  }, [filteredSongs, normalizedQuery, showAllSongs]);
+    return filteredSongs;
+  }, [filteredSongs]);
 
   const discAlbums = useMemo(() => {
     const list =
@@ -799,12 +799,12 @@ export default function ArtistDetailScreen() {
           </View>
         )}
 
-        {/* ── POPULAR SONGS (COMPACT TOP 8) ── */}
+        {/* ── ALL SONGS (LONG SCROLL) ── */}
         {!normalizedQuery && (
           <AuraFadeIn delay={160} slideDistance={14}>
             <AuraSection
-              kicker="الأكثر استماعًا"
-              title="أشهر الأغاني"
+              kicker={`أعمال الفنان · ${songs.length} أغنية`}
+              title="كل الأغاني"
               actionLabel={songs.length > 1 ? "تشغيل الكل" : undefined}
               onAction={() => playFrom(songs, false)}
               style={styles.section}
@@ -839,21 +839,7 @@ export default function ArtistDetailScreen() {
                   ))}
                 </View>
 
-                {filteredSongs.length > COMPACT_SONGS_LIMIT && (
-                  <AuraTouch
-                    feedback="selection"
-                    pressedScale={0.98}
-                    onPress={() => setShowAllSongs(!showAllSongs)}
-                    style={styles.moreBtn}
-                  >
-                    <AuraText role="label" color={Color.gold300}>
-                      {showAllSongs
-                        ? `عرض أقل (أشهر ${COMPACT_SONGS_LIMIT} أغانٍ)`
-                        : `عرض باقي الأغاني (+${filteredSongs.length - COMPACT_SONGS_LIMIT})`}
-                    </AuraText>
-                    <ChevronLeft size={15} color={Color.gold300} />
-                  </AuraTouch>
-                )}
+
               </>
             )}
           </AuraFadeIn>
