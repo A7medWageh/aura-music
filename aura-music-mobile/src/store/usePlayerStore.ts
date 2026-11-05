@@ -406,7 +406,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   setSoundBoost: async (boost: number) => {
-    const clamped = Math.max(1, Math.min(2, boost));
+    const clamped = Math.max(1, Math.min(3.0, boost));
     set({ soundBoost: clamped });
     auraSoundEngine.setBoost(clamped);
     AsyncStorage.setItem(SOUND_BOOST_KEY, String(clamped)).catch(() => {});

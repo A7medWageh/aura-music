@@ -1155,7 +1155,7 @@ function FullPlayer({
               />
             </div>
 
-            {/* 🎧 Audiophile Super Loudness & Clarity Booster (مضخم الصوت لغاية 200%) */}
+            {/* 🎧 Audiophile Super Loudness & Clarity Booster (مضخم الصوت لغاية 300%) */}
             <div className="space-y-3 bg-gradient-to-br from-cyan-500/10 via-sky-500/5 to-transparent p-4 rounded-2xl border border-cyan-500/20 backdrop-blur-md">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -1164,23 +1164,45 @@ function FullPlayer({
                   </div>
                   <div>
                     <h4 className="text-sm font-black text-white flex items-center gap-1.5">
-                      مضخم ومقوي الصوت الفائق (Super Boost)
+                      مضخم ومقوي الصوت للهاند فري (Super Boost)
                       <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-400/20 text-cyan-300 border border-cyan-400/30 font-black">
                         {Math.round((soundBoost || 1.0) * 100)}%
                       </span>
                     </h4>
-                    <p className="text-[11px] text-white/50 font-medium">رفع الصوت لغاية 200% مع مانع التشويش الذكي (Peak Limiter)</p>
+                    <p className="text-[11px] text-white/50 font-medium">شريط رفع الصوت لغاية 300% بنقاء استوديو ومانع تشويش ذكي</p>
                   </div>
                 </div>
               </div>
 
+              {/* شريط التحكم في العلو الفائق المتدرج (Continuous Boost Slider) */}
+              <div className="space-y-1.5 py-1">
+                <div className="flex items-center justify-between text-xs text-cyan-300/80 font-bold px-0.5">
+                  <span>100% قياسي</span>
+                  <span className="text-white font-black text-sm bg-cyan-500/20 px-2 py-0.5 rounded-lg border border-cyan-400/30">
+                    {Math.round((soundBoost || 1.0) * 100)}% 🔊
+                  </span>
+                  <span>300% أقصى قوة 🚀</span>
+                </div>
+                <input
+                  type="range"
+                  min="1.0"
+                  max="3.0"
+                  step="0.05"
+                  value={soundBoost || 1.0}
+                  onChange={(e) => setSoundBoost?.(parseFloat(e.target.value))}
+                  className="w-full h-2.5 bg-white/10 rounded-full appearance-none cursor-pointer accent-cyan-400 hover:accent-cyan-300 transition-all"
+                  style={{ accentColor: "#22d3ee" }}
+                />
+              </div>
+
+              {/* أزرار الانتقال السريع لمستويات العلو */}
               <div className="grid grid-cols-5 gap-1.5 pt-1">
                 {[
                   { val: 1.0, label: "100%", desc: "قياسي" },
-                  { val: 1.25, label: "125%", desc: "عالي ونقي" },
-                  { val: 1.5, label: "150%", desc: "مضخم استوديو" },
-                  { val: 1.8, label: "180%", desc: "قوة خارقة" },
-                  { val: 2.0, label: "200%", desc: "أقصى علو 🚀" },
+                  { val: 1.5, label: "150%", desc: "نقي وقوي" },
+                  { val: 2.0, label: "200%", desc: "مضخم فائق" },
+                  { val: 2.5, label: "250%", desc: "هاند فري 🔥" },
+                  { val: 3.0, label: "300%", desc: "أقصى علو 🚀" },
                 ].map((b) => {
                   const isCurrent = Math.abs((soundBoost || 1.0) - b.val) < 0.05;
                   return (

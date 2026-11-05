@@ -81,7 +81,7 @@ const TABS: SegmentItem[] = [
 ];
 
 const SPEEDS = [0.75, 1, 1.25, 1.5, 2];
-const BOOSTS = [1, 1.25, 1.5, 1.8, 2];
+const BOOSTS = [1.0, 1.5, 2.0, 2.5, 3.0];
 
 const SLEEP_OPTIONS = [
   { val: null, label: "إيقاف" },
@@ -907,30 +907,86 @@ export const FullPlayerModal: React.FC = () => {
 
               <AuraHairline style={{ marginVertical: Space.s3 }} />
 
-              {/* 1. Super Loudness Booster */}
+              {/* 1. Super Loudness & Handsfree Booster Slider */}
               <View style={styles.presetHead}>
                 <View style={styles.boostTitle}>
                   <Zap size={16} color={Color.gold500} />
-                  <AuraText role="kicker">مضخّم الصوت (Super Boost 200%)</AuraText>
+                  <AuraText role="kicker">مضخّم ومقوي الصوت للهاند فري (Super Boost)</AuraText>
                 </View>
                 <AuraBadge
                   label={`${Math.round(soundBoost * 100)}%`}
                   tone={soundBoost > 1 ? "gold" : "quiet"}
                 />
               </View>
+
+              {/* Slider Box */}
+              <View style={styles.loudnessSliderCard}>
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: Space.s2 }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: Space.s2 }}>
+                    <Volume2 size={16} color={soundBoost > 1.5 ? Color.gold500 : Color.gold300} />
+                    <AuraText role="label" color={Color.text_primary}>
+                      شريط التحكم في العلو الفائق
+                    </AuraText>
+                  </View>
+                  <AuraText role="tiny" color={Color.gold300} style={{ fontWeight: "700" }}>
+                    {soundBoost <= 1.0
+                      ? "100% (قياسي)"
+                      : soundBoost <= 1.5
+                      ? `${Math.round(soundBoost * 100)}% (مضخم نقي)`
+                      : soundBoost <= 2.2
+                      ? `${Math.round(soundBoost * 100)}% (قوة استوديو)`
+                      : `${Math.round(soundBoost * 100)}% (أقصى علو 🚀)`}
+                  </AuraText>
+                </View>
+
+                {/* Continuous Slider Component */}
+                <View style={{ paddingVertical: Space.s2 }}>
+                  <VolumeSlider
+                    value={Math.max(0, Math.min(1, (soundBoost - 1.0) / 2.0))}
+                    onChange={(val) => {
+                      const newBoost = 1.0 + Math.max(0, Math.min(1, val)) * 2.0;
+                      setSoundBoost(Math.round(newBoost * 20) / 20); // 5% step precision
+                    }}
+                    accent={soundBoost > 2.0 ? "#FF5533" : Color.gold500}
+                  />
+                </View>
+
+                {/* Min / Max Labels + Stepper Buttons */}
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: Space.s1 }}>
+                  <AuraTouch
+                    feedback="selection"
+                    onPress={() => setSoundBoost(Math.max(1.0, soundBoost - 0.1))}
+                    style={styles.loudnessStepBtn}
+                  >
+                    <AuraText role="tiny" color={Color.gold300}>- 10%</AuraText>
+                  </AuraTouch>
+                  <AuraText role="tiny" color={Color.text_muted}>
+                    {`+${((soundBoost - 1.0) * 9.5).toFixed(1)} dB كسب إضافي`}
+                  </AuraText>
+                  <AuraTouch
+                    feedback="selection"
+                    onPress={() => setSoundBoost(Math.min(3.0, soundBoost + 0.1))}
+                    style={styles.loudnessStepBtn}
+                  >
+                    <AuraText role="tiny" color={Color.gold300}>+ 10%</AuraText>
+                  </AuraTouch>
+                </View>
+              </View>
+
+              {/* Quick Snap Preset Chips */}
               <View style={styles.speedRow}>
                 {BOOSTS.map((b) => (
                   <AuraChip
                     key={b}
                     label={`${Math.round(b * 100)}%`}
-                    active={soundBoost === b}
+                    active={Math.abs(soundBoost - b) < 0.05}
                     onPress={() => setSoundBoost(b)}
                     style={{ flex: 1 }}
                   />
                 ))}
               </View>
               <AuraText role="caption" color={Color.text_muted} style={{ marginTop: Space.s2, marginBottom: Space.s4 }}>
-                مضاعفة قوة الصوت حتى 200% مع محدّد دقيق (True-Peak Limiter) وتشبع تناظري يمنعان أي تشويش أو فرقعة.
+                مضاعفة قوة الصوت حتى 300% للهاند فري وسماعات الأذن مع محدد True-Peak وتشبع تناظري يمنع التشويش والفرقعة 100%.
               </AuraText>
 
               <AuraHairline style={{ marginVertical: Space.s3 }} />
@@ -1407,5 +1463,21 @@ const styles = StyleSheet.create({
     backgroundColor: Color.veil_goldTint,
     alignItems: "center",
     justifyContent: "center",
+  },
+  loudnessSliderCard: {
+    backgroundColor: Color.ink1,
+    borderWidth: 1,
+    borderColor: Color.veil_goldHairline,
+    borderRadius: Radius.md,
+    padding: Space.s3,
+    marginBottom: Space.s2,
+  },
+  loudnessStepBtn: {
+    paddingHorizontal: Space.s2,
+    paddingVertical: 4,
+    borderRadius: Radius.sm,
+    backgroundColor: Color.veil_goldTint,
+    borderWidth: 1,
+    borderColor: Color.veil_goldHairline,
   },
 });

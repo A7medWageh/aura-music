@@ -338,9 +338,12 @@ static inline float processSample(AuraBiquad *filter, float inSample, int ch) {
     if (config[@"isBypassed"] != nil) {
         _isBypassed = [config[@"isBypassed"] boolValue];
     }
-    if (config[@"boost"] != nil) {
-        float b = [config[@"boost"] floatValue];
-        _soundBoost = fmaxf(1.0f, fminf(2.0f, b));
+    
+    // Support both soundBoost and boost keys, up to 3.5x (350% loudness)
+    id boostVal = config[@"soundBoost"] ?: config[@"boost"];
+    if (boostVal != nil) {
+        float b = [boostVal floatValue];
+        _soundBoost = fmaxf(1.0f, fminf(3.5f, b));
     }
     if (config[@"vocalClarity"] != nil) {
         float v = [config[@"vocalClarity"] floatValue];
@@ -352,24 +355,42 @@ static inline float processSample(AuraBiquad *filter, float inSample, int ch) {
     }
     if (config[@"spatialWidth"] != nil) {
         float sw = [config[@"spatialWidth"] floatValue];
-        _spatialWidth = fmaxf(0.0f, fminf(2.0f, sw));
+        _spatialWidth = fmaxf(0.0f, fminf(2.5f, sw));
     }
     if (config[@"is8dActive"] != nil) {
         _is8dActive = [config[@"is8dActive"] boolValue];
     }
-    if (config[@"preset"] != nil) {
-        [self applyPresetGains:config[@"preset"]];
+    
+    // Support presetId or preset
+    id presetVal = config[@"presetId"] ?: config[@"preset"];
+    if (presetVal != nil && [presetVal isKindOfClass:[NSString class]]) {
+        [self applyPresetGains:presetVal];
     }
-    if (config[@"profile"] != nil) {
-        NSString *profStr = config[@"profile"];
-        if ([profStr isEqualToString:@"speaker"]) {
-            _profile = AuraAudioProfileSpeaker;
-        } else if ([profStr isEqualToString:@"headphones"]) {
-            _profile = AuraAudioProfileHeadphones;
-        } else if ([profStr isEqualToString:@"airpods"]) {
-            _profile = AuraAudioProfileAirPods;
-        } else {
-            _profile = AuraAudioProfileAuto;
+    
+    // Direct eqGains array if passed
+    if (config[@"eqGains"] != nil && [config[@"eqGains"] isKindOfClass:[NSArray class]]) {
+        NSArray *gains = config[@"eqGains"];
+        for (int i = 0; i < AURA_EQ_BANDS && i < (int)[gains count]; i++) {
+            _eqGains[i] = [gains[i] doubleValue];
+        }
+    }
+    
+    // Support profile as NSNumber or NSString
+    id profileVal = config[@"profile"];
+    if (profileVal != nil) {
+        if ([profileVal isKindOfClass:[NSNumber class]]) {
+            _profile = (AuraAudioProfile)[profileVal integerValue];
+        } else if ([profileVal isKindOfClass:[NSString class]]) {
+            NSString *profStr = (NSString *)profileVal;
+            if ([profStr isEqualToString:@"speaker"]) {
+                _profile = AuraAudioProfileSpeaker;
+            } else if ([profStr isEqualToString:@"headphones"]) {
+                _profile = AuraAudioProfileHeadphones;
+            } else if ([profStr isEqualToString:@"airpods"]) {
+                _profile = AuraAudioProfileAirPods;
+            } else {
+                _profile = AuraAudioProfileAuto;
+            }
         }
     }
     

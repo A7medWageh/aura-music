@@ -20,7 +20,7 @@ typedef NS_ENUM(NSInteger, AuraAudioProfile) {
 
 @property (nonatomic, assign) BOOL isEnabled;
 @property (nonatomic, assign) BOOL isBypassed;
-@property (nonatomic, assign) float soundBoost;          // 1.0 to 2.0 (100% - 200%)
+@property (nonatomic, assign) float soundBoost;          // 1.0 to 3.5 (100% - 350% Audiophile Loudness)
 @property (nonatomic, assign) float vocalClarity;        // 0.0 to 1.0 (0% - 100%)
 @property (nonatomic, assign) float bassDepth;           // 0.0 to 1.0 (0% - 100%)
 @property (nonatomic, assign) float spatialWidth;        // 0.0 to 2.0 (1.0 = normal, 1.6 = wide)

@@ -8,7 +8,7 @@ export type AuraAudioProfile = 'auto' | 'speaker' | 'headphones' | 'airpods';
 export interface AuraEngineConfig {
   isEnabled: boolean;
   isBypassed: boolean;
-  soundBoost: number;        // 1.0 to 2.0 (100% to 200%)
+  soundBoost: number;        // 1.0 to 3.0 (100% to 300% Audiophile Loudness)
   vocalClarity: number;      // 0.0 to 1.0 (0% to 100%)
   bassDepth: number;         // 0.0 to 1.0 (0% to 100%)
   spatialWidth: number;      // 0.0 to 2.0 (1.0 = normal stereo)
@@ -46,3 +46,4 @@ export const AURA_EQ_FREQUENCIES = [
   9000,  // Brilliance & air
   16000, // Shimmer & micro-detail
 ] as const;
+

@@ -293,7 +293,7 @@ class AudioService {
    * The hard limiter after it keeps boosted output from clipping.
    */
   public async setBoost(boost: number): Promise<void> {
-    this.boost = Math.max(1, Math.min(2, boost));
+    this.boost = Math.max(1, Math.min(3.0, boost));
     auraSoundEngine.setBoost(this.boost);
     if (Platform.OS !== "web") return;
     if (!this.webGraph && this.soundPreset === "off" && this.boost === 1) return;

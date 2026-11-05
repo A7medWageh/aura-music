@@ -142,7 +142,7 @@ class AuraSoundEngineService {
    * Set Super Boost (1.0 = 100%, 2.0 = 200%)
    */
   public setBoost(boost: number): void {
-    this.config.soundBoost = Math.max(1.0, Math.min(2.0, boost));
+    this.config.soundBoost = Math.max(1.0, Math.min(3.0, boost));
     this.syncToActiveOutputs();
     this.persistConfig();
   }
@@ -223,11 +223,13 @@ class AuraSoundEngineService {
       isEnabled: this.config.isEnabled,
       isBypassed: this.config.isBypassed,
       soundBoost: this.config.soundBoost,
+      boost: this.config.soundBoost,
       vocalClarity: this.config.vocalClarity,
       bassDepth: this.config.bassDepth,
       spatialWidth: this.config.spatialWidth,
       is8dActive: this.config.is8dActive,
       presetId: this.config.presetId,
+      preset: this.config.presetId,
       profile: profileInt,
       eqGains: preset.eq10Bands,
     };
@@ -267,3 +269,4 @@ class AuraSoundEngineService {
 }
 
 export const auraSoundEngine = new AuraSoundEngineService();
+

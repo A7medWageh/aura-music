@@ -1132,7 +1132,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   };
 
   const setSoundBoost = (boost: number) => {
-    const val = Math.max(1.0, Math.min(2.0, boost));
+    const val = Math.max(1.0, Math.min(3.0, boost));
     try {
       localStorage.setItem("aura_sound_boost", val.toString());
     } catch {}
@@ -1173,7 +1173,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       if (savedBoost) {
         const parsed = parseFloat(savedBoost);
         if (!isNaN(parsed) && parsed >= 1.0) {
-          setState((prev) => ({ ...prev, soundBoost: Math.min(2.0, parsed) }));
+          setState((prev) => ({ ...prev, soundBoost: Math.min(3.0, parsed) }));
         }
       }
       const saved8d = localStorage.getItem("aura_8d_audio");
@@ -1438,9 +1438,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (limiterRef.current) {
       // Spotify/Mastering-grade Brickwall Soft-Knee Peak Limiter
       // Clamps maximum output to -0.1 dBFS to eliminate any crackle, distortion, or blown out highs
-      limiterRef.current.threshold.setTargetAtTime(-0.1, now, t);
-      limiterRef.current.knee.setTargetAtTime(10, now, t);
-      limiterRef.current.ratio.setTargetAtTime(20, now, t); // Hard brickwall limiting
+      const isHighBoost = boostVal > 2.0;
+      limiterRef.current.threshold.setTargetAtTime(isHighBoost ? -0.2 : -0.1, now, t);
+      limiterRef.current.knee.setTargetAtTime(isHighBoost ? 14 : 10, now, t);
+      limiterRef.current.ratio.setTargetAtTime(isHighBoost ? 24 : 20, now, t);
+
+
       limiterRef.current.attack.setTargetAtTime(0.001, now, t); // Fast 1ms lookahead clamping
       limiterRef.current.release.setTargetAtTime(0.04, now, t);
     }
