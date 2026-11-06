@@ -59,19 +59,17 @@ export function VolumeSlider({
 
   const valueFromEvent = (evt: GestureResponderEvent) => {
     const width = boxRef.current.width || widthRef.current;
-    if (!width) return 0;
+    if (!width || width <= 0) return 0;
     const native = evt.nativeEvent as any;
     const pageX = typeof native.pageX === "number" ? native.pageX : NaN;
     const pageLeft =
       typeof window !== "undefined" ? boxRef.current.left + (window.scrollX || 0) : boxRef.current.left;
-    // Children are pointer-transparent, so locationX is measured against this slider itself and
-    // stays correct even when the async native measurement has not landed yet.
     const localX =
       typeof native.locationX === "number" && isFinite(native.locationX) ? native.locationX : NaN;
     const rawX = isFinite(localX) ? localX : isFinite(pageX) ? pageX - pageLeft : 0;
     const x = Math.max(0, Math.min(width, isFinite(rawX) ? rawX : 0));
-    // The slider runs right-to-left like the rest of the Arabic UI.
-    return 1 - x / width;
+    // Standard left-to-right audio level control
+    return Math.max(0, Math.min(1, x / width));
   };
 
   const panResponder = useRef(
@@ -122,8 +120,8 @@ export function VolumeSlider({
         style={[
           styles.thumb,
           {
-            right: `${pct}%`,
-            marginRight: -5,
+            left: `${pct}%`,
+            marginLeft: -6,
             transform: [{ scale: dragging ? 1.3 : 1 }],
           },
         ]}
@@ -135,15 +133,16 @@ export function VolumeSlider({
 const styles = StyleSheet.create({
   wrap: {
     flex: 1,
-    height: 30,
+    height: 36,
     justifyContent: "center",
   },
   disabled: { opacity: 0.4 },
   track: {
-    height: 4,
+    height: 6,
     borderRadius: Radius.pill,
     backgroundColor: Color.ink4,
     overflow: "hidden",
+    flexDirection: "row",
   },
   fill: {
     height: "100%",
@@ -151,10 +150,15 @@ const styles = StyleSheet.create({
   },
   thumb: {
     position: "absolute",
-    top: 10,
-    width: 10,
-    height: 10,
+    top: 12,
+    width: 12,
+    height: 12,
     borderRadius: Radius.pill,
     backgroundColor: Color.gold100,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.3,
+    shadowRadius: 2,
+    elevation: 3,
   },
 });

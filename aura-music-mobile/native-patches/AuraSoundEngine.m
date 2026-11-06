@@ -67,7 +67,7 @@ typedef struct {
         _sampleRate = 44100.0;
         _channelCount = 2;
         _rotationPhase = 0.0;
-        _rotationPhaseInc = 2.0 * M_PI / (44100.0 * 5.5); // ~5.5s per cycle
+        _rotationPhaseInc = 2.0 * M_PI / (44100.0 * 1.8); // 1.8s rapid cycle!
         _currentAppliedGain = 1.0f;
         
         // Default 10 ISO standard center frequencies
@@ -96,7 +96,7 @@ typedef struct {
     os_unfair_lock_lock(&_engineLock);
     _sampleRate = (sampleRate > 8000.0) ? sampleRate : 44100.0;
     _channelCount = (channelCount > 0 && channelCount <= AURA_MAX_CHANNELS) ? channelCount : 2;
-    _rotationPhaseInc = 2.0 * M_PI / (_sampleRate * 5.5);
+    _rotationPhaseInc = 2.0 * M_PI / (_sampleRate * 1.8);
     [self rebuildFilters];
     os_unfair_lock_unlock(&_engineLock);
 }
@@ -503,7 +503,7 @@ static inline float softSaturate(float x) {
         }
     }
     // Interleaved Stereo (Buffer 0: [L0, R0, L1, R1, ...])
-    else if (bufferList->mNumberBuffers == 1 && bufferList->mBuffers[0].mNumberChannels >= 2) {
+    else if (bufferList->mNumberBuffers == 1 && bufferList->mBuffers[0].mData) {
         float *interleaved = (float *)bufferList->mBuffers[0].mData;
         if (!interleaved) return;
         

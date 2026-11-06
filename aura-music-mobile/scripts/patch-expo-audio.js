@@ -51,7 +51,7 @@ const nativePatchesDir = path.join(baseDir, "native-patches");
 
 // 0. Copy AuraSoundEngine files if present in native-patches
 if (fs.existsSync(nativePatchesDir) && fs.existsSync(iosDir)) {
-  const engineFiles = ["AuraSoundEngine.h", "AuraSoundEngine.m"];
+  const engineFiles = ["AuraSoundEngine.h", "AuraSoundEngine.m", "AudioTapProcessor.h", "AudioTapProcessor.m"];
   for (const file of engineFiles) {
     const src = path.join(nativePatchesDir, file);
     const dest = path.join(iosDir, file);

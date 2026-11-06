@@ -226,11 +226,32 @@ class AudioService {
    * Instant 8D Earbud Test: sweeps hard Left, then hard Right, then returns to Center.
    */
   public test8dSound(onStep?: (msg: string) => void): void {
+    if (Platform.OS !== "web") {
+      if (!this.sound || !this.isAudioPlaying) {
+        onStep?.("شغّل أغنية أولاً لبدء اختبار القنوات 🎧");
+        setTimeout(() => onStep?.(""), 2500);
+        return;
+      }
+      onStep?.("🎧 جارٍ الاختبار: القناة اليسرى (Left Ear)");
+      auraSoundEngine.set8DActive(true);
+      setTimeout(() => {
+        onStep?.("🎧 جارٍ الاختبار: القناة اليمنى (Right Ear)");
+      }, 900);
+      setTimeout(() => {
+        onStep?.("✨ دوران محيطي سريع 360° نشط بين الأذنين");
+      }, 1800);
+      setTimeout(() => {
+        onStep?.("");
+      }, 3500);
+      return;
+    }
+
     const ctx = this.webCtx;
     const panner = this.webGraph?.panner;
 
     if (!ctx || !panner) {
-      onStep?.("شغّل أغنية أولاً لبدء اختبار القنوات");
+      onStep?.("شغّل أغنية أولاً لبدء اختبار القنوات 🎧");
+      setTimeout(() => onStep?.(""), 2500);
       return;
     }
 
@@ -239,25 +260,29 @@ class AudioService {
       const t = ctx.currentTime;
       panner.pan.cancelScheduledValues(t);
       panner.pan.setValueAtTime(0, t);
-      panner.pan.linearRampToValueAtTime(-0.95, t + 0.35);
-      onStep?.("جارٍ الاختبار: القناة اليسرى فقط");
+      panner.pan.linearRampToValueAtTime(-0.95, t + 0.2);
+      onStep?.("🎧 جارٍ الاختبار: القناة اليسرى فقط (Left Ear)");
 
       setTimeout(() => {
         if (!this.webCtx || !this.webGraph?.panner) return;
         const now = this.webCtx.currentTime;
-        this.webGraph.panner.pan.linearRampToValueAtTime(0.95, now + 0.5);
-        onStep?.("جارٍ الاختبار: القناة اليمنى فقط");
-      }, 1600);
+        this.webGraph.panner.pan.linearRampToValueAtTime(0.95, now + 0.3);
+        onStep?.("🎧 جارٍ الاختبار: القناة اليمنى فقط (Right Ear)");
+      }, 900);
 
       setTimeout(() => {
         if (!this.webCtx || !this.webGraph?.panner) return;
         const now = this.webCtx.currentTime;
-        this.webGraph.panner.pan.linearRampToValueAtTime(0, now + 0.5);
-        onStep?.("اكتمل الاختبار — القناتان تعملان بشكل سليم");
+        this.webGraph.panner.pan.linearRampToValueAtTime(0, now + 0.3);
+        onStep?.("✨ دوران محيطي سريع 360° نشط بين الأذنين");
         if (this.soundPreset === "spatial") {
-          setTimeout(() => this.startRotation(), 600);
+          setTimeout(() => this.startRotation(), 400);
         }
-      }, 3300);
+      }, 1800);
+
+      setTimeout(() => {
+        onStep?.("");
+      }, 3500);
     } catch (err) {
       console.warn("[audioService] test8dSound error:", err);
     }
