@@ -211,9 +211,22 @@ export async function getCachedTelegramTrack(params: {
       let pIdx = 1;
 
       for (const t of titleVariants) {
-        whereParts.push(`title = ${pIdx} OR title ILIKE ${pIdx + 1}`);
+        whereParts.push(`title = $${pIdx} OR title ILIKE $${pIdx + 1}`);
         sqlParams.push(t, `%${t}%`);
         pIdx += 2;
+      }
+
+      // Multi-word token matching for Arabic songs & TV series themes
+      const coreWords = normalizeText(cleanT)
+        .split(/\s+/)
+        .filter((w) => w.length >= 3 && !["اغنية", "كليب", "تتر", "فيديو", "رسمي", "مسلسل"].includes(w));
+      if (coreWords.length >= 2) {
+        const wordClauses = coreWords.map((w) => {
+          const idx = pIdx++;
+          sqlParams.push(`%${w}%`);
+          return `title ILIKE $${idx}`;
+        });
+        whereParts.push(`(${wordClauses.join(" AND ")})`);
       }
 
       const res = await query<any>(
@@ -226,21 +239,40 @@ export async function getCachedTelegramTrack(params: {
       );
 
       // Smart sort:
-      // 1. If artist specified, candidate tracks matching that artist rank highest.
-      // 2. Prioritize official original tracks over live/trend/cover variations.
-      // 3. Shorter, clean track titles rank higher than bloated titles.
+      // 1. If artist specified, candidate tracks matching that artist (in artist or in title) rank highest.
+      // 2. Penalize street wedding recordings / extreme fluff.
+      // 3. Prioritize standard song durations (120-400s) over 11+ min marathon concert recordings.
+      const normArtist = artist && artist !== "فنان غير معروف" && artist !== "Aura Music" ? normalizeText(artist) : "";
       const sortedRows = [...res.rows].sort((a, b) => {
-        if (artist && artist !== "فنان غير معروف" && artist !== "Aura Music") {
-          const aMatches = isStrictArtistMatch(artist, a.artist || "");
-          const bMatches = isStrictArtistMatch(artist, b.artist || "");
-          if (aMatches && !bMatches) return -1;
-          if (!aMatches && bMatches) return 1;
+        if (normArtist) {
+          const aTitleNorm = normalizeText(a.title || "");
+          const bTitleNorm = normalizeText(b.title || "");
+          const aArtistNorm = normalizeText(a.artist || "");
+          const bArtistNorm = normalizeText(b.artist || "");
+
+          const aArtistMatch =
+            isStrictArtistMatch(artist || "", a.artist || "") ||
+            aTitleNorm.includes(normArtist) ||
+            aArtistNorm.includes(normArtist);
+          const bArtistMatch =
+            isStrictArtistMatch(artist || "", b.artist || "") ||
+            bTitleNorm.includes(normArtist) ||
+            bArtistNorm.includes(normArtist);
+
+          if (aArtistMatch && !bArtistMatch) return -1;
+          if (!aArtistMatch && bArtistMatch) return 1;
         }
 
-        const aFluff = /ترند|حظ|بونبوناية|فرح|فرحة|حفلة|ريمكس|شعبي جديد|مهرجان/i.test(a.title || "");
-        const bFluff = /ترند|حظ|بونبوناية|فرح|فرحة|حفلة|ريمكس|شعبي جديد|مهرجان/i.test(b.title || "");
+        const aFluff = /ترند|حظ|بونبوناية|فرح|فرحة|حفلة|ريمكس|شعبي جديد|مهرجان|افجر احساس/i.test(a.title || "");
+        const bFluff = /ترند|حظ|بونبوناية|فرح|فرحة|حفلة|ريمكس|شعبي جديد|مهرجان|افجر احساس/i.test(b.title || "");
         if (!aFluff && bFluff) return -1;
         if (aFluff && !bFluff) return 1;
+
+        // Normal song duration preference
+        const aNormDur = (a.duration_sec || 0) >= 120 && (a.duration_sec || 0) <= 420;
+        const bNormDur = (b.duration_sec || 0) >= 120 && (b.duration_sec || 0) <= 420;
+        if (aNormDur && !bNormDur) return -1;
+        if (!aNormDur && bNormDur) return 1;
 
         return (a.title?.length || 0) - (b.title?.length || 0);
       });
@@ -257,13 +289,12 @@ export async function getCachedTelegramTrack(params: {
 
         // 2. Strict artist check: if artist is provided, row must match requested artist,
         // or row.title must contain the artist, or row.artist must be a distributor channel!
-        if (artist && artist !== "فنان غير معروف" && artist !== "Aura Music") {
-          const normArtist = normalizeText(artist);
+        if (normArtist) {
           const normRowArtist = normalizeText(row.artist || "");
           const normRowTitle = normalizeText(row.title || "");
 
           const artistMatches =
-            isStrictArtistMatch(artist, row.artist || "") ||
+            isStrictArtistMatch(artist || "", row.artist || "") ||
             (normRowArtist && normArtist.includes(normRowArtist)) ||
             (normRowArtist && normRowArtist.includes(normArtist));
 
@@ -275,9 +306,11 @@ export async function getCachedTelegramTrack(params: {
             !normRowArtist ||
             normRowArtist === "aura music" ||
             normRowArtist === "naghmaty" ||
-            /naghmaty|نغماتي|weci|shaabeyat|mazzika|rotana|nogoum|channel|music|records/i.test(row.artist || "");
+            /naghmaty|نغماتي|weci|shaabeyat|mazzika|rotana|nogoum|channel|music|records|group|entertainment|production|media/i.test(row.artist || "");
 
-          if (!artistMatches && !titleContainsArtist && !isGenericUploader) {
+          const isKnownProductionChannel = /رمضان|العدل|mbc|cbc|dmc|فن|سينرجي|synergy|art\b/i.test(normRowArtist);
+
+          if (!artistMatches && !titleContainsArtist && !isGenericUploader && !isKnownProductionChannel) {
             continue;
           }
         }

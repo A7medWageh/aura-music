@@ -37,6 +37,21 @@ function parseBotMetadata(audio: any, doc: any, caption: string | undefined): {
     }
   }
 
+  // 3. User manual upload with caption (e.g. "ابراهيم الحكمي - يا زين يا ولد الزين")
+  if (cap && !cap.includes("@wecibot") && !cap.includes("Title ➖")) {
+    const cleanCap = cap.replace(/https?:\/\/[^\s]+/g, "").trim();
+    if (cleanCap) {
+      const fromCap = extractSmartArtistAndTitle(cleanCap, artist);
+      if (fromCap.title && fromCap.title !== "أغنية محفوظة") {
+        title = fromCap.title;
+        if (fromCap.artist) artist = fromCap.artist;
+      }
+    }
+  }
+
+  // 4. Clean file extension if title ends in .mp3, .m4a, etc.
+  title = title.replace(/\.(mp3|m4a|ogg|flac|wav|aac)$/i, "").trim();
+
   // Smart extraction: extract true singer and clean title if performer is a record label or YouTube channel
   const extracted = extractSmartArtistAndTitle(title, artist);
   if (extracted.title) title = extracted.title;

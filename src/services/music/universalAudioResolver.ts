@@ -447,7 +447,7 @@ export async function resolveUniversalAudio(params: {
     const normRowTit = (row.title || "").toLowerCase().replace(/[أإآ]/g, "ا").replace(/[ة]/g, "ه").replace(/[ى]/g, "ي").trim();
 
     if (normRowTit.includes(normReq) || (normRowArt && normReq.includes(normRowArt)) || (normRowArt && normRowArt.includes(normReq))) return true;
-    if (/naghmaty|نغماتي|weci|shaabeyat|mazzika|rotana|nogoum|channel|music|records|aura/i.test(row.artist || "")) return true;
+    if (/naghmaty|نغماتي|weci|shaabeyat|mazzika|rotana|nogoum|channel|music|records|aura|group|media|production|رمضان|العدل|cbc|mbc|dmc/i.test(row.artist || "")) return true;
     return false;
   };
 

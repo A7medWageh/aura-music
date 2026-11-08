@@ -130,11 +130,20 @@ function extractArtists(results: any, artistResults: any): any[] {
   return Array.from(map.values());
 }
 
-// ── Junk/noise filter — keeps kids content, vlogs & non-music videos out of results ──
-const JUNK_PATTERN = /(أ?غاني?\s*أ?طفال|كرتون|انمي|anime|kids|nursery|cocomelon|baby\s*(shark|bus|yin)?|طيور\s*الجنة|عصافير|كاريوكي|karaoke|بودكاست|podcast|vlog|فلوج|تحدي|challenge|بريك|مقاطع\s*قصيرة|shorts|جيم|قيمنق|gaming|playstation|فوفوزيلا)/i;
+// ── Junk/noise filter — keeps kids content, vlogs, TV drama scenes & non-music videos out of results ──
+const JUNK_PATTERN = /(أ?غاني?\s*أ?طفال|كرتون|انمي|anime|kids|nursery|cocomelon|baby\s*(shark|bus|yin)?|طيور\s*الجنة|عصافير|كاريوكي|karaoke|بودكاست|podcast|vlog|فلوج|تحدي|challenge|بريك|مقاطع\s*قصيرة|shorts|جيم|قيمنق|gaming|playstation|فوفوزيلا|لقاء\s*مع|حوار\s*مع|مقابلة\s*مع|تصريحات|فضيحة|تسريب|عاجل|ردة\s*فعل|رياكشن|\breaction\b)/i;
+const DRAMA_SCENE_JUNK = /(مشهد\s*من|مشاهد\s*من|لقطة\s*من|لقطات\s*من|كواليس|الحلقة\s*\d+|حلقة\s*\d+|ملخص|لحظة\s*(قبض|وفاة|مقتل|ضرب|اعتراف|انتقام|طلاق)|خناقة|مواجهة|أقوى\s*مشاهد)/i;
+const SONG_OVERRIDE_PATTERN = /(تتر|شارة|أغنية|اغنية|كليب|فيديو\s*كليب|غناء|أداء|بصوت|audio|music\s*video|official)/i;
 
 export function isJunkResult(...texts: (string | undefined | null)[]): boolean {
-  return JUNK_PATTERN.test(texts.filter(Boolean).join(" "));
+  const combined = texts.filter(Boolean).join(" ");
+  if (!combined) return false;
+  if (JUNK_PATTERN.test(combined)) return true;
+  if (DRAMA_SCENE_JUNK.test(combined)) {
+    if (!SONG_OVERRIDE_PATTERN.test(combined)) return true;
+    if (/(مشهد\s*من|لقطة\s*من|كواليس|لحظة\s*قبض|خناقة|مواجهة)/i.test(combined)) return true;
+  }
+  return false;
 }
 
 /** Parse "3:45" / "1:02:45" / 210 (seconds) / { seconds: 210 } into seconds; 0 when unknown. */

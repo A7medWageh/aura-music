@@ -674,26 +674,44 @@ export async function GET(req: NextRequest) {
         const { resolveViaMoonBot } = await import("@/services/telegram/moonBotResolver");
         const botPromise = resolveViaMoonBot({ title, artist, videoId: activeVid, forDownload: isDownload });
 
-        // Race bot with a fast window for immediate playback
+        // Race bot with a generous window so the player gets the authentic Telegram CDN stream
+        const botWaitMs = isDownload ? 25000 : (resolveOnly ? 8000 : 10000);
         const botHit = await Promise.race([
           botPromise,
-          new Promise<null>((r) => setTimeout(() => r(null), resolveOnly ? 6000 : 3500)),
+          new Promise<null>((r) => setTimeout(() => r(null), botWaitMs)),
         ]).catch(() => null);
 
-        if (botHit?.fileId) {
+        // Also check if webhook landed the file in telegram_audio_cache during the wait
+        let activeBotHit = botHit;
+        if (!activeBotHit?.fileId) {
+          const freshCached = await getTelegramCacheRow(activeVid, title, artist).catch(() => null);
+          if (freshCached?.tgFileId) {
+            activeBotHit = {
+              fileId: freshCached.tgFileId,
+              streamUrl: `/api/telegram/stream?fileId=${encodeURIComponent(freshCached.tgFileId)}&title=${encodeURIComponent(freshCached.title || title)}`,
+              title: freshCached.title || title,
+              artist: freshCached.artist || artist,
+              durationSec: freshCached.durationSec,
+              fileSize: freshCached.fileSize,
+              mimeType: freshCached.mimeType || "audio/mpeg",
+            };
+          }
+        }
+
+        if (activeBotHit?.fileId) {
           console.log(`[ytdownload] ⚡ Telegram Bot rocket HIT for "${title}"! Streaming from Telegram CDN...`);
           if (resolveOnly) {
             return NextResponse.json(
               {
-                url: `/api/telegram/stream?fileId=${encodeURIComponent(botHit.fileId)}&title=${encodeURIComponent(botHit.title || title)}`,
+                url: `/api/telegram/stream?fileId=${encodeURIComponent(activeBotHit.fileId)}&title=${encodeURIComponent(activeBotHit.title || title)}`,
                 directPlay: false,
                 source: "telegram",
-                title: botHit.title || title,
-                artist: botHit.artist || artist,
-                durationSec: botHit.durationSec,
+                title: activeBotHit.title || title,
+                artist: activeBotHit.artist || artist,
+                durationSec: activeBotHit.durationSec,
                 bitrate: "320kbps",
                 format: "mp3",
-                mimeType: botHit.mimeType || "audio/mpeg",
+                mimeType: activeBotHit.mimeType || "audio/mpeg",
                 videoId: activeVid,
               },
               { headers: { ...NO_CACHE_HEADERS, "Access-Control-Allow-Origin": "*" } }
@@ -702,12 +720,12 @@ export async function GET(req: NextRequest) {
 
           const streamedResponse = await streamTelegramCacheRow(
             {
-              tgFileId: botHit.fileId,
-              title: botHit.title || title,
-              artist: botHit.artist || artist,
-              durationSec: botHit.durationSec,
-              fileSize: botHit.fileSize,
-              mimeType: botHit.mimeType || "audio/mpeg",
+              tgFileId: activeBotHit.fileId,
+              title: activeBotHit.title || title,
+              artist: activeBotHit.artist || artist,
+              durationSec: activeBotHit.durationSec,
+              fileSize: activeBotHit.fileSize,
+              mimeType: activeBotHit.mimeType || "audio/mpeg",
             },
             req,
             isDownload,

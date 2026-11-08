@@ -283,15 +283,15 @@ export async function smartSearch(searchTerm: string) {
       score += 50;
     }
 
-    // 3. Official Artist Verification (Artist channel or bilingual channel matches)
+    // 3. Official Artist Verification (Artist channel or bilingual channel matches, or artist in title)
     if (artistPart) {
-      if (normArt.includes(nArtistPart) || (latinArtist && rawArtLower.includes(latinArtist))) {
-        score += 110;
+      if (normArt.includes(nArtistPart) || (latinArtist && rawArtLower.includes(latinArtist)) || normTitle.includes(nArtistPart)) {
+        score += 130;
       }
     } else {
       const qTokens = tokenize(cleanQ);
-      if (qTokens.some(w => normArt.includes(w))) {
-        score += 35;
+      if (qTokens.some(w => normArt.includes(w) || normTitle.includes(w))) {
+        score += 45;
       }
     }
 
@@ -301,9 +301,9 @@ export async function smartSearch(searchTerm: string) {
       score += 100;
     }
 
-    // 5. Official badges in video title
-    if (/official\s*(audio|lyric|video)|كليب\s*رسمي|فيديو\s*كليب|النسخة\s*الأصلية|الأغنية\s*الرسمية/i.test(item.title || "")) {
-      score += 80;
+    // 5. Official badges in video title — boost official video clips, theme songs & master tracks
+    if (/official\s*(audio|lyric|video)|كليب\s*رسمي|فيديو\s*كليب|النسخة\s*الأصلية|الأغنية\s*الرسمية|تتر\s*مسلسل|شارة\s*مسلسل|أغنية\s*مسلسل/i.test(item.title || "")) {
+      score += 160;
     }
 
     // 6. Original master track prioritization (boost authentic songs over covers & trends)
@@ -340,9 +340,11 @@ export async function smartSearch(searchTerm: string) {
       score -= 180;
     }
 
-    // TV / Series fan scenes
-    if (!q.includes("مسلسل") && /مسلسل|مشاهد\s*من|كليب\s*من\s*مسلسل|طبيب\s*البلدة|omer\s*ve\s*leyla/i.test(rawTitleLower)) {
-      score -= 110;
+    // TV / Series fan scenes and dialogues (reject scene cuts, keep authentic soundtracks & theme songs!)
+    if (/مشاهد\s*من|كليب\s*من\s*مسلسل|طبيب\s*البلدة|omer\s*ve\s*leyla|مشهد\s*من|كواليس|الحلقة\s*\d+|لحظة\s*(قبض|وفاة|مقتل|ضرب)|خناقة|مواجهة/i.test(rawTitleLower)) {
+      if (!/تتر|شارة|غناء|أغنية|اغنية/i.test(rawTitleLower)) {
+        score -= 220;
+      }
     }
 
     // Fan audio mods: 8D, 3D, slowed, reverb, sped up
@@ -427,6 +429,27 @@ export async function smartSearch(searchTerm: string) {
   };
 
   cache.set(q.toLowerCase(), { data: result, ts: Date.now() });
+
+  // 🚀 Proactively trigger Telegram Bot download for the top matched song
+  // Immediately sends: "نزل {title} {artist}" to Telegram channel so it's cached/ready on first click!
+  if (result.songs.length > 0) {
+    const top = result.songs[0];
+    const topTitle = top.title || "";
+    const topArtist = top.artist || "";
+    const topVid = top.youtubeVideoId || top.songId;
+    if (topTitle) {
+      import("@/services/telegram/moonBotResolver")
+        .then(({ resolveViaMoonBot }) => {
+          resolveViaMoonBot({
+            title: topTitle,
+            artist: topArtist,
+            videoId: topVid,
+            forDownload: false,
+          }).catch(() => {});
+        })
+        .catch(() => {});
+    }
+  }
 
   // Background pre-warm stream cache for instant first click — must use the
   // same resolver the player hits (/api/ytdownload → resolveUniversalAudio),

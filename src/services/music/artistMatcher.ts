@@ -80,6 +80,12 @@ export const BILINGUAL_ARTIST_MAP: Record<string, string> = {
   "majed al mohandis": "ماجد المهندس",
   "majid almohandis": "ماجد المهندس",
   "majed almohandis": "ماجد المهندس",
+  "ibrahim al hakami": "ابراهيم الحكمي",
+  "ibrahim el hakami": "ابراهيم الحكمي",
+  "ibrahim alhakami": "ابراهيم الحكمي",
+  "ibrahim elhakami": "ابراهيم الحكمي",
+  "ibrahim al-hakami": "ابراهيم الحكمي",
+  "ibrahim el-hakami": "ابراهيم الحكمي",
 };
 
 // Build reverse map (Arabic -> Latin primary)
@@ -128,12 +134,15 @@ export const ARABIC_TO_LATIN_MAP: Record<string, string> = {
   "حمادة مجرشي": "hamada majrashi",
   "حسام حبيب": "hossam habib",
   "ماجد المهندس": "majid al mohandis",
+  "ابراهيم الحكمي": "ibrahim al hakami",
+  "إبراهيم الحكمي": "ibrahim al hakami",
+  "ابراهيم الحكمى": "ibrahim al hakami",
+  "إبراهيم الحكمى": "ibrahim al hakami",
 };
 
 export const UNWANTED_TERMS = [
   "cover",
   "كفر",
-  "بصوت",
   "تقليد",
   "غناء سارة",
   "remix",
@@ -159,8 +168,11 @@ export const UNWANTED_TERMS = [
   "حالة واتس",
   "حالات واتس",
   "ستوري",
-  "مشهد",
-  "مسلسل",
+  "مشهد من",
+  "مشاهد من",
+  "لقطة من",
+  "كواليس مسلسل",
+  "ملخص مسلسل",
   "تيك توك",
   "tiktok",
   "tribute",
@@ -367,12 +379,11 @@ export function findBestOfficialVideo(
       score += 120;
     }
 
-    // 4. Official audio indicators vs video clips with theatrical dialogues & silence
-    if (/official audio|الأوديو الرسمي|النسخة الأصلية|original audio|audio\b/i.test(rawTitle)) {
-      score += 200; // Pure studio audio track
-    } else if (/فيديو كليب|كليب رسمي|music video|official video|short film|فيلم قصير|مشهد/i.test(rawTitle)) {
-      // Penalize video clips as they often contain minutes of theatrical dialogues, sound effects, or dead silence
-      score -= 120;
+    // 4. Official audio & video clip indicators
+    if (/official\s*(audio|video|clip)|الأوديو الرسمي|النسخة الأصلية|original audio|فيديو\s*كليب|كليب\s*رسمي|music\s*video|تتر\s*مسلسل|أغنية\s*مسلسل/i.test(rawTitle)) {
+      score += 200; // Pure official release (clip or studio audio)
+    } else if (/short film|فيلم قصير|مشهد\s*من|كواليس|ملخص/i.test(rawTitle)) {
+      score -= 250; // Penalize non-song theatrical sketches and scenes
     }
 
     // 5. Penalize third-party / fan channels
@@ -452,12 +463,57 @@ export function extractSmartArtistAndTitle(
     artist = "";
   }
 
-  // If title has pipe '|', check if one side has the primary title
+  // If title has pipe '|', parse out series, title, and artist intelligently
   if (title.includes("|")) {
     const parts = title.split("|").map((p) => p.trim()).filter(Boolean);
-    const arPart = parts.find((p) => /[\u0600-\u06FF]/.test(p));
-    if (arPart) title = arPart;
-    else title = parts[0] || title;
+    const titlePart = parts.find((p) => /["“'«]/.test(p) || /^(أغنية|اغنية)/.test(p));
+    let singerPart = parts.find((p) => /(?:غناء|أداء|اداء|بصوت)/.test(p));
+    const seriesPart = parts.find((p) => /^(تتر|شارة|مسلسل)/.test(p));
+
+    if (!singerPart) {
+      singerPart = parts.find(
+        (p) => p !== titlePart && p !== seriesPart && !/مسلسل|تتر|أغنية|كليب/i.test(p) && p.split(/\s+/).length <= 4
+      );
+    }
+
+    if (singerPart) {
+      const parsedSinger = singerPart.replace(/(?:غناء|أداء|اداء|بصوت)\s*/, "").replace(/["“'«»”]/g, "").trim();
+      if (parsedSinger && !/جروب|group|قناة|انتاج|media|records/i.test(parsedSinger)) {
+        artist = parsedSinger;
+      }
+    }
+    if (titlePart) {
+      const qm = titlePart.match(/["“'«]([^"”'»]+)["”'»]/);
+      title = qm ? qm[1].trim() : titlePart.replace(/^(أغنية|اغنية)\s*/, "").trim();
+      if (seriesPart) {
+        title = `${seriesPart} - ${title}`;
+      }
+    } else {
+      const arPart = parts.find((p) => /[\u0600-\u06FF]/.test(p));
+      title = arPart || parts[0] || title;
+    }
+  }
+
+  // Detect 'غناء / أداء / بصوت' singer markers
+  const singerMatch = title.match(/(?:غناء|أداء|اداء|بصوت)\s*["“'«]?\s*([\u0621-\u064A]{2,}(?:\s+["“'«]?[\u0621-\u064A]{2,}){1,3})/);
+  if (singerMatch) {
+    const candidateSinger = singerMatch[1].replace(/["“'«»”]/g, "").trim();
+    if (!/مسلسل|تتر|أغنية|كليب|فيديو|حصريا|قناة|انتاج|توزيع|رسمي/i.test(candidateSinger)) {
+      artist = candidateSinger;
+      title = title.replace(singerMatch[0], "").trim();
+    }
+  }
+
+  // If title ends with channel name (e.g. "... - محمد رمضان"), strip the redundant channel trailer
+  if (rawArtist && title.includes("-")) {
+    const cleanArt = cleanText(rawArtist);
+    const lastDashIdx = title.lastIndexOf("-");
+    if (lastDashIdx > 0) {
+      const trailing = cleanText(title.slice(lastDashIdx + 1));
+      if (trailing && (cleanArt.includes(trailing) || trailing.includes(cleanArt))) {
+        title = title.slice(0, lastDashIdx).trim();
+      }
+    }
   }
 
   // Check 'كليب' pattern: 'احمد حسين كليب الدمعه صعبة'
