@@ -11,8 +11,14 @@ import { stripSongNoise } from "@/utils/arabicSearch";
 
 const UNKNOWN_ARTIST = /^(فنان غير معروف|unknown artist|unknown|artist|فنان)$/i;
 
-const UNOFFICIAL_TITLE =
-  /(ترند|موال|دي\s*جي|\bdj\b|عزف|جلسة\s*عود|مسلسل|مشاهد\s*من|كليب\s*من\s*مسلسل|from\s+the\s+(tv\s+)?series|\btv\s+series\b|تيك\s*توك|tiktok|shorts|حالة\s*واتس|ستوري|ستوريات|ترجمة|مترجم|مترجمة|translation|subtitles|indonesian|spanish sub|\b8d\b|\b3d\b|بطيء|مسرع|slowed|sped\s*up|reverb|ريمكس|remix|معدل|تعديل|باس\s*بوست|bass\s*boosted|كاريوكي|karaoke|موسيقى\s*فقط|بدون\s*(موسيقى|صوت)|instrumental|backing\s*track|\bcover\b|كفر|بصوت|تقليد|أغاني?\s*أطفال|اغاني?\s*اطفال|كرتون|انمي|anime|\bkids\b|nursery|cocomelon|بودكاست|podcast|vlog|فلوج|تحدي|challenge|قيمنق|gaming|playstation)/i;
+const JUNK_MEDIA_PATTERN =
+  /(أ?غاني?\s*أ?طفال|كرتون|انمي|anime|\bkids\b|nursery|cocomelon|baby\s*(shark|bus|yin)?|طيور\s*الجنة|عصافير|كاريوكي|karaoke|بودكاست|podcast|vlog|فلوج|تحدي|challenge|بريك|مقاطع\s*قصيرة|shorts|جيم|قيمنق|gaming|playstation|حالة\s*واتس|ستوري|ستوريات|ترجمة|مترجم|مترجمة|translation|subtitles|indonesian|spanish sub|\b8d\b|\b3d\b|بطيء|مسرع|slowed|sped\s*up|reverb|ريمكس|remix|معدل|تعديل|باس\s*بوست|bass\s*boosted|موسيقى\s*فقط|بدون\s*(موسيقى|صوت)|instrumental|backing\s*track|\bcover\b|كفر|تقليد)/i;
+
+const DRAMA_SCENE_JUNK =
+  /(مشهد\s*من|مشاهد\s*من|لقطة\s*من|لقطات\s*من|كواليس|الحلقة\s*\d+|حلقة\s*\d+|ملخص\s*مسلسل|لحظة\s*(قبض|وفاة|مقتل|ضرب|انتقام|طلاق)|خناقة|مواجهة|أقوى\s*مشاهد)/i;
+
+const OFFICIAL_SONG_OVERRIDE =
+  /(تتر|شارة|أغنية|اغنية|كليب|فيديو\s*كليب|غناء|أداء|بصوت|audio|music\s*video|official)/i;
 
 /** Normalises Arabic/Latin text so names compare reliably across scripts. */
 export function normalizeName(value: string | undefined | null): string {
@@ -81,6 +87,7 @@ const FAMOUS_ARTISTS = [
   "سعد الصغير", "saad el saghir",
   "بوسي", "bousy",
   "امينة", "amena",
+  "ابراهيم الحكمي", "إبراهيم الحكمي", "ابراهيم الحكمى", "إبراهيم الحكمى", "ibrahim al hakami", "ibrahim el hakami",
   // Gulf & Levant
   "ماجد المهندس", "majid al muhandis",
   "كاظم الساهر", "kadim al sahir", "kadim alsaher",
@@ -136,7 +143,16 @@ export function isJunkSong(song: Song | null | undefined): boolean {
   if (!song || !song.title || !song.youtubeVideoId) return true;
   if (!song.artist || UNKNOWN_ARTIST.test(song.artist.trim())) return true;
   const haystack = `${song.title} ${song.artist}`;
-  if (UNOFFICIAL_TITLE.test(haystack)) return true;
+
+  // 1. Explicit Junk Media Pattern (Cartoons, Kids, Podcasts, Shorts, etc.)
+  if (JUNK_MEDIA_PATTERN.test(haystack)) return true;
+
+  // 2. Drama scene cuts (reject scene cuts, keep authentic soundtracks & TV theme songs!)
+  if (DRAMA_SCENE_JUNK.test(haystack)) {
+    if (!OFFICIAL_SONG_OVERRIDE.test(haystack)) return true;
+    if (/(مشهد\s*من|لقطة\s*من|كواليس|لحظة\s*قبض|خناقة|مواجهة)/i.test(haystack)) return true;
+  }
+
   const dur = durationOf(song);
   if (dur > 0 && (dur < 40 || dur > 55 * 60)) return true;
   return false;
@@ -206,7 +222,7 @@ function calculateRelevance(
     score += 180;
   }
 
-  // 3. Official Release & Studio Indicators
+  // 3. Official Release & Studio Indicators (Includes Theme Songs & Video Clips)
   const isOfficial =
     rawTitle.includes("official") ||
     rawTitle.includes("audio") ||
@@ -215,11 +231,14 @@ function calculateRelevance(
     rawTitle.includes("الأصلية") ||
     rawTitle.includes("الاصلية") ||
     rawTitle.includes("كليب") ||
+    rawTitle.includes("تتر") ||
+    rawTitle.includes("شارة") ||
+    rawTitle.includes("مسلسل") ||
     rawArtist.includes("topic");
-  if (isOfficial) score += 200;
+  if (isOfficial) score += 250;
 
   // 4. Established / Famous Artist Bonus
-  if (isFamousArtist(song.artist)) score += 120;
+  if (isFamousArtist(song.artist)) score += 150;
 
   // 5. Popularity / View count
   if (song.viewCount && song.viewCount > 1000000) {
@@ -232,13 +251,12 @@ function calculateRelevance(
     if (normArtist.includes(w)) score += 20;
   }
 
-  // 7. Unofficial / Cover / Live / Karaoke Penalties
+  // 7. Unofficial / Cover / Live / Karaoke Penalties (Do not penalize official singer attributions!)
   if (
     rawTitle.includes("remix") ||
     rawTitle.includes("ريمكس") ||
     rawTitle.includes("cover") ||
     rawTitle.includes("كفر") ||
-    rawTitle.includes("بصوت") ||
     rawTitle.includes("تقليد") ||
     rawTitle.includes("karaoke") ||
     rawTitle.includes("كاريوكي") ||

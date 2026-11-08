@@ -195,18 +195,15 @@ export async function smartSearch(searchTerm: string) {
   if (hit && Date.now() - hit.ts < CACHE_TTL) return hit.data;
 
   const { cleanQ, titlePart, artistPart, invertedQ } = parseQueryIntent(q);
-  const normQuery = tokenize(cleanQ || q).join(" ");
   const emptyYt = { songs: [], artists: [], albums: [] };
 
-  const searchPromises: Promise<any>[] = [searchYouTube(q).catch(() => emptyYt)];
-  if (cleanQ && cleanQ.toLowerCase() !== q.toLowerCase()) {
-    searchPromises.push(searchYouTube(cleanQ).catch(() => emptyYt));
+  const primaryQuery = cleanQ || q;
+  const searchPromises: Promise<any>[] = [searchYouTube(primaryQuery).catch(() => emptyYt)];
+  if (primaryQuery.toLowerCase() !== q.toLowerCase()) {
+    searchPromises.push(searchYouTube(q).catch(() => emptyYt));
   }
-  if (invertedQ && invertedQ.toLowerCase() !== cleanQ.toLowerCase()) {
+  if (invertedQ && invertedQ.toLowerCase() !== primaryQuery.toLowerCase() && invertedQ.toLowerCase() !== q.toLowerCase()) {
     searchPromises.push(searchYouTube(invertedQ).catch(() => emptyYt));
-  }
-  if (normQuery && normQuery.toLowerCase() !== q.toLowerCase() && normQuery.toLowerCase() !== cleanQ.toLowerCase()) {
-    searchPromises.push(searchYouTube(normQuery).catch(() => emptyYt));
   }
 
   const [localCatalog, ...ytResultsList] = await Promise.all([
@@ -302,16 +299,24 @@ export async function smartSearch(searchTerm: string) {
     }
 
     // 5. Official badges in video title — boost official video clips, theme songs & master tracks
-    if (/official\s*(audio|lyric|video)|كليب\s*رسمي|فيديو\s*كليب|النسخة\s*الأصلية|الأغنية\s*الرسمية|تتر\s*مسلسل|شارة\s*مسلسل|أغنية\s*مسلسل/i.test(item.title || "")) {
-      score += 160;
+    if (/official\s*(audio|lyric|video|clip|music\s*video)|كليب\s*رسمي|فيديو\s*كليب|النسخة\s*الأصلية|الأغنية\s*الرسمية|تتر\s*مسلسل|شارة\s*مسلسل|أغنية\s*مسلسل/i.test(item.title || "")) {
+      score += 240;
+    }
+
+    // 5b. Prioritize the official Music Video / Clip to always rank #1
+    if (/فيديو\s*كليب|كليب\s*رسمي|official\s*(music\s*video|video|clip)|كليب\s*أصلي|كليب/i.test(item.title || "")) {
+      score += 150;
     }
 
     // 6. Original master track prioritization (boost authentic songs over covers & trends)
-    if (normTitle.includes(nq) && !/ترند|حظ|موال|دي جي|كفر|cover/i.test(normTitle)) {
-      score += 60;
+    if (normTitle.includes(nq) && !/ترند|حظ|موال|دي جي|كفر|cover|افجر|شعبي/i.test(normTitle)) {
+      score += 80;
     }
 
-    // ─── STRICT NOISE & JUNK PENALTIES (Drop non-original / fan edits) ───
+    // ─── STRICT NOISE & JUNK PENALTIES (Drop non-original / fan edits / street recordings) ───
+    if (/افجر\s*احساس|شعبي\s*جديد|فرح\s*|بونبوناية|روقان/i.test(rawTitleLower)) {
+      score -= 250;
+    }
     // Derivative trends / TikTok cuts (demote derivative versions below the original)
     if (!q.includes("ترند") && !q.includes("trend") && /ترند|trend\b/i.test(rawTitleLower)) {
       score -= 130;

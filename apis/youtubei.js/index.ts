@@ -250,7 +250,7 @@ export async function searchYouTubeInnertube(query: string) {
   if (albumMap.size < 200 && (nameMatch || looksLikeArtistQuery)) {
     const disc: any = await withTimeout(
       getArtistDetailsYoutube(topArtist.artistId).catch(() => null),
-      25000,
+      3500,
       null
     );
     if (disc) {

@@ -463,48 +463,78 @@ export function extractSmartArtistAndTitle(
     artist = "";
   }
 
-  // If title has pipe '|', parse out series, title, and artist intelligently
-  if (title.includes("|")) {
-    const parts = title.split("|").map((p) => p.trim()).filter(Boolean);
-    const titlePart = parts.find((p) => /["“'«]/.test(p) || /^(أغنية|اغنية)/.test(p));
-    let singerPart = parts.find((p) => /(?:غناء|أداء|اداء|بصوت)/.test(p));
-    const seriesPart = parts.find((p) => /^(تتر|شارة|مسلسل)/.test(p));
-
-    if (!singerPart) {
-      singerPart = parts.find(
-        (p) => p !== titlePart && p !== seriesPart && !/مسلسل|تتر|أغنية|كليب/i.test(p) && p.split(/\s+/).length <= 4
-      );
-    }
-
-    if (singerPart) {
-      const parsedSinger = singerPart.replace(/(?:غناء|أداء|اداء|بصوت)\s*/, "").replace(/["“'«»”]/g, "").trim();
-      if (parsedSinger && !/جروب|group|قناة|انتاج|media|records/i.test(parsedSinger)) {
-        artist = parsedSinger;
-      }
-    }
-    if (titlePart) {
-      const qm = titlePart.match(/["“'«]([^"”'»]+)["”'»]/);
-      title = qm ? qm[1].trim() : titlePart.replace(/^(أغنية|اغنية)\s*/, "").trim();
-      if (seriesPart) {
-        title = `${seriesPart} - ${title}`;
-      }
-    } else {
-      const arPart = parts.find((p) => /[\u0600-\u06FF]/.test(p));
-      title = arPart || parts[0] || title;
-    }
-  }
-
-  // Detect 'غناء / أداء / بصوت' singer markers
-  const singerMatch = title.match(/(?:غناء|أداء|اداء|بصوت)\s*["“'«]?\s*([\u0621-\u064A]{2,}(?:\s+["“'«]?[\u0621-\u064A]{2,}){1,3})/);
+  // 1. Detect 'غناء / أداء / بصوت' singer markers FIRST (most accurate Arabic singer attribution)
+  const singerMatch = title.match(/(?:غناء|أداء|اداء|بصوت)\s*["“'«]?\s*([\u0621-\u064A]{2,}(?:\s+["“'«]?[\u0621-\u064A]{2,}){1,3})/i);
   if (singerMatch) {
     const candidateSinger = singerMatch[1].replace(/["“'«»”]/g, "").trim();
-    if (!/مسلسل|تتر|أغنية|كليب|فيديو|حصريا|قناة|انتاج|توزيع|رسمي/i.test(candidateSinger)) {
+    if (!/مسلسل|تتر|أغنية|كليب|فيديو|حصريا|قناة|انتاج|توزيع|رسمي|جروب|group/i.test(candidateSinger)) {
       artist = candidateSinger;
       title = title.replace(singerMatch[0], "").trim();
     }
   }
 
-  // If title ends with channel name (e.g. "... - محمد رمضان"), strip the redundant channel trailer
+  // 2. If title has pipe '|', parse out series, title, and artist intelligently
+  if (title.includes("|")) {
+    const parts = title.split("|").map((p) => p.trim()).filter(Boolean);
+    const quotedPart = parts.find((p) => /["“'«][^"”'»]{3,}["”'»]/.test(p));
+    const songPrefixedPart = parts.find((p) => /^(أغنية|اغنية)\s+/i.test(p));
+    const seriesPart = parts.find((p) => /^(تتر|شارة|مسلسل)/i.test(p));
+    const namedArtistPart = parts.find(
+      (p) =>
+        p !== quotedPart &&
+        p !== songPrefixedPart &&
+        p !== seriesPart &&
+        !GENERIC_CHANNELS_REGEX.test(p) &&
+        p.split(/\s+/).length >= 2 &&
+        p.split(/\s+/).length <= 4 &&
+        /[\u0600-\u06FF]/.test(p)
+    );
+
+    if (namedArtistPart && (!artist || GENERIC_CHANNELS_REGEX.test(artist))) {
+      artist = namedArtistPart.replace(/["“'«»”]/g, "").trim();
+    }
+
+    if (quotedPart) {
+      const qm = quotedPart.match(/["“'«]([^"”'»]+)["”'»]/);
+      title = qm ? qm[1].trim() : quotedPart;
+      if (seriesPart && !title.includes("مسلسل") && !title.includes("تتر")) {
+        title = `${seriesPart} - ${title}`;
+      }
+    } else if (songPrefixedPart) {
+      title = songPrefixedPart.replace(/^(أغنية|اغنية)\s*/i, "").replace(/["“'«»”]/g, "").trim();
+      if (seriesPart && !title.includes("مسلسل") && !title.includes("تتر")) {
+        title = `${seriesPart} - ${title}`;
+      }
+    } else if (seriesPart) {
+      const seriesSubDashes = seriesPart.split(/[-–—]/).map((d) => d.trim()).filter(Boolean);
+      const songInsideSeries = seriesSubDashes.find(
+        (d) => !/^(تتر|مسلسل|غناء|أداء|بصوت)/i.test(d) && !GENERIC_CHANNELS_REGEX.test(d) && d.length >= 3
+      );
+      if (songInsideSeries) {
+        title = `${seriesSubDashes[0]} - ${songInsideSeries}`;
+      } else {
+        const otherPart = parts.find(
+          (p) => p !== seriesPart && p !== namedArtistPart && !GENERIC_CHANNELS_REGEX.test(p)
+        );
+        title = otherPart || seriesPart;
+      }
+    } else {
+      const arPart = parts.find((p) => /[\u0600-\u06FF]/.test(p) && !GENERIC_CHANNELS_REGEX.test(p));
+      title = arPart || parts[0] || title;
+    }
+  }
+
+  // 3. Extract quotes if present anywhere in title
+  const anyQuote = title.match(/["“'«]([^"”'»]{3,})["”'»]/);
+  if (anyQuote) {
+    const qText = anyQuote[1].trim();
+    if (!/مسلسل|تتر|حصريا|جديد|كليب|فيديو/i.test(qText)) {
+      const seriesPrefixMatch = title.match(/^(تتر\s+مسلسل\s+[^-–—|]+)/i);
+      title = seriesPrefixMatch ? `${seriesPrefixMatch[1]} - ${qText}` : qText;
+    }
+  }
+
+  // 4. If title ends with channel name (e.g. "... - محمد رمضان"), strip the redundant channel trailer
   if (rawArtist && title.includes("-")) {
     const cleanArt = cleanText(rawArtist);
     const lastDashIdx = title.lastIndexOf("-");

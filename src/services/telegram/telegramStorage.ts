@@ -206,6 +206,22 @@ export async function getCachedTelegramTrack(params: {
         titleVariants.add("تملي معاك");
       }
 
+      // If title has 'تتر مسلسل <اسم المسلسل> - <اسم الاغنية>'
+      const seriesMatch = cleanT.match(/^تتر\s+مسلسل\s+[^-–—|]+\s*[-–—|]\s*(.+)$/i);
+      if (seriesMatch) {
+        titleVariants.add(seriesMatch[1].trim());
+      }
+
+      // If title has dashes, extract individual components
+      if (cleanT.includes("-") || cleanT.includes("–") || cleanT.includes("—")) {
+        const parts = cleanT.split(/[-–—]/).map((p) => p.trim()).filter(Boolean);
+        for (const p of parts) {
+          if (p.length >= 3 && !/مسلسل|تتر|أغنية|كليب|فيديو/i.test(p)) {
+            titleVariants.add(p);
+          }
+        }
+      }
+
       const whereParts: string[] = [];
       const sqlParams: any[] = [];
       let pIdx = 1;
@@ -216,17 +232,19 @@ export async function getCachedTelegramTrack(params: {
         pIdx += 2;
       }
 
-      // Multi-word token matching for Arabic songs & TV series themes
-      const coreWords = normalizeText(cleanT)
-        .split(/\s+/)
-        .filter((w) => w.length >= 3 && !["اغنية", "كليب", "تتر", "فيديو", "رسمي", "مسلسل"].includes(w));
-      if (coreWords.length >= 2) {
-        const wordClauses = coreWords.map((w) => {
-          const idx = pIdx++;
-          sqlParams.push(`%${w}%`);
-          return `title ILIKE $${idx}`;
-        });
-        whereParts.push(`(${wordClauses.join(" AND ")})`);
+      // Multi-word token matching across all title variants (matches manually uploaded MP3s without series prefix)
+      for (const variant of titleVariants) {
+        const words = normalizeText(variant)
+          .split(/\s+/)
+          .filter((w) => w.length >= 3 && !["اغنية", "كليب", "تتر", "فيديو", "رسمي", "مسلسل"].includes(w));
+        if (words.length >= 2) {
+          const wordClauses = words.map((w) => {
+            const idx = pIdx++;
+            sqlParams.push(`%${w}%`);
+            return `title ILIKE $${idx}`;
+          });
+          whereParts.push(`(${wordClauses.join(" AND ")})`);
+        }
       }
 
       const res = await query<any>(
@@ -315,10 +333,14 @@ export async function getCachedTelegramTrack(params: {
           }
         }
 
+        if (videoId && !row.video_id) {
+          query("UPDATE telegram_audio_cache SET video_id = $1 WHERE id = $2", [videoId, row.id]).catch(() => {});
+        }
+
         return {
           id: row.id,
-          videoId: row.video_id,
-          songId: row.song_id,
+          videoId: row.video_id || videoId,
+          songId: row.song_id || songId,
           title: row.title,
           artist: row.artist,
           tgFileId: row.tg_file_id,
