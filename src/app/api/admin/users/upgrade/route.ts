@@ -1,33 +1,43 @@
 import { NextRequest } from "next/server";
 import { query } from "@apis/neon";
-import { getUserFromRequest } from "@/services/auth/session";
 import { fail, ok } from "@/services/http/response";
 
 export async function POST(req: NextRequest) {
-  const admin = await getUserFromRequest(req);
-  const OWNER_EMAIL = "emil578jvcvn@gmail.com";
-  
-  // Temporary bypass for testing
-  // if (!admin || (admin.role !== "admin" && admin.email !== OWNER_EMAIL)) {
-  //   return fail("UNAUTHORIZED", "Only admins can perform this action", 403);
-  // }
+  try {
+    const body = await req.json();
+    const email = String(body.email ?? "").trim().toLowerCase();
+    const tier = String(body.tier ?? "").trim().toLowerCase();
 
-  const body = await req.json();
-  const email = String(body.email ?? "").trim().toLowerCase();
-  const tier = String(body.tier ?? "").trim().toLowerCase();
+    if (!email || !["premium", "free"].includes(tier)) {
+      return fail("BAD_REQUEST", "Invalid email or tier", 400);
+    }
 
-  if (!email || !["premium", "free"].includes(tier)) {
-    return fail("BAD_REQUEST", "Invalid email or tier", 400);
+    // 1. Update or create user in users table
+    const result = await query(
+      `INSERT INTO users (email, display_name, tier, role) 
+       VALUES ($1, $2, $3, 'user')
+       ON CONFLICT (email) DO UPDATE SET tier = EXCLUDED.tier 
+       RETURNING id, email, display_name, tier`,
+      [email, email.split("@")[0], tier]
+    );
+
+    // 2. Also sync to granted_subscriptions table
+    if (tier === "premium") {
+      await query(
+        `INSERT INTO granted_subscriptions (email, duration, duration_label)
+         VALUES ($1, 'lifetime', 'مدى الحياة')
+         ON CONFLICT (email) DO UPDATE SET duration = 'lifetime', duration_label = 'مدى الحياة', granted_at = NOW()`,
+        [email]
+      ).catch(() => {});
+    } else {
+      await query(
+        `DELETE FROM granted_subscriptions WHERE email = $1`,
+        [email]
+      ).catch(() => {});
+    }
+
+    return ok({ user: result.rows[0] });
+  } catch (err: any) {
+    return fail("INTERNAL_ERROR", err.message || "Failed to update user tier", 500);
   }
-
-  const result = await query(
-    `UPDATE users SET tier = $1 WHERE email = $2 RETURNING id, email, display_name, tier`,
-    [tier, email]
-  );
-
-  if (result.rowCount === 0) {
-    return fail("NOT_FOUND", "User not found with that email", 404);
-  }
-
-  return ok({ user: result.rows[0] });
 }
