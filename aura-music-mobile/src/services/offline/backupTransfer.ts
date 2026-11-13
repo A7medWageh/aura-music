@@ -345,6 +345,84 @@ export async function pickAndImportLibrary(
   return importOfflineLibraryNative(picked.result as File, onProgress);
 }
 
+/**
+ * Direct file import when a .aurapack is received via AirDrop or File Sharing
+ */
+export async function importOfflineLibraryFromFileUri(
+  fileUri: string,
+  onProgress?: (progress: BackupProgress) => void
+): Promise<{ importedCount: number; errors: number }> {
+  const pack = new File(fileUri);
+  return importOfflineLibraryNative(pack, onProgress);
+}
+
+/**
+ * Share a single offline song directly to another iPhone via AirDrop
+ */
+export async function shareSongViaAirDrop(song: Song): Promise<boolean> {
+  if (Platform.OS === "web") {
+    if (typeof navigator !== "undefined" && navigator.share) {
+      try {
+        await navigator.share({
+          title: song.title,
+          text: `استمع إلى ${song.title} - ${song.artist} على Aura Music`,
+          url: "https://aura-musiic.vercel.app",
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    return false;
+  }
+
+  const candidatePath =
+    song.localFilePath && !song.localFilePath.startsWith("indexeddb://")
+      ? song.localFilePath
+      : FileManager.getAudioPath(song.id);
+
+  let targetUri = candidatePath;
+  try {
+    const file = new File(candidatePath);
+    if (!file.exists) {
+      targetUri = "";
+    }
+  } catch {
+    targetUri = "";
+  }
+
+  if (targetUri && (await Sharing.isAvailableAsync())) {
+    await Sharing.shareAsync(targetUri, {
+      mimeType: "audio/mpeg",
+      dialogTitle: `مشاركة ${song.title} عبر AirDrop`,
+      UTI: "public.audio",
+    });
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Share the Aura Music IPA bundle directly via AirDrop
+ */
+export async function shareAppIpaViaAirDrop(): Promise<boolean> {
+  const ipaShareUrl = "https://aura-musiic.vercel.app/AuraMusic.ipa";
+  if (Platform.OS !== "web" && (await Sharing.isAvailableAsync())) {
+    try {
+      await Sharing.shareAsync(ipaShareUrl, {
+        mimeType: "application/octet-stream",
+        dialogTitle: "مشاركة تطبيق Aura Music (ملف IPA) عبر AirDrop",
+        UTI: "com.apple.itunes.ipa",
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
 async function importOfflineLibraryNative(
   pack: File,
   onProgress?: (progress: BackupProgress) => void

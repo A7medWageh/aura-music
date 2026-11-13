@@ -14,6 +14,35 @@
       "infoPlist": {
         "UIBackgroundModes": [
           "audio"
+        ],
+        "UIFileSharingEnabled": true,
+        "LSSupportsOpeningDocumentsInPlace": true,
+        "CFBundleDocumentTypes": [
+          {
+            "CFBundleTypeName": "Aura Music Backup Package",
+            "CFBundleTypeRole": "Editor",
+            "LSHandlerRank": "Owner",
+            "LSItemContentTypes": [
+              "com.aura.music.aurapack"
+            ]
+          }
+        ],
+        "UTExportedTypeDeclarations": [
+          {
+            "UTTypeIdentifier": "com.aura.music.aurapack",
+            "UTTypeDescription": "Aura Music Backup Package",
+            "UTTypeConformsTo": [
+              "public.data"
+            ],
+            "UTTypeTagSpecification": {
+              "public.filename-extension": [
+                "aurapack"
+              ],
+              "public.mime-type": [
+                "application/octet-stream"
+              ]
+            }
+          }
         ]
       }
     },

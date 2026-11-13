@@ -24,6 +24,8 @@ import {
   Folder,
   Heart,
   Send,
+  Radio,
+  Share2,
 } from "lucide-react-native";
 
 import { getSafeTopInset } from "@/utils/safeArea";
@@ -43,6 +45,8 @@ import { getAllCachedLyricsMap } from "@/database/db";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LibraryBackupModal } from "@/components/LibraryBackupModal";
 import { TelegramImportModal } from "@/components/TelegramImportModal";
+import { AirDropTransferModal } from "@/components/AirDropTransferModal";
+import { shareSongViaAirDrop } from "@/services/offline/backupTransfer";
 import { PLACEHOLDER_ARTIST, PLACEHOLDER_ALBUM, PLACEHOLDER_SONG } from "@/constants/placeholders";
 import {
   AuraArtwork,
@@ -115,6 +119,7 @@ export default function LibraryScreen() {
 
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [showTelegramModal, setShowTelegramModal] = useState(false);
+  const [showAirDropModal, setShowAirDropModal] = useState(false);
   const [isSeeding50, setIsSeeding50] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -418,6 +423,12 @@ export default function LibraryScreen() {
 
           {!isDeep && (
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.actionRail}>
+              <AuraChip
+                label="نقل عبر AirDrop 📡"
+                onPress={() => setShowAirDropModal(true)}
+                size="sm"
+                icon={<Radio size={13} color={Color.gold500} />}
+              />
               <AuraChip
                 label="استيراد من تيليجرام 📥"
                 onPress={() => setShowTelegramModal(true)}
@@ -723,6 +734,7 @@ export default function LibraryScreen() {
                   onDelete={() => deleteDownloadedSong(song)}
                   onToggleHide={() => toggleSongHidden(song.id, !song.isHidden)}
                   onMove={() => startMove(song)}
+                      onShare={() => shareSongViaAirDrop(song)}
                 />
               ))}
             </View>
@@ -1060,6 +1072,17 @@ export default function LibraryScreen() {
         onClose={() => setShowTelegramModal(false)}
       />
 
+      {/* ── AIRDROP TRANSFER MODAL ── */}
+      <AirDropTransferModal
+        visible={showAirDropModal}
+        onClose={() => setShowAirDropModal(false)}
+        songsCount={stats.count}
+        totalSizeMB={stats.sizeMB}
+        onSuccess={() => {
+          showToast("تم استيراد الأغاني بنجاح! 🚀");
+        }}
+      />
+
 
       {/* ── MOVE SONG ── */}
       <AuraModal visible={!!movingSong} onClose={() => setMovingSong(null)}>
@@ -1170,6 +1193,7 @@ function SongRow({
   onDelete: () => void;
   onToggleHide: () => void;
   onMove?: () => void;
+  onShare?: () => void;
   badge?: React.ReactNode;
 }) {
   return (
