@@ -265,7 +265,8 @@ export async function smartSearch(searchTerm: string) {
   const ytArtistsAll = mergeByKey(allYtArtists, "artistId");
 
   function computeRelevance(item: any): number {
-    const combinedHaystack = `${item.title || ""} ${item.artist || ""}`.toLowerCase();
+    const rawFullTitle = (item.rawTitle || item.title || "").toLowerCase();
+    const combinedHaystack = `${rawFullTitle} ${item.artist || ""}`.toLowerCase();
     // Strict Junk Channel / Wedding Laser recording rejection
     if (/(تصوير\s*و?الليزر|تنظيم\s*الحفلات|مليونية|مواهب\s*الحظ|عفاريت\s*الحظ|استوديو\s*تصوير|فيديو\s*سيرفيس|عازف\s*أ?ورج|أ?ورج\s*مصر|تسجيلات\s*(أفراح|الحظ)|معزوفات|كريم\s*ناعوس|الشافعي|سامى\s*للتصوير|العدوى|ناعوس)/i.test(combinedHaystack) ||
         /(?:^|\s)(?:أفراح|حفلات|مليونية|الحظ|أورج)(?:\s|$)/i.test(combinedHaystack)) {
@@ -273,7 +274,8 @@ export async function smartSearch(searchTerm: string) {
     }
 
     const normTitle = normArabic(item.title || "").toLowerCase();
-    const rawTitleLower = (item.title || "").toLowerCase();
+    const normRawFull = normArabic(rawFullTitle).toLowerCase();
+    const rawTitleLower = rawFullTitle;
     const normArt = normArabic(item.artist || "").toLowerCase();
     const rawArtLower = (item.artist || "").toLowerCase();
     const nq = normArabic(q).toLowerCase();
@@ -290,31 +292,31 @@ export async function smartSearch(searchTerm: string) {
     let score = 0;
 
     // 1. Exact or Full Substring Match in title (both [Song - Artist] AND [Artist - Song] orders)
-    const isDirectMatch = normTitle === nq || normTitle === nCleanQ || strippedTitle === strippedCleanQ;
+    const isDirectMatch = normTitle === nq || normTitle === nCleanQ || strippedTitle === strippedCleanQ || normRawFull === nq;
     const isInvertedMatch = (nInvertedQ && normTitle === nInvertedQ) || (strippedInvertedQ && strippedTitle === strippedInvertedQ);
-    const isDualOrderSubstring = normTitle.includes(nq) ||
-      (nCleanQ.length >= 3 && normTitle.includes(nCleanQ)) ||
+    const isDualOrderSubstring = normTitle.includes(nq) || normRawFull.includes(nq) ||
+      (nCleanQ.length >= 3 && (normTitle.includes(nCleanQ) || normRawFull.includes(nCleanQ))) ||
       (strippedCleanQ.length >= 3 && strippedTitle.includes(strippedCleanQ)) ||
       (nInvertedQ.length >= 3 && normTitle.includes(nInvertedQ)) ||
       (strippedInvertedQ.length >= 3 && strippedTitle.includes(strippedInvertedQ));
 
     if (isDirectMatch || isInvertedMatch) {
-      score += 160;
+      score += 200;
     } else if (isDualOrderSubstring) {
+      score += 150;
+    } else if (nTitlePart && (normTitle.includes(nTitlePart) || normRawFull.includes(nTitlePart))) {
       score += 120;
-    } else if (nTitlePart && normTitle.includes(nTitlePart)) {
-      score += 90;
     }
 
     // 1b. Dual Title + Artist Perfect Alignment (Direct match when user asked for song + singer)
     if (nTitlePart && nArtistPart) {
-      const hasTitlePart = normTitle.includes(nTitlePart) || normTitle.includes(normArabic(nTitlePart));
-      const hasArtistPart = normArt.includes(nArtistPart) || normTitle.includes(nArtistPart) ||
+      const hasTitlePart = normTitle.includes(nTitlePart) || normRawFull.includes(nTitlePart) || normTitle.includes(normArabic(nTitlePart));
+      const hasArtistPart = normArt.includes(nArtistPart) || normTitle.includes(nArtistPart) || normRawFull.includes(nArtistPart) ||
         (latinArtist && rawArtLower.includes(latinArtist)) ||
         normTitle.includes(normArabic(nArtistPart));
 
       if (hasTitlePart && hasArtistPart) {
-        score += 800; // Overwhelming priority for correct song by requested artist
+        score += 1500; // Overwhelming priority for correct song by requested artist
       } else if (hasTitlePart && !hasArtistPart) {
         // Track has matching title but performed by a different, amateur or wedding cover artist
         if (/كفر|cover|أفراح|عازف|مهرجان|حفلة/i.test(combinedHaystack)) {
@@ -322,24 +324,24 @@ export async function smartSearch(searchTerm: string) {
         }
       } else if (!hasTitlePart && !hasArtistPart) {
         // Completely unrelated result
-        score -= 600;
+        score -= 800;
       }
     }
 
     // 2. Token coverage
-    const covQ = tokenCoverage(q, item.title ?? "", item.artist ?? "");
-    const covClean = tokenCoverage(cleanQ, item.title ?? "", item.artist ?? "");
+    const covQ = tokenCoverage(q, rawFullTitle, item.artist ?? "");
+    const covClean = tokenCoverage(cleanQ, rawFullTitle, item.artist ?? "");
     const bestCov = Math.max(covQ, covClean);
-    score += Math.round(bestCov * 70);
+    score += Math.round(bestCov * 80);
 
     if (bestCov >= 0.95) {
-      score += 50;
+      score += 60;
     }
 
     // 3. Official Artist Verification (Artist channel or bilingual channel matches, or artist in title)
     if (artistPart) {
-      if (normArt.includes(nArtistPart) || (latinArtist && rawArtLower.includes(latinArtist)) || normTitle.includes(nArtistPart)) {
-        score += 130;
+      if (normArt.includes(nArtistPart) || (latinArtist && rawArtLower.includes(latinArtist)) || normTitle.includes(nArtistPart) || normRawFull.includes(nArtistPart)) {
+        score += 200;
       }
     } else {
       const qTokens = tokenize(cleanQ);
@@ -349,14 +351,25 @@ export async function smartSearch(searchTerm: string) {
     }
 
     // 4. Official Record Label / Production Channel boost
-    const isOfficialLabel = /official|records|music|rotana|mazzika|sobky|elsobky|shaabeyat|شعبيات|نجوم|مزيكا|روتانا|السبكي|نغم|عالم الفن|free music|craft media|watary|sony music|universal/i.test(item.artist || "");
+    const isOfficialLabel = /official|records|music|rotana|mazzika|sobky|elsobky|shaabeyat|شعبيات|نجوم|مزيكا|روتانا|السبكي|نغم|عالم الفن|free music|craft media|watary|sony music|universal|el adl group|العدل جروب|synergy|سينرجي/i.test(item.artist || "");
     if (isOfficialLabel) {
-      score += 100;
+      score += 150;
     }
 
-    // 5. Official badges in video title — boost official video clips, theme songs & master tracks
-    if (/official\s*(audio|lyric|video|clip|music\s*video)|كليب\s*رسمي|فيديو\s*كليب|النسخة\s*الأصلية|الأغنية\s*الرسمية|تتر\s*مسلسل|شارة\s*مسلسل|أغنية\s*مسلسل/i.test(item.title || "")) {
-      score += 350;
+    // 5. Official badges in video title — boost official video clips, theme songs & master tracks to the top
+    const isVideoClip = /كليب|فيديو\s*كليب|كليب\s*رسمي|official\s*(music\s*video|video|clip)|music\s*video/i.test(rawFullTitle);
+    if (isVideoClip) {
+      score += 600; // Strongest boost for official video clip
+    }
+
+    if (/official\s*(audio|lyric|video|clip|music\s*video)|كليب\s*رسمي|فيديو\s*كليب|النسخة\s*الأصلية|الأغنية\s*الرسمية|تتر\s*مسلسل|شارة\s*مسلسل|أغنية\s*مسلسل/i.test(rawFullTitle)) {
+      score += 400;
+    }
+
+    // 6. View count bonus (millions of views distinguish real releases from 200-view fan uploads)
+    const views = typeof item.views === "number" ? item.views : (typeof item.viewCount === "number" ? item.viewCount : 0);
+    if (views > 1000000) {
+      score += Math.min(150, Math.floor(Math.log10(views) * 20));
     }
 
     // 5b. Prioritize the official Music Video / Clip to always rank #1
@@ -475,14 +488,42 @@ export async function smartSearch(searchTerm: string) {
     if (mergedSongs.length >= 25) break;
   }
 
+  const nqLower = normArabic(q).toLowerCase();
+  const cleanQLower = normArabic(cleanQ).toLowerCase();
+  const nArtistPartLower = artistPart ? normArabic(artistPart).toLowerCase() : "";
+  const nTitlePartLower = titlePart ? normArabic(titlePart).toLowerCase() : "";
+
+  // Strictly filter artists so unrelated names never pollute the search
+  const relevantArtists = ytArtistsAll.filter((a: any) => {
+    const aName = normArabic(a.artistName || a.name || "").toLowerCase();
+    if (!aName || aName === "فنان غير معروف" || aName === "فنان") return false;
+    if (aName === nqLower || aName === cleanQLower || (nArtistPartLower && aName === nArtistPartLower)) return true;
+    if (nqLower.includes(aName) || aName.includes(nqLower)) return true;
+    if (nArtistPartLower && (aName.includes(nArtistPartLower) || nArtistPartLower.includes(aName))) return true;
+    return tokenCoverage(cleanQ, a.artistName || "", "") >= 0.5;
+  });
+
+  // Strictly filter albums so random, completely unrelated albums (like Amr Diab Wayah when searching Ibrahim El Hakamy) are dropped
+  const relevantAlbums = ytAlbumsAll.filter((al: any) => {
+    const alTitle = normArabic(al.title || "").toLowerCase();
+    const alArtist = normArabic(al.artist || al.artistName || "").toLowerCase();
+    if (!alTitle) return false;
+    const hay = `${alTitle} ${alArtist}`;
+    if (hay.includes(nqLower) || hay.includes(cleanQLower)) return true;
+    if (nArtistPartLower && alArtist.includes(nArtistPartLower)) {
+      if (nTitlePartLower && (alTitle.includes(nTitlePartLower) || nTitlePartLower.includes(alTitle))) return true;
+    }
+    return tokenCoverage(cleanQ, al.title || "", al.artist || "") >= 0.55;
+  });
+
   const result = {
     songs: mergedSongs,
-    artists: ytArtistsAll.slice(0, 6).map((a: any) => ({
+    artists: relevantArtists.slice(0, 6).map((a: any) => ({
       artistId: a.artistId,
       artistName: a.artistName,
       thumbnailUrl: a.thumbnailUrl ?? null,
     })),
-    albums: ytAlbumsAll.slice(0, 200).map((al: any) => ({
+    albums: relevantAlbums.slice(0, 50).map((al: any) => ({
       albumId: al.albumId,
       title: al.title,
       artist: al.artist ?? al.artistName ?? "فنان غير معروف",

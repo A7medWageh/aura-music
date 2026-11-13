@@ -18,12 +18,16 @@ import {
   Download,
   Play,
   FileMusic,
+  FolderOpen,
+  Zap,
 } from "lucide-react-native";
 import { Color, Radius, Space } from "@/theme";
 import { AuraText, AuraTouch } from "@/ui";
 import { Song } from "@/types/music";
 import { MusicApi } from "@/services/api/musicApi";
-import { upsertSong } from "@/database/db";
+import { upsertSong, getDownloadedSongs } from "@/database/db";
+import { normalizeArabicName } from "@/utils/latinize";
+import { pickAndImportLocalTelegramAudio } from "@/services/offline/localAudioImporter";
 import { useDownloadStore } from "@/store/useDownloadStore";
 import { useLibraryStore } from "@/store/useLibraryStore";
 import { usePlayerStore } from "@/store/usePlayerStore";
@@ -36,9 +40,11 @@ interface TelegramImportModalProps {
 export function TelegramImportModal({ visible, onClose }: TelegramImportModalProps) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [localImporting, setLocalImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [importedSong, setImportedSong] = useState<Song | null>(null);
   const [isSaved, setIsSaved] = useState(false);
+  const [savedFolder, setSavedFolder] = useState<string>("");
 
   const downloadSong = useDownloadStore((s) => s.downloadSong);
   const loadLibrary = useLibraryStore((s) => s.loadLibrary);
@@ -49,12 +55,37 @@ export function TelegramImportModal({ visible, onClose }: TelegramImportModalPro
     setError(null);
     setImportedSong(null);
     setIsSaved(false);
+    setSavedFolder("");
     setLoading(false);
+    setLocalImporting(false);
   };
 
   const handleClose = () => {
     handleReset();
     onClose();
+  };
+
+  const handlePickLocalAudio = async () => {
+    try {
+      setLocalImporting(true);
+      setError(null);
+      const res = await pickAndImportLocalTelegramAudio();
+      if (!res.success || !res.song) {
+        if (res.error && !res.error.includes("إلغاء")) {
+          setError(res.error);
+        }
+        return;
+      }
+
+      await loadLibrary();
+      setImportedSong(res.song);
+      setSavedFolder(res.matchedFolder || res.song.artist);
+      setIsSaved(true);
+    } catch (err: any) {
+      setError(err?.message || "حدث خطأ أثناء استيراد الملف المحلي.");
+    } finally {
+      setLocalImporting(false);
+    }
   };
 
   const handleSearchOrImport = async () => {
@@ -68,6 +99,7 @@ export function TelegramImportModal({ visible, onClose }: TelegramImportModalPro
     setError(null);
     setImportedSong(null);
     setIsSaved(false);
+    setSavedFolder("");
 
     try {
       const song = await MusicApi.importTelegramSong(trimmed);
@@ -83,10 +115,38 @@ export function TelegramImportModal({ visible, onClose }: TelegramImportModalPro
     if (!importedSong) return;
     try {
       setLoading(true);
-      // 1. Save to local SQLite database
+
+      // Match artist with existing library folders
+      const existingSongs = await getDownloadedSongs();
+      const existingArtists = Array.from(
+        new Set(
+          existingSongs
+            .map((s) => s.folderName || s.artist)
+            .filter(Boolean)
+            .filter((name) => name !== "تيليجرام" && name !== "فنان غير معروف")
+        )
+      );
+
+      let targetFolder = importedSong.artist || "فنان غير معروف";
+      const normArtist = normalizeArabicName(targetFolder);
+      if (normArtist) {
+        for (const existing of existingArtists) {
+          const normExisting = normalizeArabicName(existing);
+          if (
+            normExisting === normArtist ||
+            normExisting.includes(normArtist) ||
+            normArtist.includes(normExisting)
+          ) {
+            targetFolder = existing; // Merge directly into the artist's existing folder!
+            break;
+          }
+        }
+      }
+
+      // 1. Save to local SQLite database with matched artist folder
       await upsertSong({
         ...importedSong,
-        folderName: "تيليجرام",
+        folderName: targetFolder,
       });
 
       // 2. Queue for offline download
@@ -95,6 +155,7 @@ export function TelegramImportModal({ visible, onClose }: TelegramImportModalPro
       // 3. Refresh user library
       await loadLibrary();
 
+      setSavedFolder(targetFolder);
       setIsSaved(true);
     } catch (err: any) {
       setError("حدث خطأ أثناء حفظ الأغنية في المكتبة");
@@ -145,8 +206,42 @@ export function TelegramImportModal({ visible, onClose }: TelegramImportModalPro
 
               {/* Instructions */}
               <AuraText style={styles.description}>
-                حمل الأغنية في قناتك على تيليجرام أو قناة Aura، ثم انسخ رابط الرسالة أو رقمها هنا لإضافتها مباشرة لمكتبتك بدون إنترنت.
+                حملت الأغنية على تيليجرام؟ اختر ملف الأغنية مباشرة من جهازك بدون إنترنت، أو الصق رابط الرسالة ليتم حفظها مباشرة داخل مجلد الفنان الأصلي.
               </AuraText>
+
+              {/* Option A: Direct Offline File Import (0 MB internet) */}
+              {!importedSong && (
+                <AuraTouch
+                  onPress={handlePickLocalAudio}
+                  style={styles.offlineFileBtn}
+                  disabled={localImporting || loading}
+                >
+                  {localImporting ? (
+                    <ActivityIndicator size="small" color={Color.gold500} />
+                  ) : (
+                    <>
+                      <FolderOpen size={20} color={Color.gold500} />
+                      <View style={{ flex: 1, paddingHorizontal: Space.s2 }}>
+                        <AuraText style={styles.offlineFileBtnTitle}>
+                          اختيار ملف صوتي محمل من تيليجرام
+                        </AuraText>
+                        <AuraText style={styles.offlineFileBtnSubtitle}>
+                          بدون إنترنت نهائيًا (0 ميجابايت) • إضافة لمجلد الفنان تلقائيًا
+                        </AuraText>
+                      </View>
+                      <Zap size={16} color={Color.gold500} />
+                    </>
+                  )}
+                </AuraTouch>
+              )}
+
+              {!importedSong && (
+                <View style={styles.dividerRow}>
+                  <View style={styles.dividerLine} />
+                  <AuraText style={styles.dividerText}>أو عبر رابط الرسالة</AuraText>
+                  <View style={styles.dividerLine} />
+                </View>
+              )}
 
               {/* Input box */}
               <View style={styles.inputContainer}>
@@ -218,9 +313,18 @@ export function TelegramImportModal({ visible, onClose }: TelegramImportModalPro
                   {isSaved ? (
                     <View style={styles.savedBadgeRow}>
                       <CheckCircle2 size={18} color="#10B981" />
-                      <AuraText style={styles.savedBadgeText}>
-                        تمت الإضافة للمكتبة وجارٍ التحميل للاستماع بدون نت!
-                      </AuraText>
+                      <View style={{ flex: 1 }}>
+                        <AuraText style={styles.savedBadgeText}>
+                          {savedFolder
+                            ? `تمت الإضافة مباشرة لمجلد الفنان «${savedFolder}»!`
+                            : "تمت إضافة الأغنية بنجاح لمكتبتك!"}
+                        </AuraText>
+                        <AuraText style={styles.savedSubText}>
+                          {importedSong.isDownloaded
+                            ? "الملف الصوتي جاهز ويعمل 100% بدون إنترنت ✨"
+                            : "جارٍ التحميل للاستماع بدون إنترنت"}
+                        </AuraText>
+                      </View>
                     </View>
                   ) : (
                     <AuraTouch
@@ -414,8 +518,52 @@ const styles = StyleSheet.create({
   savedBadgeText: {
     fontSize: 12,
     color: "#10B981",
-    fontWeight: "600",
+    fontWeight: "700",
     textAlign: "right",
+  },
+  savedSubText: {
+    fontSize: 11,
+    color: Color.gold300,
+    marginTop: 2,
+    textAlign: "right",
+  },
+  offlineFileBtn: {
+    flexDirection: "row-reverse",
+    alignItems: "center",
+    backgroundColor: "rgba(255, 215, 0, 0.08)",
+    borderWidth: 1.5,
+    borderColor: "rgba(255, 215, 0, 0.35)",
+    borderRadius: Radius.lg,
+    padding: Space.s3,
+    marginBottom: Space.s3,
+    gap: Space.s2,
+  },
+  offlineFileBtnTitle: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: Color.gold300,
+    textAlign: "right",
+  },
+  offlineFileBtnSubtitle: {
+    fontSize: 11,
+    color: Color.text_muted,
+    marginTop: 2,
+    textAlign: "right",
+  },
+  dividerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginVertical: Space.s2,
+    gap: Space.s2,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+  },
+  dividerText: {
+    fontSize: 11,
+    color: Color.text_muted,
   },
   saveBtn: {
     flexDirection: "row-reverse",

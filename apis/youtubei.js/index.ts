@@ -78,26 +78,78 @@ export function getHighResThumbnail(thumbnails: any[]) {
 
 // ── Helper to safely extract songs from any YouTube Music search response ────
 function extractSongs(results: any): any[] {
+  const list: any[] = [];
+
+  // 1. Extract Spotlight/Top Result card (musicCardShelfRenderer)
+  const card = results?.card || (Array.isArray(results?.contents) ? results.contents.find((c: any) => c?.musicCardShelfRenderer)?.musicCardShelfRenderer : null);
+  if (card) {
+    const videoId =
+      card.title?.runs?.[0]?.navigationEndpoint?.watchEndpoint?.videoId ||
+      card.buttons?.[0]?.buttonRenderer?.command?.watchEndpoint?.videoId ||
+      card.onTap?.watchEndpoint?.videoId ||
+      card.id;
+    const title = card.title?.runs?.[0]?.text || card.title?.toString() || "";
+    const subtitleRuns = card.subtitle?.runs || [];
+    let artist = "فنان غير معروف";
+    let duration = 0;
+    for (const run of subtitleRuns) {
+      const txt = (run?.text || "").trim();
+      if (!txt || txt === "•" || txt === "أغنية" || txt === "Song" || txt === "فيديو") continue;
+      if (txt.includes(":")) {
+        duration = toSeconds(txt);
+      } else if (artist === "فنان غير معروف") {
+        artist = txt;
+      }
+    }
+    const thumbs = card.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails || [];
+    if (videoId && title) {
+      list.push({
+        type: "song",
+        songId: videoId,
+        title: sanitizeTitle(title),
+        rawTitle: title,
+        artist,
+        youtubeVideoId: videoId,
+        duration: duration || 240,
+        thumbnailUrl: getHighResThumbnail(thumbs),
+        isSpotlight: true,
+      });
+    }
+  }
+
+  // 2. Extract standard shelves
   const raw =
     results?.songs?.contents ??
     results?.tracks?.contents ??
     results?.contents ??
     [];
-  return (Array.isArray(raw) ? raw : [])
-    .map((v: any) => ({
-      type: "song",
-      songId: v.id ?? v.videoId,
-      title: sanitizeTitle(v.title?.toString() || ""),
-      artist:
-        v.artists?.[0]?.name ??
-        v.author?.name ??
-        v.subtitle?.toString() ??
-        "فنان غير معروف",
-      youtubeVideoId: v.id ?? v.videoId,
-      duration: toSeconds(v.duration?.asSeconds?.() ?? v.duration?.seconds ?? v.duration ?? v.length),
-      thumbnailUrl: getHighResThumbnail(v.thumbnails),
-    }))
-    .filter((v: any) => v.songId && v.title);
+
+  (Array.isArray(raw) ? raw : []).forEach((v: any) => {
+    const items = Array.isArray(v?.contents) ? v.contents : [v];
+    items.forEach((item: any) => {
+      const it = item?.musicResponsiveListItemRenderer || item;
+      const songId = it?.id ?? it?.videoId;
+      const titleStr = it?.title?.toString() || "";
+      if (songId && titleStr) {
+        list.push({
+          type: "song",
+          songId,
+          title: sanitizeTitle(titleStr),
+          rawTitle: titleStr,
+          artist:
+            it.artists?.[0]?.name ??
+            it.author?.name ??
+            it.subtitle?.toString() ??
+            "فنان غير معروف",
+          youtubeVideoId: songId,
+          duration: toSeconds(it.duration?.asSeconds?.() ?? it.duration?.seconds ?? it.duration ?? it.length),
+          thumbnailUrl: getHighResThumbnail(it.thumbnails),
+        });
+      }
+    });
+  });
+
+  return list.filter((v: any) => v.songId && v.title);
 }
 
 function extractAlbums(results: any): any[] {
@@ -294,8 +346,10 @@ async function searchYouTubeFallbacks(query: string): Promise<any | null> {
       youtubeVideoId: v.videoId,
       duration: typeof v.seconds === "number" ? v.seconds : toSeconds(v.duration),
       title: sanitizeTitle(v.title),
+      rawTitle: v.title,
       artist: v.author?.name || "فنان غير معروف",
-      thumbnailUrl: v.thumbnail || ""
+      thumbnailUrl: v.thumbnail || "",
+      views: v.views,
     }));
 
     const albums = (r.playlists || r.lists || []).slice(0, 8).map((p: any) => ({

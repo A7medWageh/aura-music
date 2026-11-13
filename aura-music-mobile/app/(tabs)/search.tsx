@@ -265,6 +265,28 @@ export default function SearchScreen() {
             {loading && (
               <AuraCreativeLoader message={`جارٍ البحث في خزانة الموسيقى عن «${query}»…`} />
             )}
+            {show("songs") && songs.length > 0 && (
+              <>
+                <AuraSection
+                  kicker="أغانٍ"
+                  title="النتائج الأقرب"
+                  actionLabel="تشغيل الكل"
+                  onAction={() => songs.length > 0 && playSong(songs[0], songs)}
+                />
+                <View style={styles.songList}>
+                  {songs.map((s, i) => (
+                    <SongItem
+                      key={`ss-${s.id}-${i}`}
+                      song={s}
+                      queue={songs}
+                      index={i}
+                      rank={i + 1}
+                    />
+                  ))}
+                </View>
+              </>
+            )}
+
             {!loading && show("artists") && artists.length > 0 && (
               <>
                 <AuraSection kicker="فنانون" title={`${artists.length} نتيجة`} align="start" />
@@ -348,27 +370,6 @@ export default function SearchScreen() {
               </>
             )}
 
-            {show("songs") && songs.length > 0 && (
-              <>
-                <AuraSection
-                  kicker="أغانٍ"
-                  title="النتائج الأقرب"
-                  actionLabel="تشغيل الكل"
-                  onAction={() => songs.length > 0 && playSong(songs[0], songs)}
-                />
-                <View style={styles.songList}>
-                  {songs.map((s, i) => (
-                    <SongItem
-                      key={`ss-${s.id}-${i}`}
-                      song={s}
-                      queue={songs}
-                      index={i}
-                      rank={i + 1}
-                    />
-                  ))}
-                </View>
-              </>
-            )}
 
             {!loading && totalCount === 0 && (
               <View style={styles.none}>
@@ -426,7 +427,7 @@ const styles = StyleSheet.create({
     paddingVertical: 0,
     borderWidth: 0,
     ...(Platform.OS === "web"
-      ? ({
+      ? ({
           outlineWidth: 0,
           outlineStyle: "none",
           boxShadow: "none",

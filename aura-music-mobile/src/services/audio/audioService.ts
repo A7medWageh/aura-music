@@ -871,7 +871,7 @@ class AudioService {
     }
     if (this.sound) {
       try {
-        await this.sound.seekTo(positionMillis / 1000);
+        await this.sound.seekTo(positionMillis / 1000, 0, 0);
       } catch (err) {
         console.warn("[AudioService] seekTo error:", err);
       }

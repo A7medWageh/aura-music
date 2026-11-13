@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from "react";
+import React, { useState, useRef, useCallback, useEffect } from "react";
 import {
   View,
   Text,
@@ -26,10 +26,27 @@ export function InteractiveScrubber({
 }: InteractiveScrubberProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [dragSeconds, setDragSeconds] = useState(0);
+  const [pendingSeek, setPendingSeek] = useState<number | null>(null);
+  const pendingSeekTimeoutRef = useRef<any>(null);
   const [barWidth, setBarWidth] = useState(0);
   const barLayoutRef = useRef<{ x: number; width: number }>({ x: 0, width: 0 });
   const barLeftRef = useRef<number>(0);
   const touchRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (pendingSeek !== null) {
+      if (Math.abs(position - pendingSeek) <= 1.0) {
+        setPendingSeek(null);
+        if (pendingSeekTimeoutRef.current) clearTimeout(pendingSeekTimeoutRef.current);
+      }
+    }
+  }, [position, pendingSeek]);
+
+  useEffect(() => {
+    return () => {
+      if (pendingSeekTimeoutRef.current) clearTimeout(pendingSeekTimeoutRef.current);
+    };
+  }, []);
 
   const formatTime = (secs: number) => {
     if (isNaN(secs) || !isFinite(secs) || secs < 0) return "0:00";
@@ -135,6 +152,11 @@ export function InteractiveScrubber({
 
         const target = calcXRef.current(finalX);
         if (isFinite(target) && !isNaN(target)) {
+          setPendingSeek(target);
+          if (pendingSeekTimeoutRef.current) clearTimeout(pendingSeekTimeoutRef.current);
+          pendingSeekTimeoutRef.current = setTimeout(() => {
+            setPendingSeek(null);
+          }, 3000);
           onSeekRef.current(target);
         }
       },
@@ -145,7 +167,7 @@ export function InteractiveScrubber({
     })
   ).current;
 
-  const currentDisplay = isDragging ? dragSeconds : position;
+  const currentDisplay = isDragging ? dragSeconds : (pendingSeek !== null ? pendingSeek : position);
   const clampedDisplay = Math.max(0, Math.min(duration || 0, currentDisplay));
   const remainingTime = Math.max(0, (duration || 0) - clampedDisplay);
   const progressPercent =

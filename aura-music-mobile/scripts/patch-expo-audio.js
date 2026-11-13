@@ -168,6 +168,26 @@ patchFile(path.join(iosDir, "AudioPlayer.swift"), [
         }`,
     description: "Always install audio tap for AURA SOUND ENGINE on readyToPlay",
   },
+  {
+    target: `  func seekTo(seconds: Double, toleranceMillisBefore: Double? = nil, toleranceMillisAfter: Double? = nil) async {
+    let time = CMTime(seconds: seconds, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
+    let toleranceBefore = toleranceMillisBefore.map {
+      CMTime(seconds: $0 / 1000.0, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
+    } ?? CMTime.positiveInfinity
+    let toleranceAfter = toleranceMillisAfter.map {
+      CMTime(seconds: $0 / 1000.0, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
+    } ?? CMTime.positiveInfinity`,
+    replacement: `  func seekTo(seconds: Double, toleranceMillisBefore: Double? = nil, toleranceMillisAfter: Double? = nil) async {
+    let time = CMTime(seconds: seconds, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
+    // Exact sample-accurate seeking so audio scrubbers land on the exact millisecond requested
+    let toleranceBefore = toleranceMillisBefore.map {
+      CMTime(seconds: $0 / 1000.0, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
+    } ?? CMTime.zero
+    let toleranceAfter = toleranceMillisAfter.map {
+      CMTime(seconds: $0 / 1000.0, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
+    } ?? CMTime.zero`,
+    description: "Sample-accurate seeking in AudioPlayer with CMTime.zero tolerance",
+  },
 ]);
 
 // 3. Patch MediaController.swift: Fix lock screen scrubbing and LIVE badge

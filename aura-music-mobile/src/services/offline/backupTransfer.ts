@@ -35,7 +35,7 @@ export type BackupProgress = {
 
 const MAGIC = "AURAPACK"; // 8 bytes
 const FORMAT_VERSION = 1;
-const COPY_CHUNK = 1024 * 1024;
+const COPY_CHUNK = 256 * 1024; // 256 KB non-blocking chunks for Hermes GC & iOS Watchdog safety
 
 /* UTF-8 codecs without TextEncoder/TextDecoder — Hermes does not guarantee them. */
 function encodeUtf8(text: string): Uint8Array {
@@ -94,15 +94,24 @@ async function readExact(handle: any, length: number): Promise<Uint8Array> {
   return out;
 }
 
-async function copyChunked(source: any, target: any, total: number): Promise<void> {
+async function copyChunked(
+  source: any,
+  target: any,
+  total: number,
+  onChunkWritten?: (chunkBytes: number) => void
+): Promise<void> {
   let remaining = total;
   while (remaining > 0) {
-    const chunk = await source.readBytes(Math.min(COPY_CHUNK, remaining));
+    const nextSize = Math.min(COPY_CHUNK, remaining);
+    const chunk = await source.readBytes(nextSize);
     if (!chunk || chunk.length === 0) {
       throw new Error("بيانات الملف غير مكتملة أو تالفة.");
     }
     await target.writeBytes(chunk);
     remaining -= chunk.length;
+    onChunkWritten?.(chunk.length);
+    // Yield to iOS runloop & Hermes garbage collector to prevent 0x8badf00d watchdog kills and Jetsam memory termination
+    await new Promise((r) => setTimeout(r, 6));
   }
 }
 
@@ -277,14 +286,32 @@ async function exportOfflineLibraryToFile(
   try {
     await outHandle.writeBytes(header);
     await outHandle.writeBytes(manifestBytes);
-    for (const item of audioFiles) {
+
+    let writtenBytes = 0;
+    const totalBytes = audioFiles.reduce((acc, it) => acc + it.size, 0) || 1;
+
+    for (let i = 0; i < audioFiles.length; i++) {
+      const item = audioFiles[i];
+      const songInfo = manifestSongs[i];
       const source = new File(item.path);
       const inHandle: any = source.open(FileMode.ReadOnly);
       try {
-        await copyChunked(inHandle, outHandle, item.size);
+        await copyChunked(inHandle, outHandle, item.size, (chunkBytes) => {
+          writtenBytes += chunkBytes;
+          if (onProgress) {
+            onProgress({
+              phase: "exporting",
+              current: i + 1,
+              total: audioFiles.length,
+              currentSongTitle: songInfo?.title || `أغنية ${i + 1}`,
+              percentage: Math.min(99, Math.round((writtenBytes / totalBytes) * 100)),
+            });
+          }
+        });
       } finally {
         inHandle.close();
       }
+      await new Promise((r) => setTimeout(r, 12));
     }
   } finally {
     outHandle.close();
@@ -478,9 +505,6 @@ async function importOfflineLibraryNative(
         let localUri: string | undefined;
 
         if (trackSize > 0) {
-          if (trackStart + trackSize > pack.size) {
-            throw new Error("الملف أقصر من المتوقع.");
-          }
           const target = new File(FileManager.getAudioPath(song.songId));
           target.create({ intermediates: true, overwrite: true });
           const writeHandle: any = target.open(FileMode.WriteOnly);
@@ -501,12 +525,17 @@ async function importOfflineLibraryNative(
           }).catch(() => {});
         }
 
+        const cleanFolder =
+          song.folderName && song.folderName !== "تيليجرام"
+            ? song.folderName
+            : (song.artist || "فنان غير معروف");
+
         const songObj: Song = {
           id: song.songId,
           title: song.title,
           artist: song.artist,
           albumName: song.albumName,
-          folderName: song.folderName,
+          folderName: cleanFolder,
           thumbnailUrl: song.thumbnailUrl,
           youtubeVideoId: song.youtubeVideoId,
           duration: song.duration || 210,
@@ -521,6 +550,7 @@ async function importOfflineLibraryNative(
           await markSongDownloaded(song.songId, localUri, trackSize, song.thumbnailUrl);
         }
         importedCount++;
+        await new Promise((r) => setTimeout(r, 12));
       } catch (err) {
         console.warn(`[BackupTransfer] Error importing song ${song.songId}:`, err);
         errors++;
