@@ -67,7 +67,7 @@ typedef struct {
         _sampleRate = 44100.0;
         _channelCount = 2;
         _rotationPhase = 0.0;
-        _rotationPhaseInc = 2.0 * M_PI / (44100.0 * 1.8); // 1.8s rapid cycle!
+        _rotationPhaseInc = 2.0 * M_PI / (44100.0 * 1.35); // Rapid, distinctly noticeable 1.35s 8D cycle
         _currentAppliedGain = 1.0f;
         
         // Default 10 ISO standard center frequencies
@@ -96,7 +96,7 @@ typedef struct {
     os_unfair_lock_lock(&_engineLock);
     _sampleRate = (sampleRate > 8000.0) ? sampleRate : 44100.0;
     _channelCount = (channelCount > 0 && channelCount <= AURA_MAX_CHANNELS) ? channelCount : 2;
-    _rotationPhaseInc = 2.0 * M_PI / (_sampleRate * 1.8);
+    _rotationPhaseInc = 2.0 * M_PI / (_sampleRate * 1.35);
     [self rebuildFilters];
     os_unfair_lock_unlock(&_engineLock);
 }
@@ -484,11 +484,12 @@ static inline float softSaturate(float x) {
                 _rotationPhase += _rotationPhaseInc;
                 if (_rotationPhase >= 2.0 * M_PI) _rotationPhase -= 2.0 * M_PI;
                 
-                // Pan mid and side smoothly between ears
-                float panL = 0.707f * (cosf((panAngle + 1.0f) * 0.25f * M_PI) + 0.3f);
-                float panR = 0.707f * (sinf((panAngle + 1.0f) * 0.25f * M_PI) + 0.3f);
-                l = (mid + side * 1.4f) * panL;
-                r = (mid - side * 1.4f) * panR;
+                // Equal-power spherical 8D ear rotation: sweeps fully between Left and Right earcups
+                float theta = (panAngle + 1.0f) * 0.25f * (float)M_PI;
+                float panL = cosf(theta);
+                float panR = sinf(theta);
+                l = (mid + side * 1.25f) * panL * 1.25f;
+                r = (mid - side * 1.25f) * panR * 1.25f;
             } else {
                 l = mid + side * sideGain;
                 r = mid - side * sideGain;
@@ -535,10 +536,11 @@ static inline float softSaturate(float x) {
                 _rotationPhase += _rotationPhaseInc;
                 if (_rotationPhase >= 2.0 * M_PI) _rotationPhase -= 2.0 * M_PI;
                 
-                float panL = 0.707f * (cosf((panAngle + 1.0f) * 0.25f * M_PI) + 0.3f);
-                float panR = 0.707f * (sinf((panAngle + 1.0f) * 0.25f * M_PI) + 0.3f);
-                l = (mid + side * 1.4f) * panL;
-                r = (mid - side * 1.4f) * panR;
+                float theta = (panAngle + 1.0f) * 0.25f * (float)M_PI;
+                float panL = cosf(theta);
+                float panR = sinf(theta);
+                l = (mid + side * 1.25f) * panL * 1.25f;
+                r = (mid - side * 1.25f) * panR * 1.25f;
             } else {
                 l = mid + side * width;
                 r = mid - side * width;

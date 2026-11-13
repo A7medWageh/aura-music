@@ -190,8 +190,8 @@ class AudioService {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.type = "sine";
-      osc.frequency.value = 0.18; // one full 360° sweep every ~5.5 s
-      gain.gain.value = 0.85;
+      osc.frequency.value = 0.65; // Noticeable, rapid 360° sweep every ~1.5 s
+      gain.gain.value = 0.95;
       osc.connect(gain);
       gain.connect(panner.pan);
       osc.start();

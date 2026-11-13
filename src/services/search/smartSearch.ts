@@ -57,10 +57,29 @@ function scoreMatch(query: string, title: string, artist: string): number {
   return Math.round((matched / words.length) * 40);
 }
 
+// Normalize colloquial Egyptian & Arabic common joins and typos
+export function normalizeColloquialArabic(text: string): string {
+  if (!text) return "";
+  return text
+    .replace(/(?:^|\s)يولد(?=\s|$)/g, " يا ولد")
+    .replace(/(?:^|\s)ياولد(?=\s|$)/g, " يا ولد")
+    .replace(/(?:^|\s)يازين(?=\s|$)/g, " يا زين")
+    .replace(/(?:^|\s)ياواد(?=\s|$)/g, " يا واد")
+    .replace(/(?:^|\s)يلى(?=\s|$)/g, " يا اللي")
+    .replace(/(?:^|\s)ياللى(?=\s|$)/g, " يا اللي")
+    .replace(/(?:^|\s)يابن(?=\s|$)/g, " يا ابن")
+    .replace(/(?:^|\s)ياسيد[يي](?=\s|$)/g, " يا سيدي")
+    .replace(/(?:^|\s)ياحبيب[يي](?=\s|$)/g, " يا حبيبي")
+    .replace(/(?:^|\s)ياجميل(?=\s|$)/g, " يا جميل")
+    .replace(/(?:^|\s)ماتيج[يي](?=\s|$)/g, " ما تيجي")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 // Normalize Arabic letters so "أ/إ/آ" match "ا", "ة" matches "ه", "ى" matches "ي",
 // and hamza forms (ؤ/ئ/ء) collapse into their base letters — "خنزؤور" ≈ "خنزور".
 function normArabic(s: string): string {
-  return s
+  return normalizeColloquialArabic(s)
     .replace(/[أإآٱ]/g, "ا")
     .replace(/ى/g, "ي")
     .replace(/ة/g, "ه")
@@ -119,7 +138,8 @@ function cleanSearchQuery(raw: string): string {
 }
 
 function parseQueryIntent(raw: string): { cleanQ: string; titlePart: string; artistPart: string; invertedQ: string } {
-  const cleaned = raw
+  const normRaw = normalizeColloquialArabic(raw);
+  const cleaned = normRaw
     .replace(/^(اغنية|أغنية|اغاني|أغاني|كليب|فيديو|تراك|نزل|تحميل|استماع)\s+/gi, "")
     .replace(/\s+(اغنية|أغنية|كليب|فيديو|تراك)$/gi, "")
     .trim();
@@ -154,7 +174,7 @@ function parseQueryIntent(raw: string): { cleanQ: string; titlePart: string; art
     }
   }
 
-  const cleanQ = (artistPart && titlePart) ? `${titlePart} ${artistPart}` : cleanSearchQuery(raw);
+  const cleanQ = (artistPart && titlePart) ? `${titlePart} ${artistPart}` : cleanSearchQuery(normRaw);
   const invertedQ = (artistPart && titlePart) ? `${artistPart} ${titlePart}` : "";
 
   return { cleanQ, titlePart, artistPart, invertedQ };
@@ -187,7 +207,7 @@ function tokenCoverage(query: string, title: string, artist: string): number {
 
 
 export async function smartSearch(searchTerm: string) {
-  const q = searchTerm.trim();
+  const q = normalizeColloquialArabic(searchTerm.trim());
   if (!q) return { songs: [], artists: [], albums: [] };
 
   // Cache hit
@@ -204,6 +224,10 @@ export async function smartSearch(searchTerm: string) {
   }
   if (invertedQ && invertedQ.toLowerCase() !== primaryQuery.toLowerCase() && invertedQ.toLowerCase() !== q.toLowerCase()) {
     searchPromises.push(searchYouTube(invertedQ).catch(() => emptyYt));
+  }
+  // If user searched for both title & artist, explicitly probe for the official video clip
+  if (titlePart && artistPart) {
+    searchPromises.push(searchYouTube(`${titlePart} ${artistPart} فيديو كليب`).catch(() => emptyYt));
   }
 
   const [localCatalog, ...ytResultsList] = await Promise.all([
@@ -236,6 +260,12 @@ export async function smartSearch(searchTerm: string) {
   const ytArtistsAll = mergeByKey(allYtArtists, "artistId");
 
   function computeRelevance(item: any): number {
+    const combinedHaystack = `${item.title || ""} ${item.artist || ""}`.toLowerCase();
+    // Strict Junk Channel / Wedding Laser recording rejection
+    if (/(تصوير\s*و?الليزر|تنظيم\s*الحفلات|مليونية|مواهب\s*الحظ|عفاريت\s*الحظ|استوديو\s*تصوير|فيديو\s*سيرفيس|عازف\s*أ?ورج|أ?ورج\s*مصر|تسجيلات\s*(أفراح|الحظ)|معزوفات)/i.test(combinedHaystack)) {
+      return -1000;
+    }
+
     const normTitle = normArabic(item.title || "").toLowerCase();
     const rawTitleLower = (item.title || "").toLowerCase();
     const normArt = normArabic(item.artist || "").toLowerCase();
@@ -270,6 +300,26 @@ export async function smartSearch(searchTerm: string) {
       score += 90;
     }
 
+    // 1b. Dual Title + Artist Perfect Alignment (Direct match when user asked for song + singer)
+    if (nTitlePart && nArtistPart) {
+      const hasTitlePart = normTitle.includes(nTitlePart) || normTitle.includes(normArabic(nTitlePart));
+      const hasArtistPart = normArt.includes(nArtistPart) || normTitle.includes(nArtistPart) ||
+        (latinArtist && rawArtLower.includes(latinArtist)) ||
+        normTitle.includes(normArabic(nArtistPart));
+
+      if (hasTitlePart && hasArtistPart) {
+        score += 800; // Overwhelming priority for correct song by requested artist
+      } else if (hasTitlePart && !hasArtistPart) {
+        // Track has matching title but performed by a different, amateur or wedding cover artist
+        if (/كفر|cover|أفراح|عازف|مهرجان|حفلة/i.test(combinedHaystack)) {
+          score -= 500;
+        }
+      } else if (!hasTitlePart && !hasArtistPart) {
+        // Completely unrelated result
+        score -= 600;
+      }
+    }
+
     // 2. Token coverage
     const covQ = tokenCoverage(q, item.title ?? "", item.artist ?? "");
     const covClean = tokenCoverage(cleanQ, item.title ?? "", item.artist ?? "");
@@ -300,12 +350,12 @@ export async function smartSearch(searchTerm: string) {
 
     // 5. Official badges in video title — boost official video clips, theme songs & master tracks
     if (/official\s*(audio|lyric|video|clip|music\s*video)|كليب\s*رسمي|فيديو\s*كليب|النسخة\s*الأصلية|الأغنية\s*الرسمية|تتر\s*مسلسل|شارة\s*مسلسل|أغنية\s*مسلسل/i.test(item.title || "")) {
-      score += 240;
+      score += 350;
     }
 
     // 5b. Prioritize the official Music Video / Clip to always rank #1
     if (/فيديو\s*كليب|كليب\s*رسمي|official\s*(music\s*video|video|clip)|كليب\s*أصلي|كليب/i.test(item.title || "")) {
-      score += 150;
+      score += 450;
     }
 
     // 6. Original master track prioritization (boost authentic songs over covers & trends)

@@ -130,8 +130,8 @@ function extractArtists(results: any, artistResults: any): any[] {
   return Array.from(map.values());
 }
 
-// ── Junk/noise filter — keeps kids content, vlogs, TV drama scenes & non-music videos out of results ──
-const JUNK_PATTERN = /(أ?غاني?\s*أ?طفال|كرتون|انمي|anime|kids|nursery|cocomelon|baby\s*(shark|bus|yin)?|طيور\s*الجنة|عصافير|كاريوكي|karaoke|بودكاست|podcast|vlog|فلوج|تحدي|challenge|بريك|مقاطع\s*قصيرة|shorts|جيم|قيمنق|gaming|playstation|فوفوزيلا|لقاء\s*مع|حوار\s*مع|مقابلة\s*مع|تصريحات|فضيحة|تسريب|عاجل|ردة\s*فعل|رياكشن|\breaction\b)/i;
+// ── Junk/noise filter — keeps kids content, vlogs, TV drama scenes, amateur wedding recordings & non-music videos out of results ──
+const JUNK_PATTERN = /(أ?غاني?\s*أ?طفال|كرتون|انمي|anime|kids|nursery|cocomelon|baby\s*(shark|bus|yin)?|طيور\s*الجنة|عصافير|كاريوكي|karaoke|بودكاست|podcast|vlog|فلوج|تحدي|challenge|بريك|مقاطع\s*قصيرة|shorts|جيم|قيمنق|gaming|playstation|فوفوزيلا|لقاء\s*مع|حوار\s*مع|مقابلة\s*مع|تصريحات|فضيحة|تسريب|عاجل|ردة\s*فعل|رياكشن|\breaction\b|تصوير\s*و?الليزر|تنظيم\s*الحفلات|مليونية|مواهب\s*الحظ|عفاريت\s*الحظ|\bحظ\b|استوديو\s*تصوير|فيديو\s*سيرفيس|عازف\s*أ?ورج|أ?ورج\s*مصر|تسجيلات\s*(أفراح|الحظ)|معزوفات|بصوت\s*السناجب)/i;
 const DRAMA_SCENE_JUNK = /(مشهد\s*من|مشاهد\s*من|لقطة\s*من|لقطات\s*من|كواليس|الحلقة\s*\d+|حلقة\s*\d+|ملخص|لحظة\s*(قبض|وفاة|مقتل|ضرب|اعتراف|انتقام|طلاق)|خناقة|مواجهة|أقوى\s*مشاهد)/i;
 const SONG_OVERRIDE_PATTERN = /(تتر|شارة|أغنية|اغنية|كليب|فيديو\s*كليب|غناء|أداء|بصوت|audio|music\s*video|official)/i;
 

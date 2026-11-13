@@ -1,6 +1,6 @@
 import type { Song } from "@/types/music";
 import { latinizeArtist, normalizeArabicName } from "@/utils/latinize";
-import { stripSongNoise } from "@/utils/arabicSearch";
+import { normalizeArabic, normalizeColloquialArabic, stripSongNoise } from "@/utils/arabicSearch";
 
 /**
  * Keeps the mobile catalog professional: only official releases by recognised
@@ -12,7 +12,7 @@ import { stripSongNoise } from "@/utils/arabicSearch";
 const UNKNOWN_ARTIST = /^(فنان غير معروف|unknown artist|unknown|artist|فنان)$/i;
 
 const JUNK_MEDIA_PATTERN =
-  /(أ?غاني?\s*أ?طفال|كرتون|انمي|anime|\bkids\b|nursery|cocomelon|baby\s*(shark|bus|yin)?|طيور\s*الجنة|عصافير|كاريوكي|karaoke|بودكاست|podcast|vlog|فلوج|تحدي|challenge|بريك|مقاطع\s*قصيرة|shorts|جيم|قيمنق|gaming|playstation|حالة\s*واتس|ستوري|ستوريات|ترجمة|مترجم|مترجمة|translation|subtitles|indonesian|spanish sub|\b8d\b|\b3d\b|بطيء|مسرع|slowed|sped\s*up|reverb|ريمكس|remix|معدل|تعديل|باس\s*بوست|bass\s*boosted|موسيقى\s*فقط|بدون\s*(موسيقى|صوت)|instrumental|backing\s*track|\bcover\b|كفر|تقليد)/i;
+  /(أ?غاني?\s*أ?طفال|كرتون|انمي|anime|\bkids\b|nursery|cocomelon|baby\s*(shark|bus|yin)?|طيور\s*الجنة|عصافير|كاريوكي|karaoke|بودكاست|podcast|vlog|فلوج|تحدي|challenge|بريك|مقاطع\s*قصيرة|shorts|جيم|قيمنق|gaming|playstation|حالة\s*واتس|ستوري|ستوريات|ترجمة|مترجم|مترجمة|translation|subtitles|indonesian|spanish sub|\b8d\b|\b3d\b|بطيء|مسرع|slowed|sped\s*up|reverb|ريمكس|remix|معدل|تعديل|باس\s*بوست|bass\s*boosted|موسيقى\s*فقط|بدون\s*(موسيقى|صوت)|instrumental|backing\s*track|\bcover\b|كفر|تقليد|تصوير\s*و?الليزر|تنظيم\s*الحفلات|مليونية|مواهب\s*الحظ|عفاريت\s*الحظ|\bحظ\b|استوديو\s*تصوير|فيديو\s*سيرفيس|عازف\s*أ?ورج|أ?ورج\s*مصر|تسجيلات\s*(أفراح|الحظ)|معزوفات)/i;
 
 const DRAMA_SCENE_JUNK =
   /(مشهد\s*من|مشاهد\s*من|لقطة\s*من|لقطات\s*من|كواليس|الحلقة\s*\d+|حلقة\s*\d+|ملخص\s*مسلسل|لحظة\s*(قبض|وفاة|مقتل|ضرب|انتقام|طلاق)|خناقة|مواجهة|أقوى\s*مشاهد)/i;
@@ -202,13 +202,37 @@ function calculateRelevance(
   cleanQ: string,
   normQuery: string,
   latinQ: string,
-  words: string[]
+  words: string[],
+  detectedArtist: string,
+  detectedTitle: string
 ): number {
   let score = 0;
   const rawTitle = (song.title || "").toLowerCase();
   const rawArtist = (song.artist || "").toLowerCase();
+  const combined = `${rawTitle} ${rawArtist}`;
 
-  // 1. Exact Title Match
+  // Strict junk channel check
+  if (/(تصوير\s*و?الليزر|تنظيم\s*الحفلات|مليونية|مواهب\s*الحظ|عفاريت\s*الحظ|استوديو\s*تصوير|فيديو\s*سيرفيس|عازف\s*أ?ورج|أ?ورج\s*مصر|تسجيلات\s*(أفراح|الحظ)|معزوفات)/i.test(combined)) {
+    return -99999;
+  }
+
+  // 1. Dual Target Match (When user requested Title + Artist, e.g. "يا زين يا ولد الزين ابراهيم الحكمي")
+  if (detectedArtist && detectedTitle) {
+    const hasTitlePart = normTitle.includes(detectedTitle) || rawTitle.includes(detectedTitle);
+    const hasArtistPart = normArtist.includes(detectedArtist) || normTitle.includes(detectedArtist) || rawArtist.includes(detectedArtist) || rawTitle.includes(detectedArtist);
+
+    if (hasTitlePart && hasArtistPart) {
+      score += 2500; // Overwhelming priority for correct song & requested artist
+    } else if (hasTitlePart && !hasArtistPart) {
+      if (/كفر|cover|أفراح|عازف|مهرجان|حفلة/i.test(combined)) {
+        score -= 800;
+      }
+    } else if (!hasTitlePart && !hasArtistPart) {
+      score -= 1500;
+    }
+  }
+
+  // 2. Exact Title Match
   if (normTitle === cleanQ || latinTitle === latinQ) {
     score += 650;
   } else if (normTitle.startsWith(cleanQ) || latinTitle.startsWith(latinQ)) {
@@ -217,41 +241,48 @@ function calculateRelevance(
     score += 250;
   }
 
-  // 2. Artist match
+  // 3. Artist match
   if (normArtist.includes(cleanQ) || latinizeArtist(song.artist).toLowerCase().includes(latinQ)) {
     score += 180;
   }
 
-  // 3. Official Release & Studio Indicators (Includes Theme Songs & Video Clips)
+  // 4. Official Release & Video Clip Indicators (Promote Official Video Clips to #1)
+  const isVideoClip =
+    rawTitle.includes("كليب") ||
+    rawTitle.includes("فيديو كليب") ||
+    rawTitle.includes("كليب رسمي") ||
+    rawTitle.includes("official music video") ||
+    rawTitle.includes("official video") ||
+    rawTitle.includes("official clip");
+  if (isVideoClip) score += 600;
+
   const isOfficial =
     rawTitle.includes("official") ||
     rawTitle.includes("audio") ||
-    rawTitle.includes("video") ||
     rawTitle.includes("رسمي") ||
     rawTitle.includes("الأصلية") ||
     rawTitle.includes("الاصلية") ||
-    rawTitle.includes("كليب") ||
     rawTitle.includes("تتر") ||
     rawTitle.includes("شارة") ||
     rawTitle.includes("مسلسل") ||
     rawArtist.includes("topic");
-  if (isOfficial) score += 250;
+  if (isOfficial) score += 300;
 
-  // 4. Established / Famous Artist Bonus
+  // 5. Established / Famous Artist Bonus
   if (isFamousArtist(song.artist)) score += 150;
 
-  // 5. Popularity / View count
+  // 6. Popularity / View count
   if (song.viewCount && song.viewCount > 1000000) {
     score += Math.min(100, Math.floor(Math.log10(song.viewCount) * 15));
   }
 
-  // 6. Token matching
+  // 7. Token matching
   for (const w of words) {
     if (normTitle.includes(w) || latinTitle.includes(w)) score += 40;
     if (normArtist.includes(w)) score += 20;
   }
 
-  // 7. Unofficial / Cover / Live / Karaoke Penalties (Do not penalize official singer attributions!)
+  // 8. Unofficial / Cover / Live / Karaoke Penalties (Do not penalize official singer attributions!)
   if (
     rawTitle.includes("remix") ||
     rawTitle.includes("ريمكس") ||
@@ -269,7 +300,7 @@ function calculateRelevance(
     rawTitle.includes("لايف") ||
     rawTitle.includes("مهرجان")
   ) {
-    score -= 350;
+    score -= 450;
   }
 
   return score;
@@ -280,23 +311,42 @@ function calculateRelevance(
  * appears as result #1, demoting covers, remixes, and fan uploads.
  */
 export function rankSearchSongs(songs: Song[], rawQuery: string): Song[] {
-  const normQuery = normalizeArabicName(rawQuery);
+  const normQuery = normalizeArabic(rawQuery);
   const cleanQ = stripSongNoise(normQuery);
   const latinQ = latinizeArtist(rawQuery).toLowerCase();
-  const words = cleanQ.split(" ").filter((w) => w.length > 1);
+
+  // Detect artist and title intent
+  let detectedArtist = "";
+  let detectedTitle = "";
+
+  for (const name of FAMOUS_ARTISTS) {
+    const n = normalizeArabic(name);
+    if (!n) continue;
+    if (normQuery.startsWith(n + " ")) {
+      detectedArtist = n;
+      detectedTitle = normQuery.slice(n.length).trim();
+      break;
+    } else if (normQuery.endsWith(" " + n)) {
+      detectedArtist = n;
+      detectedTitle = normQuery.slice(0, normQuery.length - n.length).trim();
+      break;
+    }
+  }
+
+  const words = (detectedTitle || cleanQ).split(" ").filter((w) => w.length > 1);
 
   return [...songs].sort((a, b) => {
-    const aNormTitle = normalizeArabicName(stripSongNoise(a.title));
-    const bNormTitle = normalizeArabicName(stripSongNoise(b.title));
+    const aNormTitle = normalizeArabic(stripSongNoise(a.title));
+    const bNormTitle = normalizeArabic(stripSongNoise(b.title));
 
-    const aNormArtist = normalizeArabicName(a.artist);
-    const bNormArtist = normalizeArabicName(b.artist);
+    const aNormArtist = normalizeArabic(a.artist);
+    const bNormArtist = normalizeArabic(b.artist);
 
     const aLatinTitle = latinizeArtist(a.title).toLowerCase();
     const bLatinTitle = latinizeArtist(b.title).toLowerCase();
 
-    const scoreA = calculateRelevance(a, aNormTitle, aNormArtist, aLatinTitle, cleanQ, normQuery, latinQ, words);
-    const scoreB = calculateRelevance(b, bNormTitle, bNormArtist, bLatinTitle, cleanQ, normQuery, latinQ, words);
+    const scoreA = calculateRelevance(a, aNormTitle, aNormArtist, aLatinTitle, cleanQ, normQuery, latinQ, words, detectedArtist, detectedTitle);
+    const scoreB = calculateRelevance(b, bNormTitle, bNormArtist, bLatinTitle, cleanQ, normQuery, latinQ, words, detectedArtist, detectedTitle);
 
     return scoreB - scoreA;
   });

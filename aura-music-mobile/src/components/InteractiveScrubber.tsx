@@ -7,7 +7,6 @@ import {
   GestureResponderEvent,
   PanResponderGestureState,
   LayoutChangeEvent,
-  Platform,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Color, Radius, Space } from "@/theme";
@@ -29,6 +28,7 @@ export function InteractiveScrubber({
   const [dragSeconds, setDragSeconds] = useState(0);
   const [barWidth, setBarWidth] = useState(0);
   const barLayoutRef = useRef<{ x: number; width: number }>({ x: 0, width: 0 });
+  const barLeftRef = useRef<number>(0);
   const touchRef = useRef<any>(null);
 
   const formatTime = (secs: number) => {
@@ -63,23 +63,13 @@ export function InteractiveScrubber({
     }
   };
 
-  const calculateSecondsFromEvent = useCallback(
-    (evt: GestureResponderEvent) => {
+  const calculateSecondsFromX = useCallback(
+    (currentX: number) => {
       const width = barLayoutRef.current.width || barWidth;
       if (!width || width <= 0 || !duration || duration <= 0) return 0;
-      const native = evt.nativeEvent as any;
-      const pageX = typeof native.pageX === "number" ? native.pageX : NaN;
-      const pageLeft =
-        typeof window !== "undefined" ? barLayoutRef.current.x + (window.scrollX || 0) : barLayoutRef.current.x;
-      // locationX is relative to the touch area (its children are pointer-transparent), so it stays
-      // correct even when the player shifts, scrolls, or the async native measurement is stale.
-      const localX =
-        typeof native.locationX === "number" && isFinite(native.locationX) ? native.locationX : NaN;
-      const rawX = isFinite(localX) ? localX : isFinite(pageX) ? pageX - pageLeft : 0;
-      const clampedX = Math.max(0, Math.min(width, isFinite(rawX) ? rawX : 0));
-      // The track runs right-to-left (Arabic-first UI) while locationX is always measured from the
-      // left edge, so the fraction is inverted.
-      const fraction = 1 - clampedX / width;
+      const clampedX = Math.max(0, Math.min(width, isFinite(currentX) ? currentX : 0));
+      // Standard LTR audio timeline: 0 at left edge, full duration at right edge
+      const fraction = clampedX / width;
       const target = fraction * duration;
       return isFinite(target) && !isNaN(target) ? target : 0;
     },
@@ -88,8 +78,8 @@ export function InteractiveScrubber({
 
   // PanResponder is created once; route through refs so drags always use the
   // latest duration/position instead of the values captured on mount.
-  const calcRef = useRef(calculateSecondsFromEvent);
-  calcRef.current = calculateSecondsFromEvent;
+  const calcXRef = useRef(calculateSecondsFromX);
+  calcXRef.current = calculateSecondsFromX;
   const durationRef = useRef(duration);
   durationRef.current = duration;
   const onSeekRef = useRef(onSeek);
@@ -103,21 +93,47 @@ export function InteractiveScrubber({
         if (!durationRef.current || durationRef.current <= 0) return;
         measureBar();
         setIsDragging(true);
-        const target = calcRef.current(evt);
+
+        const native = evt.nativeEvent as any;
+        const locX = typeof native.locationX === "number" && isFinite(native.locationX) ? native.locationX : NaN;
+        const pageX = typeof native.pageX === "number" && isFinite(native.pageX) ? native.pageX : NaN;
+
+        if (isFinite(pageX) && isFinite(locX)) {
+          barLeftRef.current = pageX - locX;
+        } else if (isFinite(barLayoutRef.current.x)) {
+          barLeftRef.current = barLayoutRef.current.x;
+        }
+
+        const startX = isFinite(locX) ? locX : (isFinite(pageX) ? pageX - barLeftRef.current : 0);
+        const target = calcXRef.current(startX);
         setDragSeconds(target);
       },
       onPanResponderMove: (
         evt: GestureResponderEvent,
-        _gestureState: PanResponderGestureState
+        gestureState: PanResponderGestureState
       ) => {
         if (!durationRef.current || durationRef.current <= 0) return;
-        const target = calcRef.current(evt);
+        const currentX = gestureState.moveX - barLeftRef.current;
+        const target = calcXRef.current(currentX);
         setDragSeconds(target);
       },
-      onPanResponderRelease: (evt: GestureResponderEvent) => {
+      onPanResponderRelease: (
+        evt: GestureResponderEvent,
+        gestureState: PanResponderGestureState
+      ) => {
         setIsDragging(false);
         if (!durationRef.current || durationRef.current <= 0) return;
-        const target = calcRef.current(evt);
+
+        // If dragged use moveX, if single tap without movement use locationX
+        let finalX = gestureState.moveX - barLeftRef.current;
+        if (Math.abs(gestureState.dx) < 2) {
+          const locX = (evt.nativeEvent as any)?.locationX;
+          if (typeof locX === "number" && isFinite(locX)) {
+            finalX = locX;
+          }
+        }
+
+        const target = calcXRef.current(finalX);
         if (isFinite(target) && !isNaN(target)) {
           onSeekRef.current(target);
         }
@@ -152,23 +168,21 @@ export function InteractiveScrubber({
           <View style={[styles.fill, { width: `${progressPercent}%` }]}>
             <LinearGradient
               colors={[Color.gold700, accent, Color.gold300]}
-              start={{ x: 1, y: 0.5 }}
-              end={{ x: 0, y: 0.5 }}
+              start={{ x: 0, y: 0.5 }}
+              end={{ x: 1, y: 0.5 }}
               style={StyleSheet.absoluteFill}
             />
           </View>
         </View>
 
-        {/* Thumb Handle: anchored to the fill's starting edge. Native mirrors `start` under RTL
-            while web always reads it as left, so web names the right edge directly. */}
+        {/* Thumb Handle: strictly Left-to-Right timeline matching universal media players */}
         <View
           pointerEvents="none"
           style={[
             styles.thumb,
-            Platform.OS === "web"
-              ? { right: `${progressPercent}%`, marginRight: -7 }
-              : { start: `${progressPercent}%`, marginStart: -7 },
             {
+              left: `${progressPercent}%`,
+              marginLeft: -7,
               backgroundColor: accent,
               transform: [{ translateY: -7 }, { scale: isDragging ? 1.3 : 1 }],
             },
@@ -178,7 +192,7 @@ export function InteractiveScrubber({
         </View>
       </View>
 
-      {/* Time Row */}
+      {/* Time Row: 0:00 on the left, remaining on the right */}
       <View style={styles.timeRow}>
         <Text style={styles.timeText}>{formatTime(clampedDisplay)}</Text>
         <Text style={styles.timeText}>-{formatTime(remainingTime)}</Text>
@@ -192,12 +206,14 @@ const styles = StyleSheet.create({
     width: "100%",
     paddingHorizontal: Space.s2,
     marginVertical: Space.s1,
+    direction: "ltr",
   },
   touchArea: {
     width: "100%",
-    height: 34,
+    height: 36,
     justifyContent: "center",
     position: "relative",
+    direction: "ltr",
   },
   track: {
     width: "100%",
@@ -205,15 +221,20 @@ const styles = StyleSheet.create({
     borderRadius: Radius.pill,
     backgroundColor: Color.ink4,
     overflow: "hidden",
+    position: "relative",
+    direction: "ltr",
   },
   fill: {
-    height: "100%",
+    position: "absolute",
+    left: 0,
+    top: 0,
+    bottom: 0,
     borderRadius: Radius.pill,
     overflow: "hidden",
   },
   thumb: {
     position: "absolute",
-    top: 17,
+    top: 18,
     width: 14,
     height: 14,
     borderRadius: Radius.pill,
@@ -240,6 +261,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingTop: Space.s1,
     paddingHorizontal: 2,
+    direction: "ltr",
   },
   timeText: {
     fontFamily: "Plex_500",
@@ -248,4 +270,3 @@ const styles = StyleSheet.create({
     fontVariant: ["tabular-nums"],
   },
 });
-

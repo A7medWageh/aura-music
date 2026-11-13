@@ -4,6 +4,7 @@ import {
   StyleSheet,
   PanResponder,
   type GestureResponderEvent,
+  type PanResponderGestureState,
   type LayoutChangeEvent,
 } from "react-native";
 import { Color, Radius } from "@/theme";
@@ -24,6 +25,7 @@ export function VolumeSlider({
   const widthRef = useRef(0);
   const wrapRef = useRef<any>(null);
   const boxRef = useRef({ left: 0, width: 0 });
+  const barLeftRef = useRef<number>(0);
   const [dragging, setDragging] = useState(false);
   const [dragValue, setDragValue] = useState(0);
 
@@ -57,49 +59,63 @@ export function VolumeSlider({
     }
   };
 
-  const valueFromEvent = (evt: GestureResponderEvent) => {
+  const calculateFractionFromX = (currentX: number) => {
     const width = boxRef.current.width || widthRef.current;
     if (!width || width <= 0) return 0;
-    const native = evt.nativeEvent as any;
-    const pageX = typeof native.pageX === "number" ? native.pageX : NaN;
-    const pageLeft =
-      typeof window !== "undefined" ? boxRef.current.left + (window.scrollX || 0) : boxRef.current.left;
-    const localX =
-      typeof native.locationX === "number" && isFinite(native.locationX) ? native.locationX : NaN;
-    const rawX = isFinite(localX) ? localX : isFinite(pageX) ? pageX - pageLeft : 0;
-    const x = Math.max(0, Math.min(width, isFinite(rawX) ? rawX : 0));
-    // Standard left-to-right audio level control
-    return Math.max(0, Math.min(1, x / width));
+    const clampedX = Math.max(0, Math.min(width, isFinite(currentX) ? currentX : 0));
+    return Math.max(0, Math.min(1, clampedX / width));
   };
 
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => !disabledRef.current,
       onMoveShouldSetPanResponder: () => !disabledRef.current,
-      onPanResponderGrant: (evt) => {
+      onPanResponderGrant: (evt: GestureResponderEvent) => {
         if (disabledRef.current) return;
         measure();
         setDragging(true);
-        const next = valueFromEvent(evt);
+
+        const native = evt.nativeEvent as any;
+        const locX = typeof native.locationX === "number" && isFinite(native.locationX) ? native.locationX : NaN;
+        const pageX = typeof native.pageX === "number" && isFinite(native.pageX) ? native.pageX : NaN;
+
+        if (isFinite(pageX) && isFinite(locX)) {
+          barLeftRef.current = pageX - locX;
+        } else if (isFinite(boxRef.current.left)) {
+          barLeftRef.current = boxRef.current.left;
+        }
+
+        const startX = isFinite(locX) ? locX : (isFinite(pageX) ? pageX - barLeftRef.current : 0);
+        const next = calculateFractionFromX(startX);
         setDragValue(next);
         onChangeRef.current(next);
       },
-      onPanResponderMove: (evt) => {
+      onPanResponderMove: (evt: GestureResponderEvent, gestureState: PanResponderGestureState) => {
         if (disabledRef.current) return;
-        const next = valueFromEvent(evt);
+        const currentX = gestureState.moveX - barLeftRef.current;
+        const next = calculateFractionFromX(currentX);
         setDragValue(next);
         onChangeRef.current(next);
       },
-      onPanResponderRelease: (evt) => {
+      onPanResponderRelease: (evt: GestureResponderEvent, gestureState: PanResponderGestureState) => {
         if (disabledRef.current) return;
-        const next = valueFromEvent(evt);
-        setDragValue(next);
         setDragging(false);
+
+        let finalX = gestureState.moveX - barLeftRef.current;
+        if (Math.abs(gestureState.dx) < 2) {
+          const locX = (evt.nativeEvent as any)?.locationX;
+          if (typeof locX === "number" && isFinite(locX)) {
+            finalX = locX;
+          }
+        }
+
+        const next = calculateFractionFromX(finalX);
+        setDragValue(next);
         onChangeRef.current(next);
       },
       onPanResponderTerminate: () => setDragging(false),
       onPanResponderTerminationRequest: () => false,
-    }),
+    })
   ).current;
 
   const displayValue = dragging ? dragValue : value;
@@ -135,17 +151,24 @@ const styles = StyleSheet.create({
     flex: 1,
     height: 36,
     justifyContent: "center",
+    position: "relative",
+    direction: "ltr",
   },
   disabled: { opacity: 0.4 },
   track: {
+    width: "100%",
     height: 6,
     borderRadius: Radius.pill,
     backgroundColor: Color.ink4,
     overflow: "hidden",
-    flexDirection: "row",
+    position: "relative",
+    direction: "ltr",
   },
   fill: {
-    height: "100%",
+    position: "absolute",
+    left: 0,
+    top: 0,
+    bottom: 0,
     borderRadius: Radius.pill,
   },
   thumb: {

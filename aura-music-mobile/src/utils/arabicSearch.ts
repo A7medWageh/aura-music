@@ -1,8 +1,26 @@
 import { latinizeArtist, normalizeArabicName } from "./latinize";
 
-export function normalizeArabic(text?: string | null): string {
+export function normalizeColloquialArabic(text?: string | null): string {
   if (!text) return "";
   return text
+    .replace(/(?:^|\s)يولد(?=\s|$)/g, " يا ولد")
+    .replace(/(?:^|\s)ياولد(?=\s|$)/g, " يا ولد")
+    .replace(/(?:^|\s)يازين(?=\s|$)/g, " يا زين")
+    .replace(/(?:^|\s)ياواد(?=\s|$)/g, " يا واد")
+    .replace(/(?:^|\s)يلى(?=\s|$)/g, " يا اللي")
+    .replace(/(?:^|\s)ياللى(?=\s|$)/g, " يا اللي")
+    .replace(/(?:^|\s)يابن(?=\s|$)/g, " يا ابن")
+    .replace(/(?:^|\s)ياسيد[يي](?=\s|$)/g, " يا سيدي")
+    .replace(/(?:^|\s)ياحبيب[يي](?=\s|$)/g, " يا حبيبي")
+    .replace(/(?:^|\s)ياجميل(?=\s|$)/g, " يا جميل")
+    .replace(/(?:^|\s)ماتيج[يي](?=\s|$)/g, " ما تيجي")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function normalizeArabic(text?: string | null): string {
+  if (!text) return "";
+  return normalizeColloquialArabic(text)
     .toLowerCase()
     .replace(/[\u064B-\u065F\u0670\u06D6-\u06DC\u06DF-\u06E8\u06EA-\u06ED]/g, "")
     .replace(/\u0640/g, "")
