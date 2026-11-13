@@ -3,7 +3,7 @@ name: Build Aura Mobile iOS (unsigned IPA)
 # Unsigned on purpose: Sideloadly signs the IPA with a free Apple ID at install time.
 on:
   push:
-    branches: [ mobile-ios ]
+    branches: [ mobile-ios, main ]
     paths:
       - 'aura-music-mobile/**'
       - '.github/workflows/build-mobile-ios.yml'
@@ -12,8 +12,7 @@ on:
 jobs:
   build:
     name: Build unsigned IPA
-    # Expo SDK 58 requires Xcode 26.4+
-    runs-on: macos-26
+    runs-on: macos-14
     defaults:
       run:
         working-directory: aura-music-mobile
@@ -34,6 +33,9 @@ jobs:
 
       - name: Generate iOS Project
         run: npx expo prebuild --platform ios --no-install
+
+      - name: Apply Audio Patches
+        run: node scripts/patch-expo-audio.js
 
       - name: Install Pods
         run: pod install
