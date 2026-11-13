@@ -11,7 +11,7 @@ const STREAM_CACHE_HEADERS = {
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
-  const fileId = searchParams.get("fileId") || searchParams.get("id");
+  const fileId = searchParams.get("fileId") || searchParams.get("file_id") || searchParams.get("id");
   const isDownload = searchParams.get("download") === "true";
   const title = searchParams.get("title") || "song";
 

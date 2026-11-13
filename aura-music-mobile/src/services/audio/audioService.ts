@@ -149,7 +149,7 @@ class AudioService {
     const now = ctx.currentTime;
     const ramp = 0.04; // 40 ms — click-free switching
 
-    graph.preGain.gain.setTargetAtTime(1.05, now, ramp);
+    graph.preGain.gain.setTargetAtTime(1.25, now, ramp);
 
     graph.bands.forEach((band: any, i: number) => {
       const spec = cfg.bands[i];
@@ -167,13 +167,13 @@ class AudioService {
     graph.compressor.release.setTargetAtTime(cfg.comp.release, now, ramp);
 
     // Brick-wall limiter so boosted presets never clip.
-    graph.limiter.threshold.setTargetAtTime(-0.1, now, ramp);
+    graph.limiter.threshold.setTargetAtTime(-0.05, now, ramp);
     graph.limiter.knee.setTargetAtTime(10, now, ramp);
     graph.limiter.ratio.setTargetAtTime(20, now, ramp);
     graph.limiter.attack.setTargetAtTime(0.001, now, ramp);
     graph.limiter.release.setTargetAtTime(0.04, now, ramp);
 
-    graph.postGain.gain.setTargetAtTime(cfg.postGain * this.boost, now, ramp);
+    graph.postGain.gain.setTargetAtTime(cfg.postGain * this.boost * 1.35, now, ramp);
 
     if (preset === "spatial" && graph.panner) {
       this.startRotation();
@@ -597,6 +597,157 @@ class AudioService {
         error: err?.message || "Failed to load audio",
       });
       return false;
+    }
+  }
+
+  private isCrossfading = false;
+  private crossfadeTimer: any = null;
+
+  /**
+   * Professional Seamless DJ Crossfade between songs (overlapping fade-out / fade-in)
+   */
+  public async crossfadeToSong(nextSong: Song, durationSec = 3.5): Promise<boolean> {
+    if (this.isCrossfading || !this.currentSong) {
+      return this.playSong(nextSong);
+    }
+    this.isCrossfading = true;
+
+    try {
+      const { uri: nextUri } = await this.resolveAudioUri(nextSong);
+
+      if (Platform.OS === "web" && typeof window !== "undefined") {
+        const oldAudio = this.webAudio;
+        const newAudio = new window.Audio();
+        newAudio.crossOrigin = "anonymous";
+        newAudio.preload = "auto";
+        newAudio.src = nextUri;
+        newAudio.volume = 0;
+        await newAudio.play();
+
+        const steps = 30;
+        const stepMs = (durationSec * 1000) / steps;
+        let step = 0;
+
+        await new Promise<void>((resolve) => {
+          this.crossfadeTimer = setInterval(() => {
+            step++;
+            const t = step / steps;
+            const outVol = Math.cos((t * Math.PI) / 2);
+            const inVol = Math.sin((t * Math.PI) / 2);
+
+            if (oldAudio) oldAudio.volume = Math.max(0, Math.min(1, outVol));
+            newAudio.volume = Math.max(0, Math.min(1, inVol));
+
+            if (step >= steps) {
+              clearInterval(this.crossfadeTimer);
+              this.crossfadeTimer = null;
+              resolve();
+            }
+          }, stepMs);
+        });
+
+        if (oldAudio) {
+          try {
+            oldAudio.pause();
+            oldAudio.src = "";
+          } catch {}
+        }
+
+        this.webAudio = newAudio;
+        this.currentSong = nextSong;
+        this.ensureWebGraph();
+        this.updateWebMediaSession(nextSong);
+        updateSongLastPlayed(nextSong.id).catch(() => {});
+        this.isCrossfading = false;
+        return true;
+      }
+
+      // Native iOS / Android Crossfade
+      const oldPlayer = this.sound;
+      const oldSub = this.soundSubscription;
+
+      const nextPlayer = createAudioPlayer(
+        { uri: nextUri },
+        {
+          updateInterval: 250,
+          downloadFirst: false,
+          keepAudioSessionActive: true,
+          preferredForwardBufferDuration: 5,
+        }
+      );
+
+      nextPlayer.volume = 0;
+      nextPlayer.play();
+
+      const steps = 30;
+      const stepMs = (durationSec * 1000) / steps;
+      let step = 0;
+
+      await new Promise<void>((resolve) => {
+        this.crossfadeTimer = setInterval(() => {
+          step++;
+          const t = step / steps;
+          const outVol = Math.cos((t * Math.PI) / 2);
+          const inVol = Math.sin((t * Math.PI) / 2);
+
+          try {
+            if (oldPlayer) oldPlayer.volume = Math.max(0, Math.min(1, outVol));
+            nextPlayer.volume = Math.max(0, Math.min(1, inVol));
+          } catch {}
+
+          if (step >= steps) {
+            clearInterval(this.crossfadeTimer);
+            this.crossfadeTimer = null;
+            resolve();
+          }
+        }, stepMs);
+      });
+
+      try {
+        oldSub?.remove();
+        oldPlayer?.pause();
+        oldPlayer?.remove();
+      } catch {}
+
+      this.sound = nextPlayer;
+      this.soundSubscription = nextPlayer.addListener("playbackStatusUpdate", this.onPlaybackStatusUpdate);
+      auraSoundEngine.attachPlayer(nextPlayer);
+      this.currentSong = nextSong;
+
+      const songDurationSec =
+        nextSong.duration && isFinite(nextSong.duration) && nextSong.duration > 0
+          ? Math.round(nextSong.duration)
+          : undefined;
+
+      try {
+        nextPlayer.setActiveForLockScreen(
+          true,
+          {
+            title: nextSong.title,
+            artist: nextSong.artist,
+            albumTitle: nextSong.albumName || "Aura Music",
+            artworkUrl: nextSong.thumbnailUrl ?? undefined,
+            duration: songDurationSec,
+          } as any,
+          {
+            isLiveStream: false,
+            showSeekForward: true,
+            showSeekBackward: true,
+            showNextTrack: true,
+            showPreviousTrack: true,
+            seekForwardIntervalSeconds: 15,
+            seekBackwardIntervalSeconds: 15,
+          }
+        );
+      } catch {}
+
+      updateSongLastPlayed(nextSong.id).catch(() => {});
+      this.isCrossfading = false;
+      return true;
+    } catch (err) {
+      console.warn("[AudioService] crossfade fallback to normal playSong:", err);
+      this.isCrossfading = false;
+      return this.playSong(nextSong);
     }
   }
 

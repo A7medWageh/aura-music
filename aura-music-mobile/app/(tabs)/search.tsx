@@ -132,7 +132,7 @@ export default function SearchScreen() {
       } finally {
         setLoading(false);
       }
-    }, 400);
+    }, 250);
     return () => {
       if (debounce.current) clearTimeout(debounce.current);
     };

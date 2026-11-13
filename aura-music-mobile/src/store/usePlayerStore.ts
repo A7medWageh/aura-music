@@ -79,6 +79,7 @@ interface PlayerState {
 
 let isServiceSubscribed = false;
 let sleepTimerHandle: ReturnType<typeof setInterval> | null = null;
+let isCrossfading = false;
 
 // Streaming seeks take a moment to land; until the audio clock catches up it keeps reporting the
 // pre-seek position, which would yank the scrubber back. Hold the requested target in the UI.
@@ -124,7 +125,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     if (!isServiceSubscribed) {
       isServiceSubscribed = true;
       audioService.subscribe((status) => {
-        const { currentSong, repeatMode, nextTrack } = get();
+        const { currentSong, repeatMode, nextTrack, queue, queueIndex, shuffle } = get();
 
         const posSec = (status.positionMillis && isFinite(status.positionMillis)) ? status.positionMillis / 1000 : 0;
         const durSec = (status.durationMillis && isFinite(status.durationMillis) && status.durationMillis > 0)
@@ -148,8 +149,41 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
           error: status.error || null,
         });
 
-        // Handle auto-advance when track finishes
+        // 🌟 Seamless Professional Crossfade: start crossfading into next track 3.8s before track ends
+        const remainingSec = durSec - posSec;
+        if (
+          !isCrossfading &&
+          status.isPlaying &&
+          durSec > 20 &&
+          posSec >= 15 &&
+          remainingSec > 0 &&
+          remainingSec <= 3.8 &&
+          queue.length > 1 &&
+          repeatMode !== "one"
+        ) {
+          let nextIndex = shuffle ? Math.floor(Math.random() * queue.length) : queueIndex + 1;
+          if (nextIndex >= queue.length && repeatMode === "all") nextIndex = 0;
+          const nextSong = queue[nextIndex];
+          if (nextSong && nextSong.id !== currentSong?.id) {
+            isCrossfading = true;
+            audioService.crossfadeToSong(nextSong).then((ok) => {
+              isCrossfading = false;
+              if (ok) {
+                set({
+                  currentSong: nextSong,
+                  queueIndex: nextIndex,
+                  position: 0,
+                  duration: nextSong.duration || 0,
+                });
+                savePlaybackSession(nextSong.id, 0, nextSong.duration || 0, repeatMode, shuffle, queue).catch(() => {});
+              }
+            });
+          }
+        }
+
+        // Handle auto-advance when track finishes (if crossfade didn't already transition)
         if (status.didJustFinish) {
+          if (isCrossfading) return;
           if (repeatMode === "one" && currentSong) {
             audioService.seekTo(0).then(() => audioService.resume());
           } else {

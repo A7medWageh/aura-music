@@ -23,6 +23,7 @@ import {
   FolderInput,
   Folder,
   Heart,
+  Send,
 } from "lucide-react-native";
 
 import { getSafeTopInset } from "@/utils/safeArea";
@@ -41,6 +42,7 @@ import { scrollBus } from "@/utils/scrollBus";
 import { getAllCachedLyricsMap } from "@/database/db";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LibraryBackupModal } from "@/components/LibraryBackupModal";
+import { TelegramImportModal } from "@/components/TelegramImportModal";
 import { PLACEHOLDER_ARTIST, PLACEHOLDER_ALBUM, PLACEHOLDER_SONG } from "@/constants/placeholders";
 import {
   AuraArtwork,
@@ -112,6 +114,7 @@ export default function LibraryScreen() {
   const [targetFolder, setTargetFolder] = useState("");
 
   const [showTransferModal, setShowTransferModal] = useState(false);
+  const [showTelegramModal, setShowTelegramModal] = useState(false);
   const [isSeeding50, setIsSeeding50] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -415,6 +418,12 @@ export default function LibraryScreen() {
 
           {!isDeep && (
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.actionRail}>
+              <AuraChip
+                label="استيراد من تيليجرام 📥"
+                onPress={() => setShowTelegramModal(true)}
+                size="sm"
+                icon={<Send size={13} color="#2AABEE" style={{ transform: [{ rotate: "-20deg" }] }} />}
+              />
               <AuraChip
                 label={isSeeding50 ? "جارٍ الإضافة…" : "أفضل 50 أغنية"}
                 onPress={handleSeed50}
@@ -1045,6 +1054,12 @@ export default function LibraryScreen() {
           showToast("تم تحديث مكتبتك بالأغاني الجديدة 🚀");
         }}
       />
+      {/* ── TELEGRAM MANUAL IMPORT MODAL ── */}
+      <TelegramImportModal
+        visible={showTelegramModal}
+        onClose={() => setShowTelegramModal(false)}
+      />
+
 
       {/* ── MOVE SONG ── */}
       <AuraModal visible={!!movingSong} onClose={() => setMovingSong(null)}>

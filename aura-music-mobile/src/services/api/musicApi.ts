@@ -74,14 +74,23 @@ function mapRawSongToSong(raw: any): Song {
   };
 }
 
+const searchMemoryCache = new Map<string, { data: { songs: Song[]; artists: any[]; albums: any[] }; timestamp: number }>();
+const SEARCH_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
 export const MusicApi = {
   /**
-   * Search songs, artists, and albums
+   * Search songs, artists, and albums with ultra-fast memory caching
    */
   async search(query: string): Promise<{ songs: Song[]; artists: any[]; albums: any[] }> {
     try {
       const trimmed = query.trim();
       if (!trimmed) return { songs: [], artists: [], albums: [] };
+
+      const cacheKey = trimmed.toLowerCase();
+      const cached = searchMemoryCache.get(cacheKey);
+      if (cached && Date.now() - cached.timestamp < SEARCH_CACHE_TTL) {
+        return cached.data;
+      }
 
       const res = await fetch(`${BASE_API_URL}/api/search?q=${encodeURIComponent(trimmed)}`, {
         headers: { Accept: "application/json" },
@@ -99,7 +108,7 @@ export const MusicApi = {
       const cleanSongs = dedupeSongs(rawSongs.map(mapRawSongToSong)).filter((s) => !isJunkSong(s));
       const rankedSongs = rankSearchSongs(cleanSongs, trimmed);
 
-      return {
+      const result = {
         songs: rankedSongs,
         artists: rawArtists.map((a: any) => ({
           artistId: a.artistId || a.id || `art_${Math.random()}`,
@@ -113,10 +122,29 @@ export const MusicApi = {
           thumbnailUrl: getArtworkUrl(al.thumbnailUrl || al.coverUrl, undefined, "album"),
         })),
       };
+
+      searchMemoryCache.set(cacheKey, { data: result, timestamp: Date.now() });
+      return result;
     } catch (err) {
       console.warn("[MusicApi.search] Error:", err);
       return { songs: [], artists: [], albums: [] };
     }
+  },
+
+  /**
+   * Import a track from Telegram channel post URL or message ID
+   */
+  async importTelegramSong(input: string): Promise<Song> {
+    const res = await fetch(`${BASE_API_URL}/api/telegram/manual-import`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ input }),
+    });
+    const json = await res.json();
+    if (!res.ok || !json.song) {
+      throw new Error(json.error || "فشل استيراد الأغنية من تيليجرام");
+    }
+    return json.song;
   },
 
   /**

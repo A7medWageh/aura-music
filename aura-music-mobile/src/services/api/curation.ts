@@ -12,7 +12,7 @@ import { normalizeArabic, normalizeColloquialArabic, stripSongNoise } from "@/ut
 const UNKNOWN_ARTIST = /^(فنان غير معروف|unknown artist|unknown|artist|فنان)$/i;
 
 const JUNK_MEDIA_PATTERN =
-  /(أ?غاني?\s*أ?طفال|كرتون|انمي|anime|\bkids\b|nursery|cocomelon|baby\s*(shark|bus|yin)?|طيور\s*الجنة|عصافير|كاريوكي|karaoke|بودكاست|podcast|vlog|فلوج|تحدي|challenge|بريك|مقاطع\s*قصيرة|shorts|جيم|قيمنق|gaming|playstation|حالة\s*واتس|ستوري|ستوريات|ترجمة|مترجم|مترجمة|translation|subtitles|indonesian|spanish sub|\b8d\b|\b3d\b|بطيء|مسرع|slowed|sped\s*up|reverb|ريمكس|remix|معدل|تعديل|باس\s*بوست|bass\s*boosted|موسيقى\s*فقط|بدون\s*(موسيقى|صوت)|instrumental|backing\s*track|\bcover\b|كفر|تقليد|تصوير\s*و?الليزر|تنظيم\s*الحفلات|مليونية|مواهب\s*الحظ|عفاريت\s*الحظ|\bحظ\b|استوديو\s*تصوير|فيديو\s*سيرفيس|عازف\s*أ?ورج|أ?ورج\s*مصر|تسجيلات\s*(أفراح|الحظ)|معزوفات)/i;
+  /(أ?غاني?\s*أ?طفال|كرتون|انمي|anime|\bkids\b|nursery|cocomelon|baby\s*(?:shark|bus|yin)?|طيور\s*الجنة|عصافير|كاريوكي|karaoke|بودكاست|podcast|vlog|فلوج|تحدي|challenge|بريك|مقاطع\s*قصيرة|shorts|جيم|قيمنق|gaming|playstation|حالة\s*واتس|ستوري|ستوريات|ترجمة|مترجم|مترجمة|translation|subtitles|indonesian|spanish sub|\b8d\b|\b3d\b|بطيء|مسرع|slowed|sped\s*up|reverb|ريمكس|remix|معدل|تعديل|باس\s*بوست|bass\s*boosted|موسيقى\s*فقط|بدون\s*(موسيقى|صوت)|instrumental|backing\s*track|\bcover\b|كفر|تقليد|(?:شركة|استوديو|قناة|مؤسسة|تسجيلات)?\s*.*(?:تصوير|ليزر|فيديو\s*سيرفيس|فوتوغرافيك|حفلات|تنظيم|أفراح|افراح|مليونية|مواهب\s*الحظ|عفاريت\s*الحظ|عازف\s*أ?ورج|أ?ورج\s*مصر|معزوفات|كريم\s*ناعوس|الشافعي|سامى\s*للتصوير|العدوى|ناعوس)|(?:^|\s)(?:أفراح|حفلات|مليونية|الحظ|أورج)(?:\s|$))/i;
 
 const DRAMA_SCENE_JUNK =
   /(مشهد\s*من|مشاهد\s*من|لقطة\s*من|لقطات\s*من|كواليس|الحلقة\s*\d+|حلقة\s*\d+|ملخص\s*مسلسل|لحظة\s*(قبض|وفاة|مقتل|ضرب|انتقام|طلاق)|خناقة|مواجهة|أقوى\s*مشاهد)/i;
@@ -212,7 +212,8 @@ function calculateRelevance(
   const combined = `${rawTitle} ${rawArtist}`;
 
   // Strict junk channel check
-  if (/(تصوير\s*و?الليزر|تنظيم\s*الحفلات|مليونية|مواهب\s*الحظ|عفاريت\s*الحظ|استوديو\s*تصوير|فيديو\s*سيرفيس|عازف\s*أ?ورج|أ?ورج\s*مصر|تسجيلات\s*(أفراح|الحظ)|معزوفات)/i.test(combined)) {
+  if (/(تصوير\s*و?الليزر|تنظيم\s*الحفلات|مليونية|مواهب\s*الحظ|عفاريت\s*الحظ|استوديو\s*تصوير|فيديو\s*سيرفيس|عازف\s*أ?ورج|أ?ورج\s*مصر|تسجيلات\s*(أفراح|الحظ)|معزوفات|كريم\s*ناعوس|الشافعي|سامى\s*للتصوير|العدوى|ناعوس)/i.test(combined) ||
+      /(?:^|\s)(?:أفراح|حفلات|مليونية|الحظ|أورج)(?:\s|$)/i.test(combined)) {
     return -99999;
   }
 
@@ -335,19 +336,17 @@ export function rankSearchSongs(songs: Song[], rawQuery: string): Song[] {
 
   const words = (detectedTitle || cleanQ).split(" ").filter((w) => w.length > 1);
 
-  return [...songs].sort((a, b) => {
-    const aNormTitle = normalizeArabic(stripSongNoise(a.title));
-    const bNormTitle = normalizeArabic(stripSongNoise(b.title));
-
-    const aNormArtist = normalizeArabic(a.artist);
-    const bNormArtist = normalizeArabic(b.artist);
-
-    const aLatinTitle = latinizeArtist(a.title).toLowerCase();
-    const bLatinTitle = latinizeArtist(b.title).toLowerCase();
-
-    const scoreA = calculateRelevance(a, aNormTitle, aNormArtist, aLatinTitle, cleanQ, normQuery, latinQ, words, detectedArtist, detectedTitle);
-    const scoreB = calculateRelevance(b, bNormTitle, bNormArtist, bLatinTitle, cleanQ, normQuery, latinQ, words, detectedArtist, detectedTitle);
-
-    return scoreB - scoreA;
+  const scored = songs.map((s) => {
+    const aNormTitle = normalizeArabic(stripSongNoise(s.title));
+    const aNormArtist = normalizeArabic(s.artist);
+    const aLatinTitle = latinizeArtist(s.title).toLowerCase();
+    const score = calculateRelevance(s, aNormTitle, aNormArtist, aLatinTitle, cleanQ, normQuery, latinQ, words, detectedArtist, detectedTitle);
+    return { song: s, score };
   });
+
+  // Strict prune: drop any result with a negative or zero score (junk or completely unrelated)
+  const filtered = scored.filter((item) => item.score > 0);
+  const toSort = filtered.length > 0 ? filtered : scored;
+
+  return toSort.sort((a, b) => b.score - a.score).map((item) => item.song);
 }

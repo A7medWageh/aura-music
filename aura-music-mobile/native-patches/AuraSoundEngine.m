@@ -407,16 +407,17 @@ static inline float processSample(AuraBiquad *filter, float inSample, int ch) {
 #pragma mark - True-Peak Soft Saturation / Limiter Curve
 
 static inline float softSaturate(float x) {
-    // Lookahead-free smooth polynomial/tanh soft-clipper
-    // Linear below 0.65, soft knee saturation up to 0.98 (-0.17 dBFS ceiling)
+    // Professional Studio Soft-Saturation & Maximizer Curve
+    // Clean, uncompressed linear response up to 0.85 (-1.4 dBFS)
+    // Musical tanh saturation in the upper 15% with true-peak safety at 0.995 (-0.04 dBFS)
     float absX = fabsf(x);
-    if (absX <= 0.65f) {
+    if (absX <= 0.85f) {
         return x;
     }
     float sign = (x > 0.0f) ? 1.0f : -1.0f;
-    float over = absX - 0.65f;
-    float saturated = 0.65f + 0.33f * tanhf(over / 0.33f);
-    if (saturated > 0.985f) saturated = 0.985f;
+    float over = absX - 0.85f;
+    float saturated = 0.85f + 0.145f * tanhf(over / 0.145f);
+    if (saturated > 0.995f) saturated = 0.995f;
     return sign * saturated;
 }
 
@@ -440,11 +441,12 @@ static inline float softSaturate(float x) {
         return;
     }
     
-    // Target overall loudness multiplier based on boost (1.0x to 2.0x)
-    float targetGain = boost;
+    // Maximum Studio Loudness & Headphone Gain (+3.5 dB to +6 dB punchy studio headroom)
+    float targetGain = boost * 1.35f;
     if (activeProfile == AuraAudioProfileSpeaker) {
-        // Speaker loudness boost with compensation
-        targetGain *= 1.15f;
+        targetGain *= 1.25f; // Extra power for iPhone internal speakers
+    } else if (activeProfile == AuraAudioProfileHeadphones || activeProfile == AuraAudioProfileAirPods) {
+        targetGain *= 1.30f; // Extra loudness & presence for Earbuds & AirPods
     }
     
     // Non-Interleaved Stereo (Buffer 0: Left, Buffer 1: Right)

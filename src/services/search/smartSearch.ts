@@ -218,22 +218,27 @@ export async function smartSearch(searchTerm: string) {
   const emptyYt = { songs: [], artists: [], albums: [] };
 
   const primaryQuery = cleanQ || q;
-  const searchPromises: Promise<any>[] = [searchYouTube(primaryQuery).catch(() => emptyYt)];
-  if (primaryQuery.toLowerCase() !== q.toLowerCase()) {
-    searchPromises.push(searchYouTube(q).catch(() => emptyYt));
-  }
-  if (invertedQ && invertedQ.toLowerCase() !== primaryQuery.toLowerCase() && invertedQ.toLowerCase() !== q.toLowerCase()) {
-    searchPromises.push(searchYouTube(invertedQ).catch(() => emptyYt));
-  }
-  // If user searched for both title & artist, explicitly probe for the official video clip
-  if (titlePart && artistPart) {
-    searchPromises.push(searchYouTube(`${titlePart} ${artistPart} فيديو كليب`).catch(() => emptyYt));
+  // Fast, single-pass YouTube search with a 3.5s timeout.
+  // Probing multiple variants in parallel flooded YouTube and caused 5s+ stalls.
+  let ytRes = await Promise.race([
+    searchYouTube(primaryQuery),
+    new Promise<any>((_, reject) => setTimeout(() => reject(new Error("yt_timeout")), 3500))
+  ]).catch(() => emptyYt);
+
+  // If primary returned few or no songs, try inverted or raw query as fallback
+  if ((!ytRes?.songs || ytRes.songs.length < 3) && invertedQ && invertedQ.toLowerCase() !== primaryQuery.toLowerCase()) {
+    const fallbackRes = await searchYouTube(invertedQ).catch(() => emptyYt);
+    if (fallbackRes?.songs?.length) {
+      ytRes = {
+        songs: [...(ytRes?.songs || []), ...(fallbackRes.songs || [])],
+        artists: [...(ytRes?.artists || []), ...(fallbackRes.artists || [])],
+        albums: [...(ytRes?.albums || []), ...(fallbackRes.albums || [])],
+      };
+    }
   }
 
-  const [localCatalog, ...ytResultsList] = await Promise.all([
-    getLocalCatalog(),
-    ...searchPromises,
-  ]);
+  const localCatalog = await getLocalCatalog();
+  const ytResultsList = [ytRes];
 
   const ytSongsRaw: any[] = [];
   const ytSeenIds = new Set<string>();
@@ -262,7 +267,8 @@ export async function smartSearch(searchTerm: string) {
   function computeRelevance(item: any): number {
     const combinedHaystack = `${item.title || ""} ${item.artist || ""}`.toLowerCase();
     // Strict Junk Channel / Wedding Laser recording rejection
-    if (/(تصوير\s*و?الليزر|تنظيم\s*الحفلات|مليونية|مواهب\s*الحظ|عفاريت\s*الحظ|استوديو\s*تصوير|فيديو\s*سيرفيس|عازف\s*أ?ورج|أ?ورج\s*مصر|تسجيلات\s*(أفراح|الحظ)|معزوفات)/i.test(combinedHaystack)) {
+    if (/(تصوير\s*و?الليزر|تنظيم\s*الحفلات|مليونية|مواهب\s*الحظ|عفاريت\s*الحظ|استوديو\s*تصوير|فيديو\s*سيرفيس|عازف\s*أ?ورج|أ?ورج\s*مصر|تسجيلات\s*(أفراح|الحظ)|معزوفات|كريم\s*ناعوس|الشافعي|سامى\s*للتصوير|العدوى|ناعوس)/i.test(combinedHaystack) ||
+        /(?:^|\s)(?:أفراح|حفلات|مليونية|الحظ|أورج)(?:\s|$)/i.test(combinedHaystack)) {
       return -1000;
     }
 
@@ -460,7 +466,8 @@ export async function smartSearch(searchTerm: string) {
   const seenVids = new Set<string>();
   const mergedSongs: any[] = [];
   for (const { song, score, cov } of allScored) {
-    if (score < 30 && cov < 0.4) continue;
+    // Drop anything that was tagged as junk (negative score) or low relevance
+    if (score <= 0 || (score < 35 && cov < 0.45)) continue;
     const vid = song.youtubeVideoId || song.songId;
     if (!vid || seenVids.has(vid)) continue;
     seenVids.add(vid);
