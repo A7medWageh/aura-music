@@ -228,14 +228,12 @@ const styles = StyleSheet.create({
     width: "100%",
     paddingHorizontal: Space.s2,
     marginVertical: Space.s1,
-    direction: "ltr",
   },
   touchArea: {
     width: "100%",
     height: 36,
     justifyContent: "center",
     position: "relative",
-    direction: "ltr",
   },
   track: {
     width: "100%",
@@ -244,7 +242,6 @@ const styles = StyleSheet.create({
     backgroundColor: Color.ink4,
     overflow: "hidden",
     position: "relative",
-    direction: "ltr",
   },
   fill: {
     position: "absolute",
@@ -283,7 +280,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingTop: Space.s1,
     paddingHorizontal: 2,
-    direction: "ltr",
+    writingDirection: "ltr",
   },
   timeText: {
     fontFamily: "Plex_500",

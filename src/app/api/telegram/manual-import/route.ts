@@ -1,41 +1,79 @@
 import { NextRequest, NextResponse } from "next/server";
 import { query } from "@apis/neon";
-import { extractSmartArtistAndTitle, cleanSongTitle } from "@/services/music/artistMatcher";
+import {
+  extractSmartArtistAndTitle,
+  cleanSongTitle,
+  cleanText,
+  findBestOfficialVideo,
+} from "@/services/music/artistMatcher";
 
 export const dynamic = "force-dynamic";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "8831422517:AAEXQFzQxzcyIKWI1WtfVh2XGzguGXAnCak";
 const CHANNEL_ID = process.env.TELEGRAM_CHANNEL_ID || "-1004310944763";
 
+function tokensOf(value: string): string[] {
+  return cleanText(value).split(" ").filter((w) => w.length > 1);
+}
+
+function overlappingTokens(a: string[], b: string[]): number {
+  return a.filter((token) => b.some((other) => other === token || other.includes(token) || token.includes(other))).length;
+}
+
 async function resolveTrackArtwork(title: string, artist: string): Promise<string> {
   const cleanQ = `${artist} ${title}`.replace(/[\(\)\[\]\|]/g, " ").trim();
-  // 1. Try iTunes Search API for ultra-high-res 1000x1000 studio album cover
+  const titleTokens = tokensOf(title);
+  const artistTokens = tokensOf(artist);
+
+  // 1. iTunes Search API — pick the result that actually matches this artist + track
   try {
-    const itunesUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(cleanQ)}&media=music&entity=song&limit=1`;
+    const itunesUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(cleanQ)}&media=music&entity=song&limit=8`;
     const res = await fetch(itunesUrl, {
       signal: AbortSignal.timeout(3500),
       headers: { Accept: "application/json" },
     });
     if (res.ok) {
       const data = await res.json();
-      if (data.results && data.results.length > 0) {
-        const item = data.results[0];
-        if (item.artworkUrl100) {
-          return item.artworkUrl100.replace("100x100bb", "1000x1000bb");
+      for (const item of data.results || []) {
+        const trackTokens = tokensOf(item.trackName || "");
+        const itemArtistTokens = tokensOf(item.artistName || "");
+        const artistScore = overlappingTokens(artistTokens, itemArtistTokens);
+        const titleScore = overlappingTokens(titleTokens, trackTokens);
+        if (artistScore >= 1 && titleScore >= 1 && item.artworkUrl100) {
+          return String(item.artworkUrl100).replace("100x100bb", "1000x1000bb");
         }
       }
     }
   } catch {}
 
-  // 2. Try YouTube high-res video thumbnail via yt-search
+  // 2. Official music video thumbnail — matches the same clip the player prioritises
+  try {
+    const { searchYouTube } = await import("@apis/youtubei.js");
+    const searchRes: any = await searchYouTube(cleanQ);
+    const songs = searchRes?.videos || searchRes?.songs || [];
+    const candidates = songs.map((s: any) => ({
+      youtubeVideoId: s.youtubeVideoId || s.songId || s.id,
+      title: s.title || "",
+      artist: s.artist || s.author?.name || "",
+      channel: s.author?.name || s.channel || "",
+      durationSec: s.duration?.seconds || s.durationSec,
+    }));
+    const bestVid = findBestOfficialVideo(candidates, title, artist);
+    if (bestVid) {
+      return `https://i.ytimg.com/vi/${bestVid}/maxresdefault.jpg`;
+    }
+  } catch {}
+
+  // 3. Plain YouTube search fallback for the artwork only
   try {
     const yts = require("yt-search");
     const r = await yts(cleanQ);
-    if (r && r.videos && r.videos.length > 0) {
-      const thumb = r.videos[0].thumbnail;
-      if (thumb) {
-        return thumb.replace(/\/(?:hq)?default\.jpg/, "/maxresdefault.jpg");
-      }
+    const first = r?.videos?.find((v: any) => {
+      const hay = cleanText(`${v.title || ""} ${v.author?.name || ""}`);
+      return titleTokens.some((t) => hay.includes(t)) && artistTokens.some((a) => hay.includes(a));
+    });
+    if (first?.thumbnail) {
+      return String(first.thumbnail).replace(/\/(?:hq)?default\.jpg/, "/maxresdefault.jpg");
     }
   } catch {}
 
@@ -162,6 +200,7 @@ export async function POST(req: NextRequest) {
               const extracted = extractSmartArtistAndTitle(title, artist);
               if (extracted.title) title = extracted.title;
               if (extracted.artist) artist = extracted.artist;
+              title = cleanSongTitle(title, artist);
 
               foundTrack = {
                 tg_file_id: String(doc.id),

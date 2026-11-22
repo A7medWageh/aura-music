@@ -9,6 +9,7 @@ import {
   KeyboardAvoidingView,
   TouchableWithoutFeedback,
   Keyboard,
+  Image,
 } from "react-native";
 import {
   Send,
@@ -28,6 +29,7 @@ import { MusicApi } from "@/services/api/musicApi";
 import { upsertSong, getDownloadedSongs } from "@/database/db";
 import { normalizeArabicName } from "@/utils/latinize";
 import { pickAndImportLocalTelegramAudio } from "@/services/offline/localAudioImporter";
+import { resolveArtworkUri } from "@/utils/media";
 import { useDownloadStore } from "@/store/useDownloadStore";
 import { useLibraryStore } from "@/store/useLibraryStore";
 import { usePlayerStore } from "@/store/usePlayerStore";
@@ -299,9 +301,22 @@ export function TelegramImportModal({ visible, onClose }: TelegramImportModalPro
               {importedSong && (
                 <View style={styles.previewCard}>
                   <View style={styles.previewInfoRow}>
-                    <View style={styles.musicIconWrap}>
-                      <FileMusic size={26} color={Color.gold500} />
-                    </View>
+                    {(() => {
+                      const artwork = resolveArtworkUri(
+                        importedSong.localArtworkPath,
+                        importedSong.thumbnailUrl,
+                        importedSong.youtubeVideoId,
+                        "song",
+                        importedSong.artist
+                      );
+                      return artwork ? (
+                        <Image source={{ uri: artwork }} style={styles.musicIconWrap} resizeMode="cover" />
+                      ) : (
+                        <View style={styles.musicIconWrap}>
+                          <FileMusic size={26} color={Color.gold500} />
+                        </View>
+                      );
+                    })()}
                     <View style={styles.songMeta}>
                       <AuraText style={styles.songTitle} lines={1}>
                         {importedSong.title}

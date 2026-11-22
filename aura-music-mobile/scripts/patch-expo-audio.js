@@ -315,27 +315,74 @@ patchFile(path.join(iosDir, "AudioTapProcessor.m"), [
   },
 ]);
 
-// 6. Patch AudioModule.swift: Expose setAuraEngineConfig and instant Audio Route switching to JS
-patchFile(path.join(iosDir, "AudioModule.swift"), [
-  {
-    target: `      Function("pause") { player in
-        player.ref.pause()
-        if !player.keepAudioSessionActive {
-          self.deactivateSession()
-        }
-      }`,
-    replacement: `      Function("pause") { player in
-        player.ref.pause()
-        if !player.keepAudioSessionActive {
-          self.deactivateSession()
-        }
-      }
+// 6. Patch AudioModule.swift: expose setAuraEngineConfig and instant audio route switching to JS.
+// Done by hand (not patchFile) because earlier builds inserted a duplicate function and would
+// otherwise never receive the new route functions.
+(function patchAudioModule() {
+  const filePath = path.join(iosDir, "AudioModule.swift");
+  if (!fs.existsSync(filePath)) {
+    console.warn(`[patch-expo-audio] File not found: ${filePath}`);
+    return;
+  }
 
-      Function("setAuraEngineConfig") { (player: AudioPlayer, config: [String: Any]) in
+  let content = fs.readFileSync(filePath, "utf8");
+  const useCRLF = content.includes("\r\n");
+  content = content.replace(/\r\n/g, "\n");
+
+  const setBlock = `      Function("setAuraEngineConfig") { (player: AudioPlayer, config: [String: Any]) in
         player.setAuraEngineConfig(config)
+      }`;
+  const routeBlock = `      Function("toggleAudioOutputRoute") { () -> String in
+        do {
+          let session = AVAudioSession.sharedInstance()
+          let isSpeaker = session.currentRoute.outputs.contains(where: { $0.portType == .builtInSpeaker })
+          if isSpeaker {
+            try session.overrideOutputAudioPort(.none)
+          } else {
+            try session.overrideOutputAudioPort(.speaker)
+          }
+          let after = session.currentRoute.outputs.contains(where: { $0.portType == .builtInSpeaker })
+          return after ? "speaker" : "headphones"
+        } catch {
+          return "error"
+        }
       }
 
-      Function("toggleAudioOutputRoute") { () -> String in
+      Function("getAudioOutputRoute") { () -> String in
+        let session = AVAudioSession.sharedInstance()
+        let isSpeaker = session.currentRoute.outputs.contains(where: { $0.portType == .builtInSpeaker })
+        return isSpeaker ? "speaker" : "headphones"
+      }`;
+
+  let modified = false;
+
+  // Drop accidental duplicate registrations left by older patch runs.
+  while (content.split(setBlock).length - 1 > 1) {
+    content = content.replace(`${setBlock}\n`, "");
+    modified = true;
+  }
+
+  if (!content.includes(setBlock)) {
+    const pauseTarget = `      Function("pause") { player in
+        player.ref.pause()
+        if !player.keepAudioSessionActive {
+          self.deactivateSession()
+        }
+      }`;
+    if (!content.includes(pauseTarget)) {
+      console.warn("[patch-expo-audio] Target not found for: add setAuraEngineConfig to AudioModule.swift");
+      return;
+    }
+    content = content.replace(pauseTarget, `${pauseTarget}\n\n${setBlock}`);
+    modified = true;
+  }
+
+  if (!content.includes("toggleAudioOutputRoute")) {
+    content = content.replace(setBlock, `${setBlock}\n\n${routeBlock}`);
+    modified = true;
+  } else {
+    // Older installs reported the requested route instead of the actual route after the switch.
+    const oldToggleBlock = `      Function("toggleAudioOutputRoute") { () -> String in
         do {
           let session = AVAudioSession.sharedInstance()
           let isSpeaker = session.currentRoute.outputs.contains(where: { $0.portType == .builtInSpeaker })
@@ -349,16 +396,19 @@ patchFile(path.join(iosDir, "AudioModule.swift"), [
         } catch {
           return "error"
         }
-      }
+      }`;
+    if (content.includes(oldToggleBlock)) {
+      const newToggleBlock = routeBlock.split("\n\n      Function(\"getAudioOutputRoute\")")[0];
+      content = content.replace(oldToggleBlock, newToggleBlock);
+      modified = true;
+    }
+  }
 
-      Function("getAudioOutputRoute") { () -> String in
-        let session = AVAudioSession.sharedInstance()
-        let isSpeaker = session.currentRoute.outputs.contains(where: { $0.portType == .builtInSpeaker })
-        return isSpeaker ? "speaker" : "headphones"
-      }`,
-    description: "Add setAuraEngineConfig and audio output route functions to AudioModule.swift",
-  },
-]);
+  if (modified) {
+    fs.writeFileSync(filePath, useCRLF ? content.replace(/\n/g, "\r\n") : content, "utf8");
+    console.log("[patch-expo-audio] Applied: audio route switching in AudioModule.swift");
+  }
+})();
 
 // 7. Patch TypeScript definitions
 patchFile(path.join(buildDir, "Audio.types.d.ts"), [

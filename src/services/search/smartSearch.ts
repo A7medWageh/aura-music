@@ -12,7 +12,7 @@ import { searchYouTube, isJunkResult } from "@apis/youtubei.js";
 import { resolveUniversalAudio } from "@/services/music/universalAudioResolver";
 import { getAllSongs, getAllArtists } from "@/services/music/musicApiClient";
 import { enrichSongs } from "@/services/music/songEnricher";
-import { BILINGUAL_ARTIST_MAP, ARABIC_TO_LATIN_MAP, extractSmartArtistAndTitle } from "@/services/music/artistMatcher";
+import { BILINGUAL_ARTIST_MAP, ARABIC_TO_LATIN_MAP, extractSmartArtistAndTitle, cleanSongTitle } from "@/services/music/artistMatcher";
 
 // ── In-memory cache shared across all requests ────────────────────────────────
 const cache = new Map<string, { data: any; ts: number }>();
@@ -339,43 +339,61 @@ export async function smartSearch(searchTerm: string) {
       score += 60;
     }
 
+    const hasArtistMatch =
+      !!nArtistPart &&
+      (normArt.includes(nArtistPart) || (latinArtist && rawArtLower.includes(latinArtist)) ||
+        normTitle.includes(nArtistPart) || normRawFull.includes(nArtistPart));
+
+    // At least one meaningful link to what the user typed. Every "official clip"
+    // bonus below hangs off this, otherwise any random video clip outranks the
+    // actual song (or shows up for a nonsense query).
+    const hasTitleMatch =
+      isDirectMatch || isInvertedMatch || isDualOrderSubstring ||
+      (nTitlePart.length >= 2 && (normTitle.includes(nTitlePart) || normRawFull.includes(nTitlePart))) ||
+      bestCov >= 0.5;
+
     // 3. Official Artist Verification (Artist channel or bilingual channel matches, or artist in title)
     if (artistPart) {
-      if (normArt.includes(nArtistPart) || (latinArtist && rawArtLower.includes(latinArtist)) || normTitle.includes(nArtistPart) || normRawFull.includes(nArtistPart)) {
+      if (hasArtistMatch || normTitle.includes(nArtistPart) || normRawFull.includes(nArtistPart)) {
         score += 200;
       }
     } else {
       const qTokens = tokenize(cleanQ);
-      if (qTokens.some(w => normArt.includes(w) || normTitle.includes(w))) {
+      if (hasTitleMatch && qTokens.some(w => normArt.includes(w) || normTitle.includes(w))) {
         score += 45;
       }
     }
 
     // 4. Official Record Label / Production Channel boost
     const isOfficialLabel = /official|records|music|rotana|mazzika|sobky|elsobky|shaabeyat|شعبيات|نجوم|مزيكا|روتانا|السبكي|نغم|عالم الفن|free music|craft media|watary|sony music|universal|el adl group|العدل جروب|synergy|سينرجي/i.test(item.artist || "");
-    if (isOfficialLabel) {
+    if (isOfficialLabel && hasTitleMatch) {
       score += 150;
     }
 
     // 5. Official badges in video title — boost official video clips, theme songs & master tracks to the top
     const isVideoClip = /كليب|فيديو\s*كليب|كليب\s*رسمي|official\s*(music\s*video|video|clip)|music\s*video/i.test(rawFullTitle);
-    if (isVideoClip) {
+    if (isVideoClip && hasTitleMatch) {
       score += 600; // Strongest boost for official video clip
     }
 
-    if (/official\s*(audio|lyric|video|clip|music\s*video)|كليب\s*رسمي|فيديو\s*كليب|النسخة\s*الأصلية|الأغنية\s*الرسمية|تتر\s*مسلسل|شارة\s*مسلسل|أغنية\s*مسلسل/i.test(rawFullTitle)) {
+    if (hasTitleMatch && /official\s*(audio|lyric|video|clip|music\s*video)|كليب\s*رسمي|فيديو\s*كليب|النسخة\s*الأصلية|الأغنية\s*الرسمية|تتر\s*مسلسل|شارة\s*مسلسل|أغنية\s*مسلسل/i.test(rawFullTitle)) {
       score += 400;
     }
 
     // 6. View count bonus (millions of views distinguish real releases from 200-view fan uploads)
     const views = typeof item.views === "number" ? item.views : (typeof item.viewCount === "number" ? item.viewCount : 0);
-    if (views > 1000000) {
+    if (hasTitleMatch && views > 1000000) {
       score += Math.min(150, Math.floor(Math.log10(views) * 20));
     }
 
     // 5b. Prioritize the official Music Video / Clip to always rank #1
-    if (/فيديو\s*كليب|كليب\s*رسمي|official\s*(music\s*video|video|clip)|كليب\s*أصلي|كليب/i.test(item.title || "")) {
+    if (hasTitleMatch && /فيديو\s*كليب|كليب\s*رسمي|official\s*(music\s*video|video|clip)|كليب\s*أصلي|كليب/i.test(item.title || "")) {
       score += 450;
+    }
+
+    // Unrelated row: no title overlap and not the requested artist — never surface it
+    if (!hasTitleMatch && !hasArtistMatch) {
+      score -= 600;
     }
 
     // 6. Original master track prioritization (boost authentic songs over covers & trends)
@@ -466,12 +484,30 @@ export async function smartSearch(searchTerm: string) {
       };
     });
 
-  // Score local catalog songs too
-  const scoredLocal = localCatalog.map((song: any) => ({
-    song,
-    score: computeRelevance(song),
-    cov: Math.max(tokenCoverage(q, song.title ?? "", song.artist ?? ""), tokenCoverage(cleanQ, song.title ?? "", song.artist ?? "")),
-  })).filter((r: any) => r.score >= 50);
+  // Score local catalog songs too. DB rows are often raw YouTube titles with a
+  // "فنان غير معروف" artist — clean them before scoring so they compete fairly.
+  const scoredLocal = localCatalog
+    .map((song: any) => {
+      const extracted = extractSmartArtistAndTitle(song.title ?? "", song.artist ?? "");
+      const resolvedTitle = cleanSongTitle(extracted.title || song.title || "", extracted.artist || song.artist || undefined);
+      const resolvedArtist = extracted.artist || song.artist || "فنان غير معروف";
+      const cleanedSong = {
+        ...song,
+        title: resolvedTitle,
+        artist: resolvedArtist,
+        rawTitle: song.title,
+      };
+      return {
+        song: cleanedSong,
+        score: computeRelevance(cleanedSong),
+        cov: Math.max(
+          tokenCoverage(q, resolvedTitle, resolvedArtist),
+          tokenCoverage(cleanQ, resolvedTitle, resolvedArtist)
+        ),
+      };
+    })
+    .filter((r: any) => !isJunkResult(r.song.title, r.song.artist))
+    .filter((r: any) => r.score >= 50);
 
   // Merge both by true relevance score
   const allScored = [...scoredLocal, ...scoredYt];

@@ -247,6 +247,18 @@ function calculateRelevance(
     score += 180;
   }
 
+  const titleContainsQuery =
+    (!!cleanQ && (normTitle.includes(cleanQ) || latinTitle.includes(latinQ))) ||
+    (!!detectedTitle && normTitle.includes(detectedTitle)) ||
+    words.some((w) => normTitle.includes(w) || latinTitle.includes(w));
+  const artistContainsQuery =
+    (!!cleanQ && (normArtist.includes(cleanQ) || latinizeArtist(song.artist).toLowerCase().includes(latinQ))) ||
+    (!!detectedArtist && (normArtist.includes(detectedArtist) || normTitle.includes(detectedArtist)));
+
+  // Relevance gate: clip/label/popularity bonuses only apply to results that
+  // actually relate to the query. Otherwise any random clip outranks the song.
+  const isRelevant = titleContainsQuery || artistContainsQuery;
+
   // 4. Official Release & Video Clip Indicators (Promote Official Video Clips to #1)
   const isVideoClip =
     rawTitle.includes("كليب") ||
@@ -255,7 +267,7 @@ function calculateRelevance(
     rawTitle.includes("official music video") ||
     rawTitle.includes("official video") ||
     rawTitle.includes("official clip");
-  if (isVideoClip) score += 600;
+  if (isVideoClip && isRelevant) score += 600;
 
   const isOfficial =
     rawTitle.includes("official") ||
@@ -267,13 +279,13 @@ function calculateRelevance(
     rawTitle.includes("شارة") ||
     rawTitle.includes("مسلسل") ||
     rawArtist.includes("topic");
-  if (isOfficial) score += 300;
+  if (isOfficial && isRelevant) score += 300;
 
   // 5. Established / Famous Artist Bonus
-  if (isFamousArtist(song.artist)) score += 150;
+  if (isRelevant && isFamousArtist(song.artist)) score += 150;
 
   // 6. Popularity / View count
-  if (song.viewCount && song.viewCount > 1000000) {
+  if (isRelevant && song.viewCount && song.viewCount > 1000000) {
     score += Math.min(100, Math.floor(Math.log10(song.viewCount) * 15));
   }
 
@@ -282,6 +294,8 @@ function calculateRelevance(
     if (normTitle.includes(w) || latinTitle.includes(w)) score += 40;
     if (normArtist.includes(w)) score += 20;
   }
+
+  if (!isRelevant) score -= 1000;
 
   // 8. Unofficial / Cover / Live / Karaoke Penalties (Do not penalize official singer attributions!)
   if (
@@ -344,9 +358,10 @@ export function rankSearchSongs(songs: Song[], rawQuery: string): Song[] {
     return { song: s, score };
   });
 
-  // Strict prune: drop any result with a negative or zero score (junk or completely unrelated)
-  const filtered = scored.filter((item) => item.score > 0);
-  const toSort = filtered.length > 0 ? filtered : scored;
-
-  return toSort.sort((a, b) => b.score - a.score).map((item) => item.song);
+  // Strict prune: drop any result with a negative or zero score (junk or completely unrelated).
+  // Never fall back to the unfiltered list — that is how unrelated clips leak in.
+  return scored
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .map((item) => item.song);
 }

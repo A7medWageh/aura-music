@@ -11,30 +11,36 @@ import { File } from "expo-file-system";
 import { Song } from "@/types/music";
 import { getDownloadedSongs, upsertSong, markSongDownloaded } from "@/database/db";
 import { FileManager } from "@/services/storage/fileManager";
+import { MusicApi } from "@/services/api/musicApi";
 import { normalizeArabicName } from "@/utils/latinize";
+
+function sanitizeName(value: string): string {
+  return value
+    .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}]/gu, " ")
+    .replace(/#[\p{L}\p{N}_]+/gu, " ")
+    .replace(/@\w+/g, " ")
+    .replace(/[\[\(][^\]\)]*[\]\)]/g, " ")
+    .replace(/\b(202[0-9]|201[0-9])\b/g, " ")
+    .replace(/^[-–—:|.\s]+|[-–—:|.\s]+$/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
 function parseAudioFileName(fileName: string): { title: string; artist: string } {
   // Strip audio file extensions
-  let clean = fileName
-    .replace(/\.(mp3|m4a|aac|flac|wav|ogg|opus|webm|alac|aiff)$/i, "")
+  let clean = sanitizeName(fileName.replace(/\.(mp3|m4a|aac|flac|wav|ogg|opus|webm|alac|aiff)$/i, ""))
     .replace(/[_]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  // Strip common telegram and downloader tags
-  clean = clean
-    .replace(/@\w+/g, "")
-    .replace(/\[.*?\]/g, "")
-    .replace(/\(.*?\)/g, "")
-    .replace(/Official\s*(Audio|Video|Music\s*Video|Clip)?/gi, "")
-    .replace(/(فيديو\s*كليب|كليب\s*رسمي|أغنية\s*رسمية|حصريا|نسخة\s*أصلية)/gi, "")
-    .trim();
+    .replace(
+      /\b(Official\s*(?:Music\s*)?Video|Official\s*Audio|Lyric\s*Video|Music\s*Video|Visualizer|HD|HQ|4K)\b/gi,
+      " "
+    )
+    .replace(/(فيديو\s*كليب|كليب\s*رسمي|أغنية\s*رسمية|حصريا|نسخة\s*أصلية|بجودة|تحميل)/gi, " ");
 
   let artist = "";
   let title = clean;
 
   // Pattern: "Artist - Title" or "Title - Artist"
-  const dashSplit = clean.split(/\s*[-–—|:]\s*/);
+  const dashSplit = clean.split(/\s*[-–—|:]\s*/).filter(Boolean);
   if (dashSplit.length >= 2) {
     const part0 = dashSplit[0].trim();
     const part1 = dashSplit.slice(1).join(" - ").trim();
@@ -57,10 +63,47 @@ function parseAudioFileName(fileName: string): { title: string; artist: string }
     }
   }
 
+  title = sanitizeName(title);
+  artist = sanitizeName(artist);
+
+  // Prefer the shortest meaningful segment of a long YouTube-style file name
+  if (title.split(" ").length > 9 || title.length > 64) {
+    const segments = title.split(/\s*[-–—|]\s*/).map((s) => s.trim()).filter((s) => s.length >= 3);
+    const best = segments.find((s) => !/مسلسل|تتر|غناء|أداء|بصوت|انتاج|إنتاج|قناة|كليب/i.test(s));
+    if (best) title = best;
+  }
+
   return {
     title: title || clean || "أغنية تيليجرام",
     artist: artist || "فنان غير معروف",
   };
+}
+
+async function resolveImportedArtwork(
+  songId: string,
+  title: string,
+  artist: string
+): Promise<{ thumbnailUrl?: string; localArtworkPath?: string } | null> {
+  try {
+    const searchResult = await Promise.race([
+      MusicApi.search(`${artist} ${title}`.trim()),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 3500)),
+    ]);
+    if (!searchResult) return null;
+
+    const match = (searchResult.songs || []).find(
+      (s) =>
+        s.thumbnailUrl &&
+        (normalizeArabicName(s.title).includes(normalizeArabicName(title)) ||
+          normalizeArabicName(title).includes(normalizeArabicName(s.title)))
+    );
+    if (!match?.thumbnailUrl) return null;
+
+    const localArtworkPath = await FileManager.cacheArtwork(songId, match.thumbnailUrl);
+    return { thumbnailUrl: match.thumbnailUrl, localArtworkPath: localArtworkPath || undefined };
+  } catch {
+    return null;
+  }
 }
 
 export async function pickAndImportLocalTelegramAudio(): Promise<{
@@ -135,7 +178,10 @@ export async function pickAndImportLocalTelegramAudio(): Promise<{
 
     const fileSize = destFile.size || pickedFile.size || 0;
 
-    // 4. Construct song object with targetFolder set directly to the artist's folder
+    // 4. Best-effort artwork so downloaded files never stay blank
+    const artwork = await resolveImportedArtwork(songId, title, targetFolder);
+
+    // 5. Construct song object with targetFolder set directly to the artist's folder
     const importedSong: Song = {
       id: songId,
       title,
@@ -146,12 +192,19 @@ export async function pickAndImportLocalTelegramAudio(): Promise<{
       isDownloaded: true,
       localFilePath: destinationPath,
       fileSize,
+      thumbnailUrl: artwork?.thumbnailUrl,
+      localArtworkPath: artwork?.localArtworkPath,
       downloadedAt: Date.now(),
     };
 
-    // 5. Persist into SQLite database
+    // 6. Persist into SQLite database
     await upsertSong(importedSong);
-    await markSongDownloaded(songId, destinationPath, fileSize);
+    await markSongDownloaded(
+      songId,
+      destinationPath,
+      fileSize,
+      artwork?.localArtworkPath || artwork?.thumbnailUrl
+    );
 
     return {
       success: true,

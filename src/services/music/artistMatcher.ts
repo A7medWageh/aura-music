@@ -673,29 +673,39 @@ export function extractSmartArtistAndTitle(
  */
 export function cleanSongTitle(rawTitle: string, artist?: string): string {
   if (!rawTitle) return "أغنية محفوظة";
+
+  const finalize = (value: string): string =>
+    value
+      .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}]/gu, " ")
+      .replace(/#[\p{L}\p{N}_]+/gu, " ")
+      .replace(/^[-–—:|.\s]+|[-–—:|.\s]+$/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
   let t = rawTitle;
 
   // 1. Extract quoted track title if present
   const qm = t.match(/["“'«]([^"”'»]{3,})["”'»]/);
   if (qm) {
-    const candidate = qm[1].trim();
-    if (!/مسلسل|تتر|حصريا|جديد|كليب|فيديو|HD|Official/i.test(candidate)) {
+    const candidate = finalize(qm[1]);
+    if (candidate.length >= 3 && !/مسلسل|تتر|حصريا|جديد|كليب|فيديو|HD|Official/i.test(candidate)) {
       return candidate;
     }
   }
 
   // 2. Strip video and series prefixes / suffixes
   t = t
-    .replace(/\b(Official\s*(?:Music\s*)?Video|Official\s*Audio|Lyric\s*Video|HD|HQ|4K|1080p|720p)\b/gi, "")
+    .replace(/\b(Official\s*(?:Music\s*)?Video|Official\s*Audio|Lyric\s*Video|Music\s*Video|Visualizer|HD|HQ|4K|1080p|720p)\b/gi, "")
     .replace(/[\[\(][^\]\)]*[\]\)]/g, "")
-    .replace(/(?:فيديو\s*كليب|كليب\s*رسمي|النسخة\s*الأصلية|الأغنية\s*الرسمية|حصرياً|حصريا|كامله|كاملة)/gi, "")
+    .replace(/(?:فيديو\s*كليب|كليب\s*رسمي|النسخة\s*الأصلية|الأغنية\s*الرسمية|حصرياً|حصريا|كامله|كاملة|بجودة|على\s*يوتيوب)/gi, "")
     .replace(/^(?:تتر\s+مسلسل\s+[^\-|–—]+\s*[-|–—]\s*)/i, "")
     .replace(/^(?:أغنية|اغنية|شارة)\s+/i, "")
     .replace(/\b(202[0-9]|201[0-9])\b/g, "");
 
-  // If artist is known, strip artist from title
-  if (artist) {
-    t = t.replace(new RegExp(artist, "gi"), "");
+  // If artist is known, strip artist from title (escaped: names may contain regex chars)
+  if (artist && artist.length >= 2) {
+    const escaped = artist.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    t = t.replace(new RegExp(escaped, "gi"), " ");
   }
 
   // Split by pipe or dash and pick the most relevant part
@@ -703,20 +713,21 @@ export function cleanSongTitle(rawTitle: string, artist?: string): string {
     const segments = t.split(/[|\-–—]/).map((s) => s.trim()).filter((s) => s.length >= 2);
     const best = segments.find(
       (s) =>
-        !/مسلسل|تتر|غناء|أداء|بصوت|انتاج|قناة|كليب/i.test(s) &&
+        !/مسلسل|تتر|غناء|أداء|بصوت|انتاج|إنتاج|توزيع|كلمات|ألحان|قناة|كليب/i.test(s) &&
         !GENERIC_CHANNELS_REGEX.test(s) &&
         s.length >= 3
     );
     if (best) t = best;
   }
 
-  // Clean trailing punctuation and whitespace
-  t = t
-    .replace(/^[-–—:\|.\s]+|[-–—:\|.\s]+$/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
+  // 3. Drop decorative clauses that leaked through, then tidy punctuation
+  t = finalize(
+    t
+      .replace(/(?:حصريا?\s*على|برعاية|إنتاج|انتاج|توزيع|كلمات|ألحان|غناء|أداء|بصوت)\s*[:：]?.*$/i, "")
+  );
 
-  return t || rawTitle.trim();
+  if (!t) return artist ? `أغنية ${artist}` : finalize(rawTitle) || "أغنية محفوظة";
+  return t;
 }
 
 /**

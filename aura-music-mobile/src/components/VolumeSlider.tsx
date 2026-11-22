@@ -152,7 +152,6 @@ const styles = StyleSheet.create({
     height: 36,
     justifyContent: "center",
     position: "relative",
-    direction: "ltr",
   },
   disabled: { opacity: 0.4 },
   track: {
@@ -162,7 +161,6 @@ const styles = StyleSheet.create({
     backgroundColor: Color.ink4,
     overflow: "hidden",
     position: "relative",
-    direction: "ltr",
   },
   fill: {
     position: "absolute",

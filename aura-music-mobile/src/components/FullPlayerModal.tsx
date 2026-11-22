@@ -174,25 +174,21 @@ export const FullPlayerModal: React.FC = () => {
   const [remainingTimer, setRemainingTimer] = useState<string | null>(null);
   const [imgError, setImgError] = useState(false);
   const lastVolumeRef = useRef(1);
-  const [currentRoute, setCurrentRoute] = useState<"speaker" | "headphones">("headphones");
+  const [currentRoute, setCurrentRoute] = useState<"speaker" | "headphones" | null>(null);
 
   useEffect(() => {
-    if (visible) {
+    if (visible && Platform.OS === "ios") {
       audioService.getAudioRoute().then((r) => {
-        if (r === "speaker") setCurrentRoute("speaker");
-        else setCurrentRoute("headphones");
+        if (r === "speaker" || r === "headphones") setCurrentRoute(r);
       });
     }
   }, [visible]);
 
   const handleToggleRoute = async () => {
     const res = await audioService.toggleAudioRoute();
-    if (res === "speaker") {
-      setCurrentRoute("speaker");
-      setAuraProfile("speaker");
-    } else {
-      setCurrentRoute("headphones");
-      setAuraProfile("headphones");
+    if (res === "speaker" || res === "headphones") {
+      setCurrentRoute(res);
+      setAuraProfile(res);
     }
   };
   const webDsp = Platform.OS === "web";
@@ -592,26 +588,28 @@ export const FullPlayerModal: React.FC = () => {
 
                 <VolumeSlider value={volume} onChange={setVolume} />
 
-                {/* Audio Route Quick Switcher (Speaker vs Headphones) */}
-                <AuraTouch
-                  feedback="impact"
-                  pressedScale={0.92}
-                  onPress={handleToggleRoute}
-                  hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
-                  style={[
-                    styles.speedPill,
-                    currentRoute === "speaker" && { borderColor: Color.gold500, backgroundColor: "rgba(255, 215, 0, 0.15)" },
-                  ]}
-                >
-                  {currentRoute === "speaker" ? (
-                    <Speaker size={14} color={Color.gold500} />
-                  ) : (
-                    <Headphones size={14} color={Color.gold300} />
-                  )}
-                  <AuraText role="tiny" color={currentRoute === "speaker" ? Color.gold500 : Color.gold300}>
-                    {currentRoute === "speaker" ? "سماعة الهاتف" : "سماعات الرأس"}
-                  </AuraText>
-                </AuraTouch>
+                {/* Audio Route Quick Switcher (iPhone speaker vs headphones) */}
+                {currentRoute !== null && (
+                  <AuraTouch
+                    feedback="impact"
+                    pressedScale={0.92}
+                    onPress={handleToggleRoute}
+                    hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+                    style={[
+                      styles.speedPill,
+                      currentRoute === "speaker" && { borderColor: Color.gold500, backgroundColor: "rgba(255, 215, 0, 0.15)" },
+                    ]}
+                  >
+                    {currentRoute === "speaker" ? (
+                      <Speaker size={14} color={Color.gold500} />
+                    ) : (
+                      <Headphones size={14} color={Color.gold300} />
+                    )}
+                    <AuraText role="tiny" color={currentRoute === "speaker" ? Color.gold500 : Color.gold300}>
+                      {currentRoute === "speaker" ? "مكبر الصوت" : "سماعات الرأس"}
+                    </AuraText>
+                  </AuraTouch>
+                )}
 
                 {/* Speed selector indicator */}
                 <AuraTouch

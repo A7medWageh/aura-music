@@ -45,6 +45,11 @@ typedef struct {
     
     // Smooth gain ramp for click-free parameter transitions
     float _currentAppliedGain;
+
+    // Transparent peak limiter (fast attack / slow release) keeps boosted peaks clean
+    float _limiterGain;
+    float _limiterAttackCoef;
+    float _limiterReleaseCoef;
 }
 
 + (instancetype)sharedEngine {
@@ -74,6 +79,9 @@ typedef struct {
         _rotationPhase = 0.0;
         _rotationPhaseInc = 2.0 * M_PI / (44100.0 * 1.35); // Rapid, distinctly noticeable 1.35s 8D cycle
         _currentAppliedGain = 1.0f;
+        _limiterGain = 1.0f;
+        _limiterAttackCoef = 0.9885f;   // ~2 ms at 44.1 kHz
+        _limiterReleaseCoef = 0.9997f;  // ~80 ms at 44.1 kHz
         
         // Default 10 ISO standard center frequencies
         _eqFrequencies[0] = 32.0;    // Sub-bass
@@ -211,6 +219,17 @@ static inline float processSample(AuraBiquad *filter, float inSample, int ch) {
     return (float)y;
 }
 
+#define AURA_LIMITER_CEILING 0.92f
+
+// Peak limiter that clamps before the saturator, so high gain stays clean
+// instead of crushing every loud sample into the tanh curve.
+static inline float nextLimiterGain(float peak, float current, float attackCoef, float releaseCoef) {
+    if (peak <= 0.00001f) return current;
+    float desired = (peak > AURA_LIMITER_CEILING) ? (AURA_LIMITER_CEILING / peak) : 1.0f;
+    float coef = (desired < current) ? attackCoef : releaseCoef;
+    return desired + (current - desired) * coef;
+}
+
 - (void)rebuildFilters {
     // 1. Bands: Band 0 is low shelf, Band 9 is high shelf, 1-8 are peaking
     computeLowShelf(&_eqBands[0], _eqFrequencies[0], _eqGains[0], 0.9, _sampleRate);
@@ -238,6 +257,10 @@ static inline float processSample(AuraBiquad *filter, float inSample, int ch) {
     computeLowShelf(&_punchFilter, 85.0, 2.2, 0.9, _sampleRate);
     // De-mud low-mid scoop for distinct instrument separation (340 Hz peaking)
     computePeaking(&_deMudFilter, 340.0, -1.5, 1.25, _sampleRate);
+
+    // 5. Limiter timing follows the active sample rate
+    _limiterAttackCoef = (float)exp(-1.0 / (0.002 * _sampleRate));
+    _limiterReleaseCoef = (float)exp(-1.0 / (0.080 * _sampleRate));
 }
 
 - (void)resetFilterStates {
@@ -260,6 +283,7 @@ static inline float processSample(AuraBiquad *filter, float inSample, int ch) {
         _deMudFilter.s1[c] = 0.0;
         _deMudFilter.s2[c] = 0.0;
     }
+    _limiterGain = 1.0f;
     os_unfair_lock_unlock(&_engineLock);
 }
 
@@ -524,12 +548,13 @@ static inline float softSaturate(float x) {
                 r = mid - side * sideGain;
             }
             
-            // 5. Extreme Loudness Makeup & True-Peak Limiter
-            l *= targetGain;
-            r *= targetGain;
-            
-            left[i] = softSaturate(l);
-            right[i] = softSaturate(r);
+            // 5. Clean peak limiting, then studio makeup gain
+            float peak = fmaxf(fabsf(l), fabsf(r)) * targetGain;
+            _limiterGain = nextLimiterGain(peak, _limiterGain, _limiterAttackCoef, _limiterReleaseCoef);
+            float appliedGain = targetGain * _limiterGain;
+
+            left[i] = softSaturate(l * appliedGain);
+            right[i] = softSaturate(r * appliedGain);
         }
     }
     // Interleaved Stereo (Buffer 0: [L0, R0, L1, R1, ...])
@@ -583,15 +608,13 @@ static inline float softSaturate(float x) {
                 r = mid - side * width;
             }
             
-            // 5. Loudness & True-Peak Limiter
-            l *= targetGain;
-            r *= targetGain;
-            
-            interleaved[idx] = softSaturate(l);
-            interleaved[idx + 1] = softSaturate(r);
-        }
-    }
-            interleaved[idx + 1] = softSaturate(r);
+            // 5. Clean peak limiting, then studio makeup gain
+            float peak = fmaxf(fabsf(l), fabsf(r)) * targetGain;
+            _limiterGain = nextLimiterGain(peak, _limiterGain, _limiterAttackCoef, _limiterReleaseCoef);
+            float appliedGain = targetGain * _limiterGain;
+
+            interleaved[idx] = softSaturate(l * appliedGain);
+            interleaved[idx + 1] = softSaturate(r * appliedGain);
         }
     }
 }
