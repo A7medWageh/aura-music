@@ -174,6 +174,29 @@ function parseQueryIntent(raw: string): { cleanQ: string; titlePart: string; art
     }
   }
 
+  // 2b. Same for Latin artist names ("Amr Diab Tamally Maak" -> title "Tamally
+  // Maak", artist "amr diab"). Without this the raw words stay glued together
+  // and title/artist alignment never kicks in.
+  if (!artistPart) {
+    const lower = cleaned.toLowerCase();
+    const latinKeys = Object.keys(BILINGUAL_ARTIST_MAP).sort((a, b) => b.length - a.length);
+    for (const latinArtist of latinKeys) {
+      if (lower.startsWith(latinArtist + " ")) {
+        artistPart = latinArtist;
+        titlePart = cleaned.slice(latinArtist.length).trim();
+        break;
+      } else if (lower === latinArtist) {
+        artistPart = latinArtist;
+        titlePart = "";
+        break;
+      } else if (lower.endsWith(" " + latinArtist)) {
+        artistPart = latinArtist;
+        titlePart = cleaned.slice(0, cleaned.length - latinArtist.length).trim();
+        break;
+      }
+    }
+  }
+
   const cleanQ = (artistPart && titlePart) ? `${titlePart} ${artistPart}` : cleanSearchQuery(normRaw);
   const invertedQ = (artistPart && titlePart) ? `${artistPart} ${titlePart}` : "";
 
@@ -220,10 +243,20 @@ export async function smartSearch(searchTerm: string) {
   const primaryQuery = cleanQ || q;
   // Fast, single-pass YouTube search with a 3.5s timeout.
   // Probing multiple variants in parallel flooded YouTube and caused 5s+ stalls.
-  let ytRes = await Promise.race([
-    searchYouTube(primaryQuery),
-    new Promise<any>((_, reject) => setTimeout(() => reject(new Error("yt_timeout")), 3500))
-  ]).catch(() => emptyYt);
+  const fetchYt = (query: string, timeoutMs: number) =>
+    Promise.race([
+      searchYouTube(query),
+      new Promise<any>((_, reject) => setTimeout(() => reject(new Error("yt_timeout")), timeoutMs))
+    ]).catch(() => emptyYt);
+
+  let ytRes = await fetchYt(primaryQuery, 3500);
+
+  // A single retry when the upstream returned nothing (rate limits / hiccups).
+  // Without it one bad response makes the whole query look empty.
+  if (!ytRes?.songs?.length) {
+    await new Promise((r) => setTimeout(r, 400));
+    ytRes = await fetchYt(primaryQuery, 2500);
+  }
 
   // If primary returned few or no songs, try inverted or raw query as fallback
   if ((!ytRes?.songs || ytRes.songs.length < 3) && invertedQ && invertedQ.toLowerCase() !== primaryQuery.toLowerCase()) {
@@ -568,7 +601,13 @@ export async function smartSearch(searchTerm: string) {
     })),
   };
 
-  cache.set(q.toLowerCase(), { data: result, ts: Date.now() });
+  const upstreamReturnedSongs = ytSongsRaw.length > 0;
+  const hasMeaningfulResult = result.songs.length || result.artists.length || result.albums.length;
+  // Cache genuine "no relevant results" answers, but never cache an upstream
+  // failure as empty — that would hide the query for the whole TTL.
+  if (hasMeaningfulResult || upstreamReturnedSongs) {
+    cache.set(q.toLowerCase(), { data: result, ts: Date.now() });
+  }
 
   // 🚀 Proactively trigger Telegram Bot download for the top matched song
   // Immediately sends: "نزل {title} {artist}" to Telegram channel so it's cached/ready on first click!

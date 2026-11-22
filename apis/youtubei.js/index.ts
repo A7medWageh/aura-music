@@ -436,7 +436,11 @@ export async function searchYouTube(query: string) {
     artists: primary?.artists?.length ? primary.artists : (fb?.artists || []),
     source: "hybrid-parallel",
   };
-  searchCache.set(cacheKey, { data: result, expiresAt: Date.now() + SEARCH_TTL });
+  // Never cache an empty set: a transient upstream failure would otherwise
+  // stick for the whole TTL and make that query return nothing for minutes.
+  if (mergedSongs.length > 0) {
+    searchCache.set(cacheKey, { data: result, expiresAt: Date.now() + SEARCH_TTL });
+  }
   return result;
 }
 
