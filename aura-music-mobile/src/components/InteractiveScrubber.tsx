@@ -141,13 +141,19 @@ export function InteractiveScrubber({
         setIsDragging(false);
         if (!durationRef.current || durationRef.current <= 0) return;
 
-        // If dragged use moveX, if single tap without movement use locationX
-        let finalX = gestureState.moveX - barLeftRef.current;
-        if (Math.abs(gestureState.dx) < 2) {
-          const locX = (evt.nativeEvent as any)?.locationX;
-          if (typeof locX === "number" && isFinite(locX)) {
-            finalX = locX;
-          }
+        // pageX is always window-based, same basis as barLeftRef captured on
+        // grant, so taps and drags use one consistent coordinate space.
+        const native = evt.nativeEvent as any;
+        let finalX = NaN;
+        const releasePageX = typeof native?.pageX === "number" && isFinite(native.pageX)
+          ? native.pageX
+          : NaN;
+        if (isFinite(releasePageX)) {
+          finalX = releasePageX - barLeftRef.current;
+        } else if (isFinite(gestureState.moveX)) {
+          finalX = gestureState.moveX - barLeftRef.current;
+        } else if (typeof native?.locationX === "number" && isFinite(native.locationX)) {
+          finalX = native.locationX;
         }
 
         const target = calcXRef.current(finalX);

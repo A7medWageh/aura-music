@@ -20,6 +20,7 @@ import {
   getCustomOfflineFolders as dbGetCustomOfflineFolders,
   createCustomOfflineFolder as dbCreateCustomOfflineFolder,
   updateSongMetadata as dbUpdateSongMetadata,
+  updateSongArtwork as dbUpdateSongArtwork,
 } from "@/database/db";
 import { downloadManager } from "@/services/offline/downloadManager";
 import { FileManager } from "@/services/storage/fileManager";
@@ -45,11 +46,13 @@ interface LibraryState {
   toggleSongHidden: (songId: string, isHidden: boolean) => Promise<void>;
   renameFolder: (oldName: string, newName: string) => Promise<void>;
   moveSongToFolder: (songId: string, targetFolder: string) => Promise<void>;
+  moveSongsToFolder: (songIds: string[], targetFolder: string) => Promise<void>;
   deleteFolder: (folderName: string) => Promise<void>;
   deleteArtist: (artistName: string) => Promise<void>;
   deleteAlbum: (albumName: string, artistName?: string) => Promise<void>;
   createCustomFolder: (folderName: string) => boolean;
   updateSongMetadata: (songId: string, newTitle: string, newArtist?: string, newFolder?: string) => Promise<void>;
+  updateSongArtwork: (songId: string, remoteUrl: string) => Promise<void>;
 }
 
 export const useLibraryStore = create<LibraryState>((set, get) => ({
@@ -139,6 +142,21 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     await get().loadLibrary();
   },
 
+  moveSongsToFolder: async (songIds: string[], targetFolder: string) => {
+    const clean = targetFolder.trim();
+    if (!clean || songIds.length === 0) return;
+    const folderExists =
+      get().customFolders.includes(clean) ||
+      get().downloadedSongs.some((s) => (s.folderName || s.artist || "").trim() === clean);
+    if (!folderExists) {
+      dbCreateCustomOfflineFolder(clean);
+    }
+    for (const id of songIds) {
+      await dbMoveSongToOfflineFolder(id, clean);
+    }
+    await get().loadLibrary();
+  },
+
   deleteFolder: async (folderName: string) => {
     await dbDeleteOfflineFolder(folderName, true);
     await get().loadLibrary();
@@ -164,6 +182,20 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
 
   updateSongMetadata: async (songId: string, newTitle: string, newArtist?: string, newFolder?: string) => {
     await dbUpdateSongMetadata(songId, newTitle, newArtist, newFolder);
+    await get().loadLibrary();
+  },
+
+  updateSongArtwork: async (songId: string, remoteUrl: string) => {
+    const song = get().downloadedSongs.find((s) => s.id === songId);
+    if (song?.localArtworkPath) {
+      // cacheArtwork reuses an existing file, so the stale image must go first.
+      await FileManager.deleteDownloadedAudio(undefined, song.localArtworkPath).catch(() => {});
+    }
+    let localPath: string | null = null;
+    if (remoteUrl) {
+      localPath = await FileManager.cacheArtwork(songId, remoteUrl).catch(() => null);
+    }
+    await dbUpdateSongArtwork(songId, remoteUrl, localPath);
     await get().loadLibrary();
   },
 }));

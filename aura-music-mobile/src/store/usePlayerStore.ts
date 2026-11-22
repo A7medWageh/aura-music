@@ -85,8 +85,10 @@ let isCrossfading = false;
 // pre-seek position, which would yank the scrubber back. Hold the requested target in the UI.
 let seekHoldTargetSec = -1;
 let seekHoldUntil = 0;
-const SEEK_HOLD_MS = 4000;
-const SEEK_TOLERANCE_SEC = 1.25;
+// Progressive streams can take several seconds before the native player reports
+// the post-seek time; hold the target until it lands instead of snapping back.
+const SEEK_HOLD_MS = 12000;
+const SEEK_TOLERANCE_SEC = 1.5;
 
 export const usePlayerStore = create<PlayerState>((set, get) => ({
   currentSong: null,
@@ -169,6 +171,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
             audioService.crossfadeToSong(nextSong).then((ok) => {
               isCrossfading = false;
               if (ok) {
+                seekHoldTargetSec = -1;
+                seekHoldUntil = 0;
                 set({
                   currentSong: nextSong,
                   queueIndex: nextIndex,
@@ -306,10 +310,19 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
   seekTo: async (seconds: number) => {
     if (isNaN(seconds) || !isFinite(seconds) || seconds < 0) return;
-    seekHoldTargetSec = seconds;
+    const { duration } = get();
+    const target = duration > 1 ? Math.min(seconds, duration) : seconds;
+    seekHoldTargetSec = target;
     seekHoldUntil = Date.now() + SEEK_HOLD_MS;
-    set({ position: seconds });
-    await audioService.seekTo(seconds * 1000);
+    set({ position: target });
+    const landed = await audioService.seekTo(target * 1000);
+    if (isFinite(landed) && landed >= 0) {
+      // Keep the hold anchored to the confirmed position so the status stream
+      // cannot briefly pull the bar back to the pre-seek time.
+      seekHoldTargetSec = landed;
+      seekHoldUntil = Date.now() + SEEK_HOLD_MS;
+      set({ position: landed });
+    }
   },
 
   skipBy: async (deltaSeconds: number) => {

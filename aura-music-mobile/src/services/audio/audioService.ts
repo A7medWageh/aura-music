@@ -60,6 +60,9 @@ class AudioService {
   // (expired provider URL, tunnel hiccup) instead of leaving playback dead.
   private nativeRetriedSongId: string | null = null;
 
+  // Guards the seek-failure fallback from re-entering playSong -> seekTo.
+  private seekingRecovery = false;
+
   public subscribe(listener: PlaybackStatusListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -852,30 +855,88 @@ class AudioService {
     }
   }
 
-  public async seekTo(positionMillis: number): Promise<void> {
+  // Returns the position (in seconds) the player actually landed on, so the
+  // store/UI can stop guessing and stop snapping back to the pre-seek time.
+  public async seekTo(positionMillis: number): Promise<number> {
     if (isNaN(positionMillis) || !isFinite(positionMillis) || positionMillis < 0) {
-      return;
+      return this.lastKnownPosition / 1000;
     }
+    const targetSec = positionMillis / 1000;
+
     if (Platform.OS === "web" && this.webAudio) {
-      const targetSec = positionMillis / 1000;
       if (this.isSeekableTo(this.webAudio, targetSec)) {
         try {
           this.webAudio.currentTime = targetSec;
         } catch (err) {
           console.warn("[AudioService Web] seekTo error:", err);
         }
-        return;
+      } else {
+        await this.seekViaLocalBlob(targetSec);
       }
-      await this.seekViaLocalBlob(targetSec);
-      return;
+      const landed = isFinite(this.webAudio.currentTime) ? this.webAudio.currentTime : targetSec;
+      return landed;
     }
+
     if (this.sound) {
-      try {
-        await this.sound.seekTo(positionMillis / 1000, 0, 0);
-      } catch (err) {
-        console.warn("[AudioService] seekTo error:", err);
+      const trySeek = async (toleranceMillis: number) => {
+        try {
+          // A small tolerance keeps seeks reliable on progressive HTTP streams;
+          // zero tolerance can stall or silently miss on unbuffered ranges.
+          await this.sound!.seekTo(targetSec, toleranceMillis, toleranceMillis);
+        } catch (err) {
+          console.warn("[AudioService] seekTo error:", err);
+        }
+        const pos = this.sound!.currentTime;
+        return this.isFiniteSec(pos) ? pos : targetSec;
+      };
+
+      let landed = await trySeek(120);
+      if (Math.abs(landed - targetSec) > 2.5 && !this.seekingRecovery) {
+        // Transient network stalls are the usual cause; one retry with a wider
+        // tolerance usually lands before we pay for a player rebuild.
+        await new Promise((r) => setTimeout(r, 260));
+        landed = await trySeek(1200);
       }
+
+      // AVPlayer can still report a completed seek without moving on streams
+      // that reject arbitrary byte ranges. Rebuild the player at the requested
+      // position instead of leaving playback stuck where it was.
+      if (
+        !this.seekingRecovery &&
+        this.currentSong &&
+        Math.abs(landed - targetSec) > 2.5
+      ) {
+        console.warn(
+          `[AudioService] seek missed twice (${landed.toFixed(1)}s != ${targetSec.toFixed(1)}s), reloading at target`
+        );
+        this.seekingRecovery = true;
+        const wasPlaying = this.isAudioPlaying;
+        try {
+          await this.playSong(this.currentSong, Math.round(targetSec * 1000));
+          if (!wasPlaying) this.sound?.pause();
+          landed = this.sound?.currentTime ?? targetSec;
+        } catch (err) {
+          console.warn("[AudioService] seek recovery failed:", err);
+        } finally {
+          this.seekingRecovery = false;
+        }
+      }
+
+      this.notify({
+        isPlaying: this.isAudioPlaying,
+        positionMillis: Math.max(0, (this.isFiniteSec(landed) ? landed : targetSec) * 1000),
+        durationMillis: this.lastKnownDuration,
+        isBuffering: false,
+        didJustFinish: false,
+      });
+      return this.isFiniteSec(landed) ? landed : targetSec;
     }
+
+    return targetSec;
+  }
+
+  private isFiniteSec(value: number): boolean {
+    return typeof value === "number" && isFinite(value) && !isNaN(value);
   }
 
   private isSeekableTo(el: HTMLAudioElement, targetSec: number): boolean {

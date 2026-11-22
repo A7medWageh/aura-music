@@ -174,6 +174,19 @@ export async function updateSongMetadata(
   }
 }
 
+export async function updateSongArtwork(
+  songId: string,
+  thumbnailUrl: string | null,
+  localArtworkPath?: string | null
+): Promise<void> {
+  const songs = getSongsMap();
+  if (songs[songId]) {
+    songs[songId].thumbnailUrl = thumbnailUrl || undefined;
+    songs[songId].localArtworkPath = localArtworkPath || undefined;
+    saveSongsMap(songs);
+  }
+}
+
 export async function updateSongLastPlayed(songId: string): Promise<void> {
   const songs = getSongsMap();
   if (songs[songId]) {

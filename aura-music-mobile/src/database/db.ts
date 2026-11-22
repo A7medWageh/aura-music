@@ -379,6 +379,30 @@ export async function updateSongMetadata(
   );
 }
 
+export async function updateSongArtwork(
+  songId: string,
+  thumbnailUrl: string | null,
+  localArtworkPath?: string | null
+): Promise<void> {
+  if (Platform.OS === "web") {
+    const songs = getWebStorage<Record<string, Song>>(WEB_STORAGE_KEYS.SONGS, {});
+    if (songs[songId]) {
+      songs[songId].thumbnailUrl = thumbnailUrl || undefined;
+      songs[songId].localArtworkPath = localArtworkPath || undefined;
+      setWebStorage(WEB_STORAGE_KEYS.SONGS, songs);
+    }
+    return;
+  }
+
+  const db = await getDatabase();
+  await db.runAsync(
+    `UPDATE songs SET thumbnail_url = ?, local_artwork_path = ? WHERE id = ?`,
+    thumbnailUrl,
+    localArtworkPath ?? null,
+    songId
+  );
+}
+
 export async function updateSongLastPlayed(songId: string): Promise<void> {
   if (Platform.OS === "web") {
     const songs = getWebStorage<Record<string, Song>>(WEB_STORAGE_KEYS.SONGS, {});

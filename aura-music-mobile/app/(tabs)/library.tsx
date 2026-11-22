@@ -26,6 +26,9 @@ import {
   Send,
   Radio,
   Share2,
+  ImagePlus,
+  ListChecks,
+  Check,
 } from "lucide-react-native";
 
 import { getSafeTopInset } from "@/utils/safeArea";
@@ -47,6 +50,14 @@ import { LibraryBackupModal } from "@/components/LibraryBackupModal";
 import { TelegramImportModal } from "@/components/TelegramImportModal";
 import { AirDropTransferModal } from "@/components/AirDropTransferModal";
 import { shareSongViaAirDrop } from "@/services/offline/backupTransfer";
+import {
+  searchArtworkCandidates,
+  type ArtworkCandidate,
+} from "@/services/api/artworkSearch";
+import {
+  getArtistArtworkOverrides,
+  setArtistArtworkOverride,
+} from "@/services/storage/artworkOverrides";
 import { PLACEHOLDER_ARTIST, PLACEHOLDER_ALBUM, PLACEHOLDER_SONG } from "@/constants/placeholders";
 import {
   AuraArtwork,
@@ -85,12 +96,13 @@ export default function LibraryScreen() {
   const loadLibrary = useLibraryStore((s) => s.loadLibrary);
   const toggleSongHidden = useLibraryStore((s) => s.toggleSongHidden);
   const renameFolder = useLibraryStore((s) => s.renameFolder);
-  const moveSongToFolder = useLibraryStore((s) => s.moveSongToFolder);
+  const moveSongsToFolder = useLibraryStore((s) => s.moveSongsToFolder);
   const deleteFolder = useLibraryStore((s) => s.deleteFolder);
   const deleteArtist = useLibraryStore((s) => s.deleteArtist);
   const deleteAlbum = useLibraryStore((s) => s.deleteAlbum);
   const deleteDownloadedSong = useLibraryStore((s) => s.deleteDownloadedSong);
   const createCustomFolder = useLibraryStore((s) => s.createCustomFolder);
+  const updateSongArtwork = useLibraryStore((s) => s.updateSongArtwork);
 
   const playSong = usePlayerStore((s) => s.playSong);
 
@@ -114,14 +126,37 @@ export default function LibraryScreen() {
   const [renamingFolder, setRenamingFolder] = useState<string | null>(null);
   const [newFolderName, setNewFolderName] = useState("");
 
-  const [movingSong, setMovingSong] = useState<Song | null>(null);
+  const [movingSongs, setMovingSongs] = useState<Song[] | null>(null);
   const [targetFolder, setTargetFolder] = useState("");
+
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedSongIds, setSelectedSongIds] = useState<string[]>([]);
+  const toggleSelection = (songId: string) => {
+    setSelectedSongIds((prev) =>
+      prev.includes(songId) ? prev.filter((id) => id !== songId) : [...prev, songId]
+    );
+  };
+  const exitSelection = () => {
+    setSelectionMode(false);
+    setSelectedSongIds([]);
+  };
 
   const [editingSong, setEditingSong] = useState<Song | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [editArtist, setEditArtist] = useState("");
   const [editFolder, setEditFolder] = useState("");
   const [isSavingEdit, setIsSavingEdit] = useState(false);
+
+  const [artistArtworkOverrides, setArtistArtworkOverrides] = useState<Record<string, string>>({});
+  const [artworkTarget, setArtworkTarget] = useState<
+    { type: "song"; song: Song } | { type: "artist"; name: string } | null
+  >(null);
+  const [artworkMode, setArtworkMode] = useState<"song" | "artist">("song");
+  const [artworkQuery, setArtworkQuery] = useState("");
+  const [artworkResults, setArtworkResults] = useState<ArtworkCandidate[]>([]);
+  const [selectedArtwork, setSelectedArtwork] = useState<string | null>(null);
+  const [isSearchingArtwork, setIsSearchingArtwork] = useState(false);
+  const [isApplyingArtwork, setIsApplyingArtwork] = useState(false);
 
   const startEdit = (song: Song) => {
     setEditingSong(song);
@@ -213,7 +248,23 @@ export default function LibraryScreen() {
     };
   }, []);
 
+  useEffect(() => {
+    let alive = true;
+    getArtistArtworkOverrides()
+      .then((map) => {
+        if (alive) setArtistArtworkOverrides(map);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   const findArtistPhoto = (name: string): string | undefined => {
+    const overrideKey = normalizeArabicName(name);
+    if (overrideKey && artistArtworkOverrides[overrideKey]) {
+      return artistArtworkOverrides[overrideKey];
+    }
     const directAvatar = getArtistAvatar(name);
     if (directAvatar) return directAvatar;
     const key = normalizeArabicName(name);
@@ -295,7 +346,7 @@ export default function LibraryScreen() {
       const cover = findArtistPhoto(name) || localCover;
       return { name, albums, singles: data.singles, cover };
     });
-  }, [visibleSongs, customFolders, artistPhotos, artistPhotosLatin]);
+  }, [visibleSongs, customFolders, artistPhotos, artistPhotosLatin, artistArtworkOverrides]);
 
   const [viewFilter, setViewFilter] = useState<ViewFilter>("all");
   const progressMap = useDownloadStore((s) => s.progressMap);
@@ -374,9 +425,84 @@ export default function LibraryScreen() {
   };
 
   const artistSongs = (a: ArtistFolder) => [...a.albums.flatMap((alb) => alb.songs), ...a.singles];
+  const selectionPool: Song[] =
+    openAlbum && currentAlbumData
+      ? currentAlbumData.songs
+      : openArtist && currentArtistData
+      ? artistSongs(currentArtistData)
+      : [];
+  const openArtworkPicker = (target: { type: "song"; song: Song } | { type: "artist"; name: string }) => {
+    const initialMode: "song" | "artist" = target.type === "artist" ? "artist" : "song";
+    const initialQuery =
+      target.type === "song" ? target.song.title : target.name;
+    setArtworkTarget(target);
+    setArtworkMode(initialMode);
+    setArtworkQuery(initialQuery);
+    setArtworkResults([]);
+    setSelectedArtwork(null);
+    runArtworkSearch(initialMode, initialQuery);
+  };
+
+  const runArtworkSearch = async (mode: "song" | "artist", rawQuery: string) => {
+    const q = rawQuery.trim();
+    if (!q) {
+      showToast("اكتب اسم الأغنية أو الفنان أولًا");
+      return;
+    }
+    setIsSearchingArtwork(true);
+    setArtworkResults([]);
+    setSelectedArtwork(null);
+    try {
+      const results = await searchArtworkCandidates(q, mode);
+      setArtworkResults(results);
+      setSelectedArtwork(results[0]?.url ?? null);
+      if (results.length === 0) {
+        showToast("لم نجد صورًا لهذا الاسم، جرّب صياغة أخرى");
+      }
+    } catch {
+      showToast("تعذر البحث عن الصور");
+    } finally {
+      setIsSearchingArtwork(false);
+    }
+  };
+
+  const applyArtwork = async () => {
+    if (!artworkTarget || !selectedArtwork || isApplyingArtwork) return;
+    setIsApplyingArtwork(true);
+    try {
+      if (artworkTarget.type === "song") {
+        await updateSongArtwork(artworkTarget.song.id, selectedArtwork);
+      } else {
+        const map = await setArtistArtworkOverride(artworkTarget.name, selectedArtwork);
+        setArtistArtworkOverrides(map);
+      }
+      showToast("تم تحديث الصورة ✨");
+      setArtworkTarget(null);
+    } catch {
+      showToast("تعذر تطبيق الصورة");
+    } finally {
+      setIsApplyingArtwork(false);
+    }
+  };
+
+  useEffect(() => {
+    exitSelection();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openArtist, openAlbum]);
+
   const startMove = (song: Song) => {
-    setMovingSong(song);
+    setMovingSongs([song]);
     setTargetFolder(song.folderName || song.artist || "غير معروف");
+  };
+
+  const startBulkMove = () => {
+    if (selectedSongIds.length === 0) {
+      showToast("حدّد أغنية واحدة على الأقل");
+      return;
+    }
+    const songs = visibleSongs.filter((s) => selectedSongIds.includes(s.id));
+    setMovingSongs(songs);
+    setTargetFolder("");
   };
 
   return (
@@ -426,7 +552,11 @@ export default function LibraryScreen() {
 
           {isDeep ? (
             <AuraTouch
-              onPress={() => (openAlbum ? setOpenAlbum(null) : setOpenArtist(null))}
+              onPress={() => {
+                if (openAlbum) setOpenAlbum(null);
+                else setOpenArtist(null);
+                exitSelection();
+              }}
               feedback="selection"
               style={styles.backBtn}
             >
@@ -666,6 +796,7 @@ export default function LibraryScreen() {
                       onToggleHide={() => toggleSongHidden(res.item.id, !res.item.isHidden)}
                       onMove={() => startMove(res.item)}
                       onEdit={() => startEdit(res.item)}
+                      onArtwork={() => openArtworkPicker({ type: "song", song: res.item })}
                       badge={res.matchedField === "lyrics" ? <AuraBadge label="من الكلمات" tone="gold" /> : undefined}
                     />
                     {!!res.lyricsSnippet && (
@@ -743,6 +874,13 @@ export default function LibraryScreen() {
                 </AuraText>
               </AuraTouch>
               <AuraTouch
+                onPress={() => (selectionMode ? exitSelection() : setSelectionMode(true))}
+                feedback="impact"
+                style={[styles.ghostAction, selectionMode && styles.ghostActionActive]}
+              >
+                <ListChecks size={15} color={selectionMode ? Color.gold500 : Color.gold300} />
+              </AuraTouch>
+              <AuraTouch
                 onPress={() => {
                   deleteAlbum(currentAlbumData.name, openArtist || undefined);
                   setOpenAlbum(null);
@@ -768,7 +906,11 @@ export default function LibraryScreen() {
                   onToggleHide={() => toggleSongHidden(song.id, !song.isHidden)}
                   onMove={() => startMove(song)}
                   onEdit={() => startEdit(song)}
+                  onArtwork={() => openArtworkPicker({ type: "song", song })}
                   onShare={() => shareSongViaAirDrop(song)}
+                  selectable={selectionMode}
+                  selected={selectedSongIds.includes(song.id)}
+                  onToggleSelect={() => toggleSelection(song.id)}
                 />
               ))}
             </View>
@@ -807,6 +949,20 @@ export default function LibraryScreen() {
                 <AuraText role="bodyStrong" color={Color.text_onBrand}>
                   تشغيل الكل
                 </AuraText>
+              </AuraTouch>
+              <AuraTouch
+                onPress={() => (selectionMode ? exitSelection() : setSelectionMode(true))}
+                feedback="impact"
+                style={[styles.ghostAction, selectionMode && styles.ghostActionActive]}
+              >
+                <ListChecks size={15} color={selectionMode ? Color.gold500 : Color.gold300} />
+              </AuraTouch>
+              <AuraTouch
+                onPress={() => openArtworkPicker({ type: "artist", name: currentArtistData.name })}
+                feedback="impact"
+                style={styles.ghostAction}
+              >
+                <ImagePlus size={15} color={Color.gold300} />
               </AuraTouch>
               <AuraTouch
                 onPress={() => {
@@ -869,6 +1025,10 @@ export default function LibraryScreen() {
                       onToggleHide={() => toggleSongHidden(song.id, !song.isHidden)}
                       onMove={() => startMove(song)}
                       onEdit={() => startEdit(song)}
+                      onArtwork={() => openArtworkPicker({ type: "song", song })}
+                      selectable={selectionMode}
+                      selected={selectedSongIds.includes(song.id)}
+                      onToggleSelect={() => toggleSelection(song.id)}
                     />
                   ))}
                 </View>
@@ -1013,6 +1173,38 @@ export default function LibraryScreen() {
         )}
       </ScrollView>
 
+      {selectionMode && (openArtist || openAlbum) && (
+        <View style={[styles.selectionBar, { bottom: dockClearance + Space.s3 }]}>
+          <AuraText role="caption" color={Color.gold100} style={styles.selectionCount}>
+            {selectedSongIds.length} محدد
+          </AuraText>
+          <AuraChip
+            size="sm"
+            label={
+              selectionPool.length > 0 && selectedSongIds.length >= selectionPool.length
+                ? "إلغاء التحديد"
+                : "تحديد الكل"
+            }
+            onPress={() => {
+              if (selectionPool.length > 0 && selectedSongIds.length >= selectionPool.length) {
+                setSelectedSongIds([]);
+              } else {
+                setSelectedSongIds(selectionPool.map((s) => s.id));
+              }
+            }}
+          />
+          <AuraTouch onPress={startBulkMove} feedback="medium" style={styles.selectionMoveBtn}>
+            <FolderInput size={14} color={Color.text_onBrand} />
+            <AuraText role="bodyStrong" color={Color.text_onBrand}>
+              نقل المحدد
+            </AuraText>
+          </AuraTouch>
+          <AuraTouch onPress={exitSelection} feedback="selection" style={styles.selectionCancel}>
+            <X size={15} color={Color.text_secondary} />
+          </AuraTouch>
+        </View>
+      )}
+
       {/* ── CREATE FOLDER ── */}
       <AuraModal visible={showCreateFolderModal} onClose={() => setShowCreateFolderModal(false)}>
         <ModalIcon icon={<FolderPlus size={17} color={Color.gold500} />} />
@@ -1119,16 +1311,25 @@ export default function LibraryScreen() {
       />
 
 
-      {/* ── MOVE SONG ── */}
-      <AuraModal visible={!!movingSong} onClose={() => setMovingSong(null)}>
+      {/* ── MOVE SONGS ── */}
+      <AuraModal visible={!!movingSongs} onClose={() => setMovingSongs(null)}>
         <ModalIcon icon={<FolderInput size={17} color={Color.gold500} />} />
-        <AuraText role="titleSm">نقل إلى مجلد</AuraText>
-        <AuraText role="caption" color={Color.text_secondary} style={styles.modalBody} lines={1}>
-          الأغنية: {movingSong?.title}
+        <AuraText role="titleSm">
+          {movingSongs && movingSongs.length > 1 ? `نقل ${movingSongs.length} أغاني` : "نقل إلى مجلد"}
         </AuraText>
+        <AuraText role="caption" color={Color.text_secondary} style={styles.modalBody} lines={2}>
+          {movingSongs && movingSongs.length === 1
+            ? `الأغنية: ${movingSongs[0].title}`
+            : "اختر مجلدًا من القائمة أو اكتب اسم مجلد جديد"}
+        </AuraText>
+        <ModalInput
+          value={targetFolder}
+          onChangeText={setTargetFolder}
+          placeholder="اسم المجلد الوجهة"
+        />
         <ScrollView style={styles.folderPicker} showsVerticalScrollIndicator={false}>
           {artists.map((a) => {
-            const active = targetFolder === a.name;
+            const active = targetFolder.trim() === a.name;
             return (
               <AuraTouch
                 key={a.name}
@@ -1147,18 +1348,128 @@ export default function LibraryScreen() {
           })}
         </ScrollView>
         <ModalButtons
-          onCancel={() => setMovingSong(null)}
+          onCancel={() => setMovingSongs(null)}
           confirmLabel="تأكيد النقل"
           onConfirm={async () => {
-            if (movingSong && targetFolder) {
-              await moveSongToFolder(movingSong.id, targetFolder);
-              showToast(`تم النقل إلى “${targetFolder}”`);
+            const target = targetFolder.trim();
+            if (movingSongs && target) {
+              await moveSongsToFolder(movingSongs.map((s) => s.id), target);
+              showToast(
+                movingSongs.length > 1
+                  ? `تم نقل ${movingSongs.length} أغنية إلى “${target}”`
+                  : `تم النقل إلى “${target}”`
+              );
+              exitSelection();
             }
-            setMovingSong(null);
+            setMovingSongs(null);
           }}
         />
-      </AuraModal>
-
+      </AuraModal>
+
+      {/* ── ARTWORK PICKER ── */}
+      <AuraModal visible={!!artworkTarget} onClose={() => setArtworkTarget(null)}>
+        <ModalIcon icon={<ImagePlus size={17} color={Color.gold500} />} />
+        <AuraText role="titleSm">تصحيح صورة الغلاف</AuraText>
+        <AuraText role="caption" color={Color.text_secondary} style={styles.modalBody} lines={2}>
+          {artworkTarget?.type === "artist"
+            ? `ابحث عن صورة صحيحة للفنان: ${artworkTarget.name}`
+            : "ابحث باسم الأغنية أو باسم الفنان واختر الصورة الصحيحة"}
+        </AuraText>
+
+        {artworkTarget?.type === "song" && (
+          <View style={styles.artworkModes}>
+            <AuraChip
+              label="اسم الأغنية"
+              size="sm"
+              active={artworkMode === "song"}
+              onPress={() => {
+                setArtworkMode("song");
+                setArtworkQuery(artworkTarget.song.title);
+                runArtworkSearch("song", artworkTarget.song.title);
+              }}
+            />
+            <AuraChip
+              label="اسم الفنان"
+              size="sm"
+              active={artworkMode === "artist"}
+              onPress={() => {
+                setArtworkMode("artist");
+                const q = artworkTarget.song.artist || "";
+                setArtworkQuery(q);
+                if (q.trim()) runArtworkSearch("artist", q);
+              }}
+            />
+          </View>
+        )}
+
+        <View style={styles.artworkSearchRow}>
+          <TextInput
+            value={artworkQuery}
+            onChangeText={setArtworkQuery}
+            placeholder="اسم الأغنية أو الفنان"
+            placeholderTextColor={Color.text_muted}
+            style={[styles.input, styles.artworkQueryInput]}
+            textAlign="right"
+            returnKeyType="search"
+            onSubmitEditing={() => runArtworkSearch(artworkMode, artworkQuery)}
+          />
+          <AuraTouch
+            onPress={() => runArtworkSearch(artworkMode, artworkQuery)}
+            feedback="medium"
+            style={styles.artworkSearchBtn}
+          >
+            <Search size={17} color={Color.text_onBrand} />
+          </AuraTouch>
+        </View>
+
+        <ScrollView style={styles.artworkResults} showsVerticalScrollIndicator={false}>
+          {isSearchingArtwork ? (
+            <View style={styles.artworkLoading}>
+              <AuraCreativeLoader message="جارٍ البحث عن الصور…" />
+            </View>
+          ) : (
+            <View style={styles.artworkGridInner}>
+              {artworkResults.map((candidate) => {
+                const active = selectedArtwork === candidate.url;
+                return (
+                  <AuraTouch
+                    key={candidate.url}
+                    onPress={() => setSelectedArtwork(candidate.url)}
+                    feedback="selection"
+                    style={[styles.artworkCell, active && styles.artworkCellActive]}
+                  >
+                    <AuraArtwork
+                      uri={candidate.url}
+                      size={76}
+                      shape="tile"
+                      ring={active ? "gold" : "hairline"}
+                    />
+                    {active && (
+                      <View style={styles.artworkCheck}>
+                        <CheckCircle2 size={13} color={Color.text_onBrand} />
+                      </View>
+                    )}
+                  </AuraTouch>
+                );
+              })}
+            </View>
+          )}
+          {!isSearchingArtwork && artworkResults.length === 0 && (
+            <AuraText role="caption" color={Color.text_muted} align="center" style={styles.artworkEmpty}>
+              اكتب الاسم واضغط بحث لعرض الصور المتاحة.
+            </AuraText>
+          )}
+        </ScrollView>
+
+        <ModalButtons
+          onCancel={() => setArtworkTarget(null)}
+          confirmLabel={
+            isApplyingArtwork ? "جارٍ التطبيق..." : selectedArtwork ? "تطبيق الصورة" : "اختر صورة أولًا"
+          }
+          onConfirm={applyArtwork}
+        />
+      </AuraModal>
+
       {/* ── EDIT SONG METADATA ── */}
       <AuraModal visible={!!editingSong} onClose={() => setEditingSong(null)}>
         <ModalIcon icon={<Edit2 size={17} color={Color.gold500} />} />
@@ -1204,6 +1515,22 @@ export default function LibraryScreen() {
             textAlign="right"
           />
         </View>
+
+        <AuraTouch
+          onPress={() => {
+            if (!editingSong) return;
+            const target = { type: "song" as const, song: editingSong };
+            setEditingSong(null);
+            setTimeout(() => openArtworkPicker(target), 350);
+          }}
+          feedback="selection"
+          style={styles.artworkEntry}
+        >
+          <ImagePlus size={15} color={Color.gold300} />
+          <AuraText role="body" color={Color.gold100}>
+            تصحيح صورة الغلاف
+          </AuraText>
+        </AuraTouch>
 
         <ModalButtons
           onCancel={() => setEditingSong(null)}
@@ -1274,6 +1601,10 @@ function SongRow({
   onToggleHide,
   onMove,
   onEdit,
+  onArtwork,
+  selectable,
+  selected,
+  onToggleSelect,
   badge,
 }: {
   song: Song;
@@ -1284,13 +1615,27 @@ function SongRow({
   onMove?: () => void;
   onShare?: () => void;
   onEdit?: () => void;
+  onArtwork?: () => void;
+  selectable?: boolean;
+  selected?: boolean;
+  onToggleSelect?: () => void;
   badge?: React.ReactNode;
 }) {
   return (
-    <AuraTouch onPress={onPlay} feedback="impact" style={[styles.row, !!song.isHidden && styles.rowSecret]}>
-      <AuraText role="numeric" color={Color.gold700} style={styles.rowIndex}>
-        {index + 1}
-      </AuraText>
+    <AuraTouch
+      onPress={() => (selectable ? onToggleSelect?.() : onPlay())}
+      feedback="impact"
+      style={[styles.row, !!song.isHidden && styles.rowSecret, selected && styles.rowSelected]}
+    >
+      {selectable ? (
+        <View style={[styles.selectCircle, selected && styles.selectCircleActive]}>
+          {selected && <Check size={11} color={Color.text_onBrand} />}
+        </View>
+      ) : (
+        <AuraText role="numeric" color={Color.gold700} style={styles.rowIndex}>
+          {index + 1}
+        </AuraText>
+      )}
       <AuraArtwork
         uri={resolveArtworkUri(song.localArtworkPath, song.thumbnailUrl, song.youtubeVideoId, "song", song.artist)}
         title={song.title}
@@ -1319,6 +1664,19 @@ function SongRow({
         </View>
       </View>
       <View style={styles.rowActions}>
+        {!!onArtwork && (
+          <AuraTouch
+            onPress={(e) => {
+              e.stopPropagation?.();
+              onArtwork();
+            }}
+            feedback="selection"
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            style={styles.rowAction}
+          >
+            <ImagePlus size={14} color={Color.gold300} />
+          </AuraTouch>
+        )}
                 {!!onEdit && (
           <AuraTouch
             onPress={(e) => {
@@ -1568,7 +1926,7 @@ const styles = StyleSheet.create({
     paddingVertical: 0,
     borderWidth: 0,
     ...(Platform.OS === "web"
-      ? ({
+      ? ({
           outlineWidth: 0,
           outlineStyle: "none",
           boxShadow: "none",
@@ -1664,6 +2022,10 @@ const styles = StyleSheet.create({
     borderColor: Color.veil_goldHairline,
     backgroundColor: Color.veil_goldTint,
   },
+  ghostActionActive: {
+    borderColor: Color.gold500,
+    backgroundColor: Color.veil_goldTintStrong,
+  },
   dangerAction: {
     width: 48,
     height: 48,
@@ -1747,6 +2109,23 @@ const styles = StyleSheet.create({
     backgroundColor: Color.ink2,
   },
   rowIndex: { width: 16, textAlign: "center" },
+  rowSelected: {
+    borderColor: Color.veil_goldHairline,
+    backgroundColor: Color.veil_goldTint,
+  },
+  selectCircle: {
+    width: 18,
+    height: 18,
+    borderRadius: Radius.pill,
+    borderWidth: 1.5,
+    borderColor: Color.veil_hairlineStrong,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  selectCircleActive: {
+    borderColor: Color.gold500,
+    backgroundColor: Color.gold500,
+  },
   rowInfo: { flex: 1, flexShrink: 1, gap: 2 },
   rowMeta: { flexDirection: "row", alignItems: "center", gap: Space.s2 },
   rowArtist: { flexShrink: 1, maxWidth: 150 },
@@ -1869,5 +2248,101 @@ const styles = StyleSheet.create({
   folderOptionActive: {
     borderColor: Color.veil_goldHairline,
     backgroundColor: Color.veil_goldTint,
+  },
+  artworkModes: { flexDirection: "row", gap: Space.s2, marginTop: Space.s1 },
+  artworkSearchRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Space.s2,
+    marginTop: Space.s1,
+  },
+  artworkQueryInput: { flex: 1, marginTop: 0 },
+  artworkSearchBtn: {
+    width: 48,
+    height: 50,
+    borderRadius: Radius.md,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: Color.gold500,
+  },
+  artworkResults: { maxHeight: 250, marginVertical: Space.s1 },
+  artworkLoading: { paddingVertical: Space.s4, alignItems: "center" },
+  artworkGridInner: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: Space.s2,
+    justifyContent: "center",
+  },
+  artworkCell: {
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: "transparent",
+    padding: 2,
+  },
+  artworkCellActive: {
+    borderColor: Color.gold500,
+    backgroundColor: Color.veil_goldTint,
+  },
+  artworkCheck: {
+    position: "absolute",
+    bottom: 5,
+    left: 5,
+    width: 20,
+    height: 20,
+    borderRadius: Radius.pill,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: Color.gold500,
+  },
+  artworkEmpty: { paddingVertical: Space.s4 },
+  selectionBar: {
+    position: "absolute",
+    left: Space.s4,
+    right: Space.s4,
+    flexDirection: "row-reverse",
+    alignItems: "center",
+    gap: Space.s2,
+    paddingHorizontal: Space.s3,
+    paddingVertical: Space.s2,
+    borderRadius: Radius.pill,
+    borderWidth: 1,
+    borderColor: Color.veil_goldHairline,
+    backgroundColor: Color.ink3,
+    shadowColor: "#000",
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 12,
+    zIndex: 50,
+  },
+  selectionCount: { minWidth: 54, textAlign: "center" },
+  selectionMoveBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: Space.s3,
+    paddingVertical: 8,
+    borderRadius: Radius.pill,
+    backgroundColor: Color.gold500,
+  },
+  selectionCancel: {
+    width: 32,
+    height: 32,
+    borderRadius: Radius.pill,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: Color.veil_hairlineSoft,
+  },
+  artworkEntry: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: Space.s2,
+    height: 46,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Color.veil_goldHairline,
+    backgroundColor: Color.veil_goldTint,
+    marginTop: Space.s1,
   },
 });
