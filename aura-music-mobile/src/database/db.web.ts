@@ -155,6 +155,25 @@ export async function getSongById(id: string): Promise<Song | null> {
   return songs[id] || null;
 }
 
+export async function updateSongMetadata(
+  songId: string,
+  newTitle: string,
+  newArtist?: string,
+  newFolder?: string
+): Promise<void> {
+  const songs = getSongsMap();
+  if (songs[songId]) {
+    const cleanTitle = newTitle.trim();
+    const cleanArtist = newArtist?.trim();
+    const cleanFolder = newFolder !== undefined ? newFolder.trim() : undefined;
+
+    if (cleanTitle) songs[songId].title = cleanTitle;
+    if (cleanArtist) songs[songId].artist = cleanArtist;
+    if (cleanFolder !== undefined) songs[songId].folderName = cleanFolder || undefined;
+    saveSongsMap(songs);
+  }
+}
+
 export async function updateSongLastPlayed(songId: string): Promise<void> {
   const songs = getSongsMap();
   if (songs[songId]) {

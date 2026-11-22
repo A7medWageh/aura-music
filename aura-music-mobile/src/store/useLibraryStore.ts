@@ -19,6 +19,7 @@ import {
   deleteOfflineSong as dbDeleteOfflineSong,
   getCustomOfflineFolders as dbGetCustomOfflineFolders,
   createCustomOfflineFolder as dbCreateCustomOfflineFolder,
+  updateSongMetadata as dbUpdateSongMetadata,
 } from "@/database/db";
 import { downloadManager } from "@/services/offline/downloadManager";
 import { FileManager } from "@/services/storage/fileManager";
@@ -48,6 +49,7 @@ interface LibraryState {
   deleteArtist: (artistName: string) => Promise<void>;
   deleteAlbum: (albumName: string, artistName?: string) => Promise<void>;
   createCustomFolder: (folderName: string) => boolean;
+  updateSongMetadata: (songId: string, newTitle: string, newArtist?: string, newFolder?: string) => Promise<void>;
 }
 
 export const useLibraryStore = create<LibraryState>((set, get) => ({
@@ -158,5 +160,10 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       set({ customFolders: dbGetCustomOfflineFolders() });
     }
     return ok;
+  },
+
+  updateSongMetadata: async (songId: string, newTitle: string, newArtist?: string, newFolder?: string) => {
+    await dbUpdateSongMetadata(songId, newTitle, newArtist, newFolder);
+    await get().loadLibrary();
   },
 }));

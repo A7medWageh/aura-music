@@ -115,12 +115,24 @@ export const MusicApi = {
           artistName: a.artistName || a.name || "فنان",
           thumbnailUrl: getArtworkUrl(a.thumbnailUrl || a.imageUrl || a.avatar, undefined, "artist"),
         })),
-        albums: rawAlbums.map((al: any) => ({
-          albumId: al.albumId || al.id || `alb_${Math.random()}`,
-          title: al.title || al.albumTitle || "ألبوم",
-          artist: al.artist || al.artistName || "فنان",
-          thumbnailUrl: getArtworkUrl(al.thumbnailUrl || al.coverUrl, undefined, "album"),
-        })),
+        albums: rawAlbums
+          .filter((al: any) => {
+            const alTitle = (al.title || al.albumTitle || "").toLowerCase();
+            const alArtist = (al.artist || al.artistName || "").toLowerCase();
+            const hay = `${alTitle} ${alArtist}`;
+            const qLower = trimmed.toLowerCase();
+            if (hay.includes(qLower)) return true;
+            const qWords = qLower.split(/\s+/).filter((w: string) => w.length > 2);
+            if (qWords.length === 0) return true;
+            const matchCount = qWords.filter((w: string) => hay.includes(w)).length;
+            return matchCount >= Math.min(2, qWords.length);
+          })
+          .map((al: any) => ({
+            albumId: al.albumId || al.id || `alb_${Math.random()}`,
+            title: al.title || al.albumTitle || "ألبوم",
+            artist: al.artist || al.artistName || "فنان",
+            thumbnailUrl: getArtworkUrl(al.thumbnailUrl || al.coverUrl, undefined, "album"),
+          })),
       };
 
       searchMemoryCache.set(cacheKey, { data: result, timestamp: Date.now() });

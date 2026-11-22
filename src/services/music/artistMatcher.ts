@@ -417,8 +417,8 @@ export function findBestOfficialVideo(
   return bestVid;
 }
 
-const GENERIC_CHANNELS_REGEX =
-  /shaabeyat|شعبيات|mazzika|مزيكا|rotana|روتانا|nogoum|نجوم|naghmaty|نغماتي|noghmati|weci|wecibot|modern\s*music|مودرن|free\s*music|فري\s*ميوزيك|craft\s*media|كرافت|watary|وتري|elsobky|sobky|السبكي|haz\s*shaby|حظ\s*شعب|عالم\s*الفن|alam\s*el\s*phan|replay\s*music|sony\s*music|universal\s*music|warner\s*music|melody|ميلودي|قناة|channel|records|music|official|vevo|فنان|unknown|غير\s*معروف/i;
+export const GENERIC_CHANNELS_REGEX =
+  /shaabeyat|شعبيات|mazzika|مزيكا|rotana|روتانا|nogoum|نجوم|naghmaty|نغماتي|noghmati|weci|wecibot|modern\s*music|مودرن|free\s*music|فري\s*ميوزيك|craft\s*media|كرافت|watary|وتري|elsobky|sobky|السبكي|haz\s*shaby|حظ\s*شعب|عالم\s*الفن|alam\s*el\s*phan|replay\s*music|sony\s*music|universal\s*music|warner\s*music|melody|ميلودي|قناة|channel|records|music|official|vevo|فنان|unknown|غير\s*معروف|el\s*adl\s*group|العدل\s*جروب|roznama|روزناما|synergy|سينرجي|فنون\s*مصر|مجموعة|group|انتاج|إنتاج|media|production|productions|films|تسجيلات|استوديو|تصوير|سيرفيس|مواهب\s*الحظ|عفاريت\s*الحظ|سامى\s*للتصوير|كريم\s*ناعوس|الشافعي|العدوى|arabica|أرابيكا/i;
 
 function cleanVideoClutter(s: string): string {
   return (s || "")
@@ -646,6 +646,16 @@ export function extractSmartArtistAndTitle(
     .replace(/^["“'«\s]+|["”'»\s]+$/g, "")
     .trim();
 
+  // 5. If artist is still empty or a generic production channel, detect known artist in rawTitle
+  if (!artist || GENERIC_CHANNELS_REGEX.test(artist)) {
+    for (const arArtist of Object.keys(ARABIC_TO_LATIN_MAP)) {
+      if (rawTitle && rawTitle.includes(arArtist)) {
+        artist = arArtist;
+        break;
+      }
+    }
+  }
+
   // If artist was cleaned or empty, and title has no artist extracted, fallback gracefully
   if (GENERIC_CHANNELS_REGEX.test(artist) && !clipMatch && !trendMatch && !mawalMatch) {
     artist = "";
@@ -655,6 +665,58 @@ export function extractSmartArtistAndTitle(
     title: title || "أغنية محفوظة",
     artist: artist.trim(),
   };
+}
+
+/**
+ * Strips YouTube clutter and produces a clean, readable track title.
+ * e.g. 'تتر مسلسل نسر الصعيد | أغنية " يا زين يا ولد الزين " | إبراهيم الحكمي' -> 'يا زين يا ولد الزين'
+ */
+export function cleanSongTitle(rawTitle: string, artist?: string): string {
+  if (!rawTitle) return "أغنية محفوظة";
+  let t = rawTitle;
+
+  // 1. Extract quoted track title if present
+  const qm = t.match(/["“'«]([^"”'»]{3,})["”'»]/);
+  if (qm) {
+    const candidate = qm[1].trim();
+    if (!/مسلسل|تتر|حصريا|جديد|كليب|فيديو|HD|Official/i.test(candidate)) {
+      return candidate;
+    }
+  }
+
+  // 2. Strip video and series prefixes / suffixes
+  t = t
+    .replace(/\b(Official\s*(?:Music\s*)?Video|Official\s*Audio|Lyric\s*Video|HD|HQ|4K|1080p|720p)\b/gi, "")
+    .replace(/[\[\(][^\]\)]*[\]\)]/g, "")
+    .replace(/(?:فيديو\s*كليب|كليب\s*رسمي|النسخة\s*الأصلية|الأغنية\s*الرسمية|حصرياً|حصريا|كامله|كاملة)/gi, "")
+    .replace(/^(?:تتر\s+مسلسل\s+[^\-|–—]+\s*[-|–—]\s*)/i, "")
+    .replace(/^(?:أغنية|اغنية|شارة)\s+/i, "")
+    .replace(/\b(202[0-9]|201[0-9])\b/g, "");
+
+  // If artist is known, strip artist from title
+  if (artist) {
+    t = t.replace(new RegExp(artist, "gi"), "");
+  }
+
+  // Split by pipe or dash and pick the most relevant part
+  if (t.includes("|") || t.includes("-") || t.includes("–") || t.includes("—")) {
+    const segments = t.split(/[|\-–—]/).map((s) => s.trim()).filter((s) => s.length >= 2);
+    const best = segments.find(
+      (s) =>
+        !/مسلسل|تتر|غناء|أداء|بصوت|انتاج|قناة|كليب/i.test(s) &&
+        !GENERIC_CHANNELS_REGEX.test(s) &&
+        s.length >= 3
+    );
+    if (best) t = best;
+  }
+
+  // Clean trailing punctuation and whitespace
+  t = t
+    .replace(/^[-–—:\|.\s]+|[-–—:\|.\s]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return t || rawTitle.trim();
 }
 
 /**

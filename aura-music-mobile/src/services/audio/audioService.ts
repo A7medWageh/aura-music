@@ -1021,6 +1021,34 @@ class AudioService {
     return this.lastKnownDuration;
   }
 
+  public async toggleAudioRoute(): Promise<string> {
+    if (Platform.OS === "ios") {
+      try {
+        const { AudioModule } = await import("expo-audio");
+        if (typeof (AudioModule as any).toggleAudioOutputRoute === "function") {
+          return (AudioModule as any).toggleAudioOutputRoute();
+        }
+      } catch (err) {
+        console.warn("[AudioService] toggleAudioRoute error:", err);
+      }
+    }
+    return "default";
+  }
+
+  public async getAudioRoute(): Promise<string> {
+    if (Platform.OS === "ios") {
+      try {
+        const { AudioModule } = await import("expo-audio");
+        if (typeof (AudioModule as any).getAudioOutputRoute === "function") {
+          return (AudioModule as any).getAudioOutputRoute();
+        }
+      } catch (err) {
+        /* ignore */
+      }
+    }
+    return "default";
+  }
+
   private updateWebMediaSession(song: Song): void {
     if (Platform.OS !== "web" || typeof window === "undefined" || !("mediaSession" in navigator)) return;
 

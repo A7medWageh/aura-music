@@ -117,6 +117,38 @@ export default function LibraryScreen() {
   const [movingSong, setMovingSong] = useState<Song | null>(null);
   const [targetFolder, setTargetFolder] = useState("");
 
+  const [editingSong, setEditingSong] = useState<Song | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editArtist, setEditArtist] = useState("");
+  const [editFolder, setEditFolder] = useState("");
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+
+  const startEdit = (song: Song) => {
+    setEditingSong(song);
+    setEditTitle(song.title);
+    setEditArtist(song.artist || "");
+    setEditFolder(song.folderName || song.artist || "");
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingSong || !editTitle.trim()) return;
+    try {
+      setIsSavingEdit(true);
+      await useLibraryStore.getState().updateSongMetadata(
+        editingSong.id,
+        editTitle.trim(),
+        editArtist.trim() || undefined,
+        editFolder.trim() || undefined
+      );
+      showToast("تم تعديل بيانات الأغنية بنجاح ✨");
+      setEditingSong(null);
+    } catch (err: any) {
+      showToast("تعذر حفظ التعديل");
+    } finally {
+      setIsSavingEdit(false);
+    }
+  };
+
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [showTelegramModal, setShowTelegramModal] = useState(false);
   const [showAirDropModal, setShowAirDropModal] = useState(false);
@@ -633,6 +665,7 @@ export default function LibraryScreen() {
                       onDelete={() => deleteDownloadedSong(res.item)}
                       onToggleHide={() => toggleSongHidden(res.item.id, !res.item.isHidden)}
                       onMove={() => startMove(res.item)}
+                      onEdit={() => startEdit(res.item)}
                       badge={res.matchedField === "lyrics" ? <AuraBadge label="من الكلمات" tone="gold" /> : undefined}
                     />
                     {!!res.lyricsSnippet && (
@@ -734,7 +767,8 @@ export default function LibraryScreen() {
                   onDelete={() => deleteDownloadedSong(song)}
                   onToggleHide={() => toggleSongHidden(song.id, !song.isHidden)}
                   onMove={() => startMove(song)}
-                      onShare={() => shareSongViaAirDrop(song)}
+                  onEdit={() => startEdit(song)}
+                  onShare={() => shareSongViaAirDrop(song)}
                 />
               ))}
             </View>
@@ -834,6 +868,7 @@ export default function LibraryScreen() {
                       onDelete={() => deleteDownloadedSong(song)}
                       onToggleHide={() => toggleSongHidden(song.id, !song.isHidden)}
                       onMove={() => startMove(song)}
+                      onEdit={() => startEdit(song)}
                     />
                   ))}
                 </View>
@@ -1122,6 +1157,59 @@ export default function LibraryScreen() {
             setMovingSong(null);
           }}
         />
+      </AuraModal>
+
+      {/* ── EDIT SONG METADATA ── */}
+      <AuraModal visible={!!editingSong} onClose={() => setEditingSong(null)}>
+        <ModalIcon icon={<Edit2 size={17} color={Color.gold500} />} />
+        <AuraText role="titleSm">تعديل بيانات الأغنية</AuraText>
+        <AuraText role="caption" color={Color.text_secondary} style={styles.modalBody}>
+          عدّل اسم الأغنية أو اسم الفنان أو المجلد يدويًا:
+        </AuraText>
+
+        <View style={{ width: "100%", gap: Space.s2, marginVertical: Space.s2 }}>
+          <AuraText role="caption" color={Color.text_muted} style={{ textAlign: "right" }}>
+            اسم الأغنية:
+          </AuraText>
+          <TextInput
+            value={editTitle}
+            onChangeText={setEditTitle}
+            placeholder="اسم الأغنية"
+            placeholderTextColor={Color.text_muted}
+            style={styles.input}
+            textAlign="right"
+          />
+
+          <AuraText role="caption" color={Color.text_muted} style={{ textAlign: "right", marginTop: Space.s1 }}>
+            اسم الفنان:
+          </AuraText>
+          <TextInput
+            value={editArtist}
+            onChangeText={setEditArtist}
+            placeholder="اسم الفنان"
+            placeholderTextColor={Color.text_muted}
+            style={styles.input}
+            textAlign="right"
+          />
+
+          <AuraText role="caption" color={Color.text_muted} style={{ textAlign: "right", marginTop: Space.s1 }}>
+            المجلد / الفنان:
+          </AuraText>
+          <TextInput
+            value={editFolder}
+            onChangeText={setEditFolder}
+            placeholder="اسم المجلد (مثال: إبراهيم الحكمي)"
+            placeholderTextColor={Color.text_muted}
+            style={styles.input}
+            textAlign="right"
+          />
+        </View>
+
+        <ModalButtons
+          onCancel={() => setEditingSong(null)}
+          confirmLabel={isSavingEdit ? "جارٍ الحفظ..." : "حفظ التعديلات"}
+          onConfirm={handleSaveEdit}
+        />
       </AuraModal>
     </AuraPageTransition>
   );
@@ -1185,6 +1273,7 @@ function SongRow({
   onDelete,
   onToggleHide,
   onMove,
+  onEdit,
   badge,
 }: {
   song: Song;
@@ -1194,6 +1283,7 @@ function SongRow({
   onToggleHide: () => void;
   onMove?: () => void;
   onShare?: () => void;
+  onEdit?: () => void;
   badge?: React.ReactNode;
 }) {
   return (
@@ -1229,7 +1319,20 @@ function SongRow({
         </View>
       </View>
       <View style={styles.rowActions}>
-        {!!onMove && (
+                {!!onEdit && (
+          <AuraTouch
+            onPress={(e) => {
+              e.stopPropagation?.();
+              onEdit();
+            }}
+            feedback="selection"
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            style={styles.rowAction}
+          >
+            <Edit2 size={14} color={Color.gold300} />
+          </AuraTouch>
+        )}
+{!!onMove && (
           <AuraTouch
             onPress={(e) => {
               e.stopPropagation?.();

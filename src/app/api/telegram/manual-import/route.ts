@@ -1,11 +1,46 @@
 import { NextRequest, NextResponse } from "next/server";
 import { query } from "@apis/neon";
-import { extractSmartArtistAndTitle } from "@/services/music/artistMatcher";
+import { extractSmartArtistAndTitle, cleanSongTitle } from "@/services/music/artistMatcher";
 
 export const dynamic = "force-dynamic";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "8831422517:AAEXQFzQxzcyIKWI1WtfVh2XGzguGXAnCak";
 const CHANNEL_ID = process.env.TELEGRAM_CHANNEL_ID || "-1004310944763";
+
+async function resolveTrackArtwork(title: string, artist: string): Promise<string> {
+  const cleanQ = `${artist} ${title}`.replace(/[\(\)\[\]\|]/g, " ").trim();
+  // 1. Try iTunes Search API for ultra-high-res 1000x1000 studio album cover
+  try {
+    const itunesUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(cleanQ)}&media=music&entity=song&limit=1`;
+    const res = await fetch(itunesUrl, {
+      signal: AbortSignal.timeout(3500),
+      headers: { Accept: "application/json" },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.results && data.results.length > 0) {
+        const item = data.results[0];
+        if (item.artworkUrl100) {
+          return item.artworkUrl100.replace("100x100bb", "1000x1000bb");
+        }
+      }
+    }
+  } catch {}
+
+  // 2. Try YouTube high-res video thumbnail via yt-search
+  try {
+    const yts = require("yt-search");
+    const r = await yts(cleanQ);
+    if (r && r.videos && r.videos.length > 0) {
+      const thumb = r.videos[0].thumbnail;
+      if (thumb) {
+        return thumb.replace(/\/(?:hq)?default\.jpg/, "/maxresdefault.jpg");
+      }
+    }
+  } catch {}
+
+  return "https://aura-musiic.vercel.app/aura-gold-icon.png";
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -157,20 +192,27 @@ export async function POST(req: NextRequest) {
     }
 
     const fileId = foundTrack.tg_file_id || foundTrack.file_id || String(foundTrack.id);
-    const title = foundTrack.title || "أغنية تيليجرام";
-    const artist = foundTrack.artist || "فنان غير معروف";
+    const rawTitle = foundTrack.title || "أغنية تيليجرام";
+    const rawArtist = foundTrack.artist || "فنان غير معروف";
     const duration = Number(foundTrack.duration_sec || foundTrack.duration || 0);
+
+    const smartExtracted = extractSmartArtistAndTitle(rawTitle, rawArtist);
+    const resolvedArtist = smartExtracted.artist || rawArtist;
+    const resolvedTitle = cleanSongTitle(smartExtracted.title || rawTitle, resolvedArtist);
+
+    // Resolve high-resolution official cover artwork
+    const resolvedThumbnail = await resolveTrackArtwork(resolvedTitle, resolvedArtist);
 
     const song = {
       id: `tg_${fileId}`,
-      title,
-      artist,
+      title: resolvedTitle,
+      artist: resolvedArtist,
       duration,
       youtubeVideoId: `tg_${fileId}`,
-      thumbnailUrl: "https://aura-musiic.vercel.app/aura-gold-icon.png",
+      thumbnailUrl: resolvedThumbnail,
       streamUrl: `https://aura-musiic.vercel.app/api/telegram/stream?fileId=${encodeURIComponent(fileId)}`,
       fileSize: Number(foundTrack.file_size || foundTrack.fileSize || 0),
-      albumName: "مكتبة تيليجرام",
+      albumName: undefined, // Never assign "مكتبة تيليجرام", songs belong to their artist folder!
       source: "telegram",
     };
 

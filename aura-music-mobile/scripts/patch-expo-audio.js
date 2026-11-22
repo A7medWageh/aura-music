@@ -315,7 +315,7 @@ patchFile(path.join(iosDir, "AudioTapProcessor.m"), [
   },
 ]);
 
-// 6. Patch AudioModule.swift: Expose setAuraEngineConfig to JS
+// 6. Patch AudioModule.swift: Expose setAuraEngineConfig and instant Audio Route switching to JS
 patchFile(path.join(iosDir, "AudioModule.swift"), [
   {
     target: `      Function("pause") { player in
@@ -333,8 +333,30 @@ patchFile(path.join(iosDir, "AudioModule.swift"), [
 
       Function("setAuraEngineConfig") { (player: AudioPlayer, config: [String: Any]) in
         player.setAuraEngineConfig(config)
+      }
+
+      Function("toggleAudioOutputRoute") { () -> String in
+        do {
+          let session = AVAudioSession.sharedInstance()
+          let isSpeaker = session.currentRoute.outputs.contains(where: { $0.portType == .builtInSpeaker })
+          if isSpeaker {
+            try session.overrideOutputAudioPort(.none)
+            return "headphones"
+          } else {
+            try session.overrideOutputAudioPort(.speaker)
+            return "speaker"
+          }
+        } catch {
+          return "error"
+        }
+      }
+
+      Function("getAudioOutputRoute") { () -> String in
+        let session = AVAudioSession.sharedInstance()
+        let isSpeaker = session.currentRoute.outputs.contains(where: { $0.portType == .builtInSpeaker })
+        return isSpeaker ? "speaker" : "headphones"
       }`,
-    description: "Add setAuraEngineConfig function to AudioModule.swift",
+    description: "Add setAuraEngineConfig and audio output route functions to AudioModule.swift",
   },
 ]);
 

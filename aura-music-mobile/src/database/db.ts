@@ -343,6 +343,42 @@ export async function getSongById(id: string): Promise<Song | null> {
   return row ? mapRowToSong(row) : null;
 }
 
+export async function updateSongMetadata(
+  songId: string,
+  newTitle: string,
+  newArtist?: string,
+  newFolder?: string
+): Promise<void> {
+  const cleanTitle = newTitle.trim();
+  const cleanArtist = newArtist?.trim();
+  const cleanFolder = newFolder !== undefined ? newFolder.trim() : undefined;
+
+  if (Platform.OS === "web") {
+    const songs = getWebStorage<Record<string, Song>>(WEB_STORAGE_KEYS.SONGS, {});
+    if (songs[songId]) {
+      if (cleanTitle) songs[songId].title = cleanTitle;
+      if (cleanArtist) songs[songId].artist = cleanArtist;
+      if (cleanFolder !== undefined) songs[songId].folderName = cleanFolder || undefined;
+      setWebStorage(WEB_STORAGE_KEYS.SONGS, songs);
+    }
+    return;
+  }
+
+  const db = await getDatabase();
+  await db.runAsync(
+    `UPDATE songs SET
+      title = COALESCE(NULLIF(?, ''), title),
+      artist = COALESCE(NULLIF(?, ''), artist),
+      folder_name = CASE WHEN ? IS NOT NULL THEN NULLIF(?, '') ELSE folder_name END
+    WHERE id = ?`,
+    cleanTitle || null,
+    cleanArtist || null,
+    cleanFolder !== undefined ? cleanFolder : null,
+    cleanFolder || null,
+    songId
+  );
+}
+
 export async function updateSongLastPlayed(songId: string): Promise<void> {
   if (Platform.OS === "web") {
     const songs = getWebStorage<Record<string, Song>>(WEB_STORAGE_KEYS.SONGS, {});

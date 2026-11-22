@@ -223,13 +223,13 @@ function calculateRelevance(
     const hasArtistPart = normArtist.includes(detectedArtist) || normTitle.includes(detectedArtist) || rawArtist.includes(detectedArtist) || rawTitle.includes(detectedArtist);
 
     if (hasTitlePart && hasArtistPart) {
-      score += 2500; // Overwhelming priority for correct song & requested artist
+      score += 3500; // Overwhelming priority for correct song & requested artist
     } else if (hasTitlePart && !hasArtistPart) {
-      if (/كفر|cover|أفراح|عازف|مهرجان|حفلة/i.test(combined)) {
-        score -= 800;
-      }
-    } else if (!hasTitlePart && !hasArtistPart) {
       score -= 1500;
+    } else if (!hasTitlePart && hasArtistPart) {
+      score += 30; // Other song by same artist - stay behind matched song
+    } else if (!hasTitlePart && !hasArtistPart) {
+      score -= 2000;
     }
   }
 

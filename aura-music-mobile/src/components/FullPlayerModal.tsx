@@ -63,6 +63,7 @@ import { usePlayerStore } from "@/store/usePlayerStore";
 import { useLibraryStore } from "@/store/useLibraryStore";
 import { useDownloadStore } from "@/store/useDownloadStore";
 import { useAuthStore } from "@/store/useAuthStore";
+import { audioService } from "@/services/audio/audioService";
 import { LyricsView } from "./LyricsView";
 import { InteractiveScrubber } from "./InteractiveScrubber";
 import { VolumeSlider } from "./VolumeSlider";
@@ -173,6 +174,27 @@ export const FullPlayerModal: React.FC = () => {
   const [remainingTimer, setRemainingTimer] = useState<string | null>(null);
   const [imgError, setImgError] = useState(false);
   const lastVolumeRef = useRef(1);
+  const [currentRoute, setCurrentRoute] = useState<"speaker" | "headphones">("headphones");
+
+  useEffect(() => {
+    if (visible) {
+      audioService.getAudioRoute().then((r) => {
+        if (r === "speaker") setCurrentRoute("speaker");
+        else setCurrentRoute("headphones");
+      });
+    }
+  }, [visible]);
+
+  const handleToggleRoute = async () => {
+    const res = await audioService.toggleAudioRoute();
+    if (res === "speaker") {
+      setCurrentRoute("speaker");
+      setAuraProfile("speaker");
+    } else {
+      setCurrentRoute("headphones");
+      setAuraProfile("headphones");
+    }
+  };
   const webDsp = Platform.OS === "web";
 
   // Countdown timer for active sleep timer
@@ -569,6 +591,27 @@ export const FullPlayerModal: React.FC = () => {
                 </AuraTouch>
 
                 <VolumeSlider value={volume} onChange={setVolume} />
+
+                {/* Audio Route Quick Switcher (Speaker vs Headphones) */}
+                <AuraTouch
+                  feedback="impact"
+                  pressedScale={0.92}
+                  onPress={handleToggleRoute}
+                  hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+                  style={[
+                    styles.speedPill,
+                    currentRoute === "speaker" && { borderColor: Color.gold500, backgroundColor: "rgba(255, 215, 0, 0.15)" },
+                  ]}
+                >
+                  {currentRoute === "speaker" ? (
+                    <Speaker size={14} color={Color.gold500} />
+                  ) : (
+                    <Headphones size={14} color={Color.gold300} />
+                  )}
+                  <AuraText role="tiny" color={currentRoute === "speaker" ? Color.gold500 : Color.gold300}>
+                    {currentRoute === "speaker" ? "سماعة الهاتف" : "سماعات الرأس"}
+                  </AuraText>
+                </AuraTouch>
 
                 {/* Speed selector indicator */}
                 <AuraTouch

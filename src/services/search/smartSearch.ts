@@ -316,15 +316,16 @@ export async function smartSearch(searchTerm: string) {
         normTitle.includes(normArabic(nArtistPart));
 
       if (hasTitlePart && hasArtistPart) {
-        score += 1500; // Overwhelming priority for correct song by requested artist
+        score += 3500; // Absolute #1 priority for requested song by requested artist
       } else if (hasTitlePart && !hasArtistPart) {
-        // Track has matching title but performed by a different, amateur or wedding cover artist
-        if (/كفر|cover|أفراح|عازف|مهرجان|حفلة/i.test(combinedHaystack)) {
-          score -= 500;
-        }
+        // Track has matching title but performed by a third-party singer or wedding band when user asked for a specific singer
+        score -= 1500;
+      } else if (!hasTitlePart && hasArtistPart) {
+        // Other song by the same artist — keep low so it never outranks the requested song
+        score += 30;
       } else if (!hasTitlePart && !hasArtistPart) {
         // Completely unrelated result
-        score -= 800;
+        score -= 2000;
       }
     }
 

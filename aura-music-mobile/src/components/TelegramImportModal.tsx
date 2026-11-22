@@ -144,13 +144,16 @@ export function TelegramImportModal({ visible, onClose }: TelegramImportModalPro
       }
 
       // 1. Save to local SQLite database with matched artist folder
-      await upsertSong({
+      const songToSave = {
         ...importedSong,
+        albumName: undefined,
         folderName: targetFolder,
-      });
+      };
+
+      await upsertSong(songToSave);
 
       // 2. Queue for offline download
-      await downloadSong(importedSong);
+      await downloadSong(songToSave);
 
       // 3. Refresh user library
       await loadLibrary();

@@ -33,6 +33,11 @@ typedef struct {
     
     // Subsonic Rumble Filter (Highpass)
     AuraBiquad _subsonicFilter;
+
+    // Dedicated Layer Separation Filters: High-air brilliance & punchy low clarity
+    AuraBiquad _airShimmerFilter;
+    AuraBiquad _punchFilter;
+    AuraBiquad _deMudFilter;
     
     // 8D Rotation phase
     double _rotationPhase;
@@ -225,6 +230,14 @@ static inline float processSample(AuraBiquad *filter, float inSample, int ch) {
         hpCutoff = 55.0;
     }
     computeHighPass(&_subsonicFilter, hpCutoff, 0.707, _sampleRate);
+
+    // 4. Studio Multi-Band Layer Separation Filters
+    // Crisp high-air brilliance & consonant clarity (9.5 kHz shelf)
+    computeHighShelf(&_airShimmerFilter, 9500.0, 2.8, 0.9, _sampleRate);
+    // Punchy, tight bass foundation (85 Hz shelf)
+    computeLowShelf(&_punchFilter, 85.0, 2.2, 0.9, _sampleRate);
+    // De-mud low-mid scoop for distinct instrument separation (340 Hz peaking)
+    computePeaking(&_deMudFilter, 340.0, -1.5, 1.25, _sampleRate);
 }
 
 - (void)resetFilterStates {
@@ -240,6 +253,12 @@ static inline float processSample(AuraBiquad *filter, float inSample, int ch) {
         _vocalFilter.s2[c] = 0.0;
         _subsonicFilter.s1[c] = 0.0;
         _subsonicFilter.s2[c] = 0.0;
+        _airShimmerFilter.s1[c] = 0.0;
+        _airShimmerFilter.s2[c] = 0.0;
+        _punchFilter.s1[c] = 0.0;
+        _punchFilter.s2[c] = 0.0;
+        _deMudFilter.s1[c] = 0.0;
+        _deMudFilter.s2[c] = 0.0;
     }
     os_unfair_lock_unlock(&_engineLock);
 }
@@ -408,16 +427,16 @@ static inline float processSample(AuraBiquad *filter, float inSample, int ch) {
 
 static inline float softSaturate(float x) {
     // Professional Studio Soft-Saturation & Maximizer Curve
-    // Clean, uncompressed linear response up to 0.85 (-1.4 dBFS)
-    // Musical tanh saturation in the upper 15% with true-peak safety at 0.995 (-0.04 dBFS)
+    // Clean, uncompressed linear response up to 0.80 (-1.9 dBFS)
+    // Musical tanh saturation in the upper 20% with true-peak safety at 0.998 (-0.02 dBFS)
     float absX = fabsf(x);
-    if (absX <= 0.85f) {
+    if (absX <= 0.80f) {
         return x;
     }
     float sign = (x > 0.0f) ? 1.0f : -1.0f;
-    float over = absX - 0.85f;
-    float saturated = 0.85f + 0.145f * tanhf(over / 0.145f);
-    if (saturated > 0.995f) saturated = 0.995f;
+    float over = absX - 0.80f;
+    float saturated = 0.80f + 0.198f * tanhf(over / 0.198f);
+    if (saturated > 0.998f) saturated = 0.998f;
     return sign * saturated;
 }
 
@@ -441,12 +460,12 @@ static inline float softSaturate(float x) {
         return;
     }
     
-    // Maximum Studio Loudness & Headphone Gain (+3.5 dB to +6 dB punchy studio headroom)
-    float targetGain = boost * 1.35f;
+    // Maximum Studio Loudness & Headphone Gain (+6 dB to +9 dB punchy studio headroom)
+    float targetGain = boost * 1.65f;
     if (activeProfile == AuraAudioProfileSpeaker) {
-        targetGain *= 1.25f; // Extra power for iPhone internal speakers
+        targetGain *= 1.35f; // Extra power for iPhone internal speakers
     } else if (activeProfile == AuraAudioProfileHeadphones || activeProfile == AuraAudioProfileAirPods) {
-        targetGain *= 1.30f; // Extra loudness & presence for Earbuds & AirPods
+        targetGain *= 1.45f; // Extra loudness & presence for Earbuds & AirPods
     }
     
     // Non-Interleaved Stereo (Buffer 0: Left, Buffer 1: Right)
@@ -472,6 +491,14 @@ static inline float softSaturate(float x) {
             // 3. Dedicated Vocal Presence Enhancement
             l = processSample(&_vocalFilter, l, 0);
             r = processSample(&_vocalFilter, r, 1);
+
+            // 3b. Dedicated Layer Separation Filters (Punchy lows, clean mids, crisp highs)
+            l = processSample(&_deMudFilter, l, 0);
+            r = processSample(&_deMudFilter, r, 1);
+            l = processSample(&_punchFilter, l, 0);
+            r = processSample(&_punchFilter, r, 1);
+            l = processSample(&_airShimmerFilter, l, 0);
+            r = processSample(&_airShimmerFilter, r, 1);
             
             // 4. Mid/Side Spatial Audio Processing (Zero phase cancellation!)
             float mid = 0.5f * (l + r);
@@ -528,6 +555,14 @@ static inline float softSaturate(float x) {
             // 3. Vocal Presence
             l = processSample(&_vocalFilter, l, 0);
             r = processSample(&_vocalFilter, r, 1);
+
+            // 3b. Dedicated Layer Separation Filters (Punchy lows, clean mids, crisp highs)
+            l = processSample(&_deMudFilter, l, 0);
+            r = processSample(&_deMudFilter, r, 1);
+            l = processSample(&_punchFilter, l, 0);
+            r = processSample(&_punchFilter, r, 1);
+            l = processSample(&_airShimmerFilter, l, 0);
+            r = processSample(&_airShimmerFilter, r, 1);
             
             // 4. Mid/Side Spatial
             float mid = 0.5f * (l + r);
@@ -553,6 +588,9 @@ static inline float softSaturate(float x) {
             r *= targetGain;
             
             interleaved[idx] = softSaturate(l);
+            interleaved[idx + 1] = softSaturate(r);
+        }
+    }
             interleaved[idx + 1] = softSaturate(r);
         }
     }
